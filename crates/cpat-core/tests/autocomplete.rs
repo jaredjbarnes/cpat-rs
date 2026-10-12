@@ -1299,3 +1299,75 @@ fn suggest_count_from_empty(keywords: &[String]) -> usize {
     let pattern = choice("keywords", keywords.iter().map(|k| lit("kw", k)).collect());
     suggest(pattern, "").options.len()
 }
+
+// ─── Fix round 1: rules no other test pinned, checked against v12 ─────────
+
+#[test]
+fn only_errors_ending_at_the_last_character_offer_options() {
+    // "pair" fails on "a" too, but its error does not end at the last
+    // character, so its custom tokens ("abz" would leave "bz") are not
+    // offered: only what follows the matched "a".
+    let pattern = seq(
+        "s",
+        vec![
+            seq("pair", vec![lit("a", "a"), lit("b", "b")]),
+            lit("c", "c"),
+        ],
+    );
+    let options_in = AutoCompleteOptions {
+        custom_tokens: custom(&[("pair", &["ab", "abz", "zz"]), ("c", &["cc"])]),
+        ..AutoCompleteOptions::default()
+    };
+    let mut complete = auto_complete(pattern, options_in);
+
+    let after_a = complete.suggest_for("a");
+    assert_eq!(summary(&after_a), "incomplete error=1..1 at=1 ast=-");
+    assert_eq!(options(&after_a), ["b@1[b:b]"]);
+
+    let after_ab = complete.suggest_for("ab");
+    assert_eq!(summary(&after_ab), "incomplete error=2..2 at=2 ast=-");
+    assert_eq!(options(&after_ab), ["c@2[c:c]", "cc@2[cc:c]"]);
+}
+
+#[test]
+fn an_option_starting_before_the_furthest_is_dropped_whatever_its_order() {
+    // "John" parts from "Ja" at 1, after "Jack" and "James" placed at 2
+    // came first: it is dropped, not kept beside them.
+    let pattern = rep(
+        "name-list",
+        choice(
+            "names",
+            vec![lit("first-name", "Jack"), lit("first-name", "John")],
+        ),
+        RepeatOptions {
+            divider: Some(lit("divider", ", ")),
+            trim_divider: true,
+            ..RepeatOptions::default()
+        },
+    );
+    let options_in = AutoCompleteOptions {
+        custom_tokens: custom(&[("first-name", &["James"])]),
+        disable_dedupe: true,
+        ..AutoCompleteOptions::default()
+    };
+    let suggestion = auto_complete(pattern, options_in).suggest_for("Ja");
+
+    assert_eq!(summary(&suggestion), "incomplete error=1..1 at=1 ast=-");
+    assert_eq!(
+        options(&suggestion),
+        ["ck@2[Jack:first-name]", "mes@2[James:first-name]"]
+    );
+}
+
+#[test]
+fn a_partial_operator_offers_only_its_completion_and_errors_there() {
+    // "OR" would be placed at 6, before "AND" at 7; keeping it would also
+    // move the error back to 6.
+    let and = suggest(flag_expression(), "FlagA A");
+    assert_eq!(summary(&and), r#"incomplete error=7..7 at=7 ast="FlagA""#);
+    assert_eq!(options(&and), ["ND@7[AND:sequence-literal]"]);
+
+    let or = suggest(flag_expression(), "FlagA O");
+    assert_eq!(summary(&or), r#"incomplete error=7..7 at=7 ast="FlagA""#);
+    assert_eq!(options(&or), ["R@7[OR:options-literal]"]);
+}

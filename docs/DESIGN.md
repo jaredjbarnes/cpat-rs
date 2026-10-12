@@ -30,7 +30,8 @@
 > caller-supplied path can't overflow the stack.
 > Milestone 9 (`AutoComplete` and `Suggestion`: v12's algorithm over a recording parse and the
 > milestone-8 queries, and JS `localeCompare` order) is implemented; see §17. It also makes the
-> leaf matches' tie rule treat a take-until's terminator as v12 does, parentless (§15).
+> leaf matches' tie rule treat a take-until's terminator as v12 does, parentless (§15). Its
+> fix round pins the error-end filter and the furthest-start drop with tests (§17).
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -971,7 +972,11 @@ build error naming the pattern.
   suggestions, the trims and the segment filter, dedupe by key, custom tokens and their order,
   the greedy check, the depth limit, the budget, each collation level, the digraph and no-break
   weights, the ignorables, the tie rule's floor); each made a test fail or, for the budget,
-  never finish.
+  never finish. Fix round 1 found two weaker mutants that the first pass missed. One keeps
+  every error rather than only those ending at the last character, which turns custom tokens
+  on a sequence that failed earlier into options. The other keeps an option that starts before
+  the furthest when it comes after it, which adds `ohn` to `Ja` and moves the flag grammar's
+  error back to the space. Both are now pinned by v12-checked tests in `tests/autocomplete.rs`.
 - **Not ported:** `suggestForWithCursor` (it is `suggest_for` on a cursor's text) and the
   `cursor` field (the parse's history is not kept on the `Suggestion`; the tree is). The wasm
   layer gets AutoComplete with UTF-16 offsets in a later milestone.
