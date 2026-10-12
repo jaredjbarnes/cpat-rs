@@ -301,7 +301,7 @@ impl<'r> Introspection<'r> {
 
     /// The choice's classified children as places, with their roles.
     fn choice_children(&self, loc: &Rc<Loc<'r>>, choice: &'r Choice) -> Vec<(Role, Rc<Loc<'r>>)> {
-        if loc.is_too_deep() {
+        if self.is_too_deep(loc) {
             return Vec::new();
         }
         self.classified(loc, choice)

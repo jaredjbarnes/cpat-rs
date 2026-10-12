@@ -24,7 +24,8 @@
 > path and its cost, and §15 for the rest.
 > Milestone 8 (introspection without parent pointers: tokens, patterns, what comes after a
 > child and what comes next, by path; `find`, `is_equal`, `clone_named`, `Tokenizable`, and
-> `generate_error_message`) is implemented; see §16.
+> `generate_error_message`) is implemented; see §16. Its fix round counts the query depth
+> limit from the asked-about place, so a leaf deeper than 256 steps still gets its hint.
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -809,12 +810,20 @@ build error naming the pattern.
 - **A query is bounded twice, by counts, never by time.** A grammar whose expansion never ends
   (`a = "x"? a`: only a FIRST child is checked for recursion) makes v12 recurse until the JS
   engine throws `RangeError`, and the same recursion would abort a Rust process. The chain
-  stops growing at `MAX_DEPTH` (256), which bounds the stack (checked on a 2 MB test thread).
+  stops growing `MAX_DEPTH` (256) levels below the place the query was asked about, which
+  bounds the stack (checked on a 2 MB test thread). The limit counts from that place, not from
+  the root, and the walk down the asked-about path is bounded by the path alone (fix round 1):
+  a leaf match's path comes from a parse, which nests as deep as `Limits::max_depth` allows
+  (90 parentheses put a leaf 271 steps down), and a limit counted from the root had emptied
+  `next_tokens` and the error message's hint there. The deepest default parse (340 levels, a
+  1021-step path) walks, climbs to the root and meets a never-ending expansion on a 2 MB
+  thread; a caller that raises `max_depth` gives the query the stack it gives the parse.
   Depth doesn't bound the work: an expansion that branches (`a = !"z" a`, `a = "x"?
   ("y"? a)? a`) makes twice the places per level, and ran for minutes before the second
   bound: a query makes at most `BUDGET` (100 000) places, then answers with what it found.
   The budget is per query, reset at every public entry. Every query over the grammars of
-  v12's tests made at most 31 places (measured), so neither bound fires on a real grammar.
+  v12's tests made at most 31 places (measured), so neither bound fires on a real grammar,
+  however deep the input.
 - **Checked against v12** by running both (a TS runner against v12's `src` and a Rust one,
   reading one JSON spec) on 34 grammars: every v12 test grammar here, references to
   operators, renamed references, contexts found by their own name, nested contexts, homes,

@@ -54,6 +54,9 @@ pub struct Introspection<'r> {
     live: LiveScope<'r>,
     /// Places made by the query running now (`loc::BUDGET`).
     spent: Cell<usize>,
+    /// The depth of the place the query running now was asked about; the
+    /// query expands at most `loc::MAX_DEPTH` below it.
+    floor: Cell<usize>,
 }
 
 /// A pattern instance at a place in the root's tree: what a query found,
@@ -100,6 +103,7 @@ impl<'r> Introspection<'r> {
             bottom,
             live: LiveScope::new(root),
             spent: Cell::new(0),
+            floor: Cell::new(0),
         }
     }
 
@@ -173,9 +177,11 @@ impl<'r> Introspection<'r> {
             .map(|loc| handle(&loc))
     }
 
-    /// Starts a query: it gets the whole budget.
+    /// Starts a query: it gets the whole budget, and the depth limit counts
+    /// from the root until a walk moves it.
     fn start(&self) -> &Self {
         self.spent.set(0);
+        self.floor.set(0);
         self
     }
 

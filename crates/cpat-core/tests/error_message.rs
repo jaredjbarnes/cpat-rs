@@ -379,3 +379,93 @@ fn a_leaf_match_ending_at_the_start_reads_as_no_match() {
 
     assert_eq!(message(root, "x"), "Error at line 1, column 1. Hint: c");
 }
+
+/// `expr = "(" expr close | "x"`, with the close optional or required.
+fn parens(close: Pattern) -> Pattern {
+    choice(
+        "expr",
+        vec![
+            seq("group", vec![lit("open", "("), reference("expr"), close]),
+            lit("x", "x"),
+        ],
+    )
+}
+
+#[test]
+fn a_leaf_deeper_than_the_query_depth_limit_still_gets_its_hint() {
+    // Fix round 1 of milestone 8: the query depth limit (256) also cut off
+    // the walk down the leaf match's path, which a parse makes as deep as
+    // its own limit allows. 90 parentheses put the leaf 271 steps down;
+    // the hint came out empty. Expected string printed by v12 (Expression
+    // `expr`, input "(" x 90 + "x").
+    let mut expr = parens(lit("close", ")"));
+    let text = format!("{}x", "(".repeat(90));
+    let result = expr.exec(&text);
+    let leaf = result.leaf_match.as_ref().expect("x matched");
+    assert_eq!(leaf.path.steps().len(), 271);
+
+    assert_eq!(expr.next_tokens(&leaf.path), [")"]);
+    assert_eq!(
+        generate_error_message(&expr, &result),
+        "Error at line 1, column 91. Hint: )"
+    );
+}
+
+#[test]
+fn the_deepest_leaf_the_parse_allows_climbs_to_the_root_on_a_small_stack() {
+    // With the close optional, what follows the `x` climbs through every
+    // level to the root, one `)` per level: the deepest walk and climb a
+    // default parse can ask for (340 levels, a 1021-step path, just under
+    // `DEFAULT_MAX_DEPTH`). Run on a 2 MB thread, the size `cargo test`
+    // and the wasm stack give. v12 printed the same 340 `)`, column 342.
+    let run = || {
+        let mut expr = parens(opt("opt-close", lit("close", ")")));
+        let text = format!("{}x[", "(".repeat(340));
+        let result = expr.exec(&text);
+        assert!(result.too_deep.is_none());
+        assert_eq!(result.leaf_match.as_ref().unwrap().path.steps().len(), 1021);
+        generate_error_message(&expr, &result)
+    };
+    let message = std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(run)
+        .unwrap()
+        .join()
+        .unwrap();
+
+    let hint = vec![")"; 340].join(",");
+    assert_eq!(
+        message,
+        format!("Error at line 1, column 342. Hint: {hint}")
+    );
+}
+
+#[test]
+fn a_never_ending_expansion_after_the_deepest_leaf_still_fits_a_small_stack() {
+    // The depth limit now counts from the asked-about place, so a climb
+    // from the deepest leaf can meet an expansion that never ends (`a =
+    // "y"? a`, where v12 throws `RangeError`) near the root: the climb's
+    // frames plus `MAX_DEPTH` levels of expansion. It must still return on
+    // a 2 MB thread, with every level's `)` ahead of the `y`s.
+    let run = || {
+        let a = seq("a", vec![opt("maybe-y", lit("y", "y")), reference("a")]);
+        let expr = parens(opt("opt-close", lit("close", ")")));
+        let mut root = seq("root", vec![expr, a]);
+        let text = format!("{}x[", "(".repeat(335));
+        let result = root.exec(&text);
+        assert!(result.too_deep.is_none());
+        generate_error_message(&root, &result)
+    };
+    let message = std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(run)
+        .unwrap()
+        .join()
+        .unwrap();
+
+    let hint = message.split("Hint: ").nth(1).unwrap();
+    let suggestions: Vec<&str> = hint.split(',').collect();
+    assert_eq!(suggestions[..335], vec![")"; 335][..]);
+    assert!(suggestions[335..].iter().all(|s| *s == "y"));
+    assert!(suggestions.len() > 335);
+}

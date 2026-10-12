@@ -20,7 +20,7 @@ use crate::scope::Scope;
 use super::Introspection;
 use super::frames::{self, FrameRef, Frames, Target};
 
-/// How deep a query's chain may grow. A grammar whose expansion never ends
+/// How far a query may expand below the place it was asked about. A grammar whose expansion never ends
 /// (`a = "x"? a`: the optional lets the sequence reach its recursive second
 /// child without consuming anything, and only a FIRST child is checked for
 /// recursion) makes v12 recurse until the JS engine throws `RangeError`.
@@ -28,6 +28,11 @@ use super::frames::{self, FrameRef, Frames, Target};
 /// it found, so no grammar can overflow the stack. Real grammars nest a few
 /// dozen levels; this is far above that and far below the stack (a level
 /// costs a few calls of a few hundred bytes each in a debug build).
+///
+/// It counts from the asked-about place, not from the root: the path there
+/// came from a parse, which nests as deep as its own limit allows (a leaf
+/// under 90 parentheses is 271 steps down), and walking it is bounded by
+/// its length, so the walk itself never stops early.
 pub(super) const MAX_DEPTH: usize = 256;
 
 /// How many places one query may make. The depth limit bounds the stack,
@@ -129,11 +134,6 @@ impl<'r> Loc<'r> {
         PatternPath::new(&steps)
     }
 
-    /// Whether the chain is as deep as a query may go (`MAX_DEPTH`).
-    pub(super) fn is_too_deep(&self) -> bool {
-        self.depth >= MAX_DEPTH
-    }
-
     /// v12 `isRecursivePattern`: this pattern is already being expanded
     /// twice further up the chain.
     pub(super) fn is_recursive(&self) -> bool {
@@ -156,20 +156,37 @@ impl<'r> Loc<'r> {
 }
 
 impl<'r> Introspection<'r> {
-    /// The place `path` leads to from the root.
+    /// The place `path` leads to from the root. The walk follows a given
+    /// path, so neither the depth limit nor the budget applies to it; the
+    /// expansion below the place it reaches gets `MAX_DEPTH` levels.
     pub(super) fn walk(&self, path: &PatternPath) -> Option<Rc<Loc<'r>>> {
-        path.steps()
+        let loc = path
+            .steps()
             .iter()
             .try_fold(self.root_loc(), |loc, &index| {
-                self.child(&loc, usize::try_from(index).ok()?)
-            })
+                self.step_to(&loc, usize::try_from(index).ok()?)
+            })?;
+        self.floor.set(loc.depth);
+        Some(loc)
     }
 
-    /// The child at `index`, numbered as `Pattern::at_path` numbers it.
+    /// Whether `loc` is as deep as this query may expand (`MAX_DEPTH`
+    /// below the place it was asked about).
+    pub(super) fn is_too_deep(&self, loc: &Loc<'r>) -> bool {
+        loc.depth >= self.floor.get() + MAX_DEPTH
+    }
+
+    /// The child at `index`, numbered as `Pattern::at_path` numbers it, as
+    /// an expansion makes it: counted against both bounds.
     pub(super) fn child(&self, loc: &Rc<Loc<'r>>, index: usize) -> Option<Rc<Loc<'r>>> {
-        if loc.is_too_deep() || !self.spend() {
+        if self.is_too_deep(loc) || !self.spend() {
             return None;
         }
+        self.step_to(loc, index)
+    }
+
+    /// The child at `index`, unbounded: one step of a walk or an expansion.
+    fn step_to(&self, loc: &Rc<Loc<'r>>, index: usize) -> Option<Rc<Loc<'r>>> {
         let pattern = match loc.node {
             Node::Operator { part, .. } => part.get(index)?,
             Node::OwnContext {
