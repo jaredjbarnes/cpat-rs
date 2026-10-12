@@ -39,6 +39,7 @@ use crate::pattern_path::PatternPath;
 
 use frames::{FrameRef, LiveScope};
 use loc::Loc;
+pub(crate) use select::leaf_tokens;
 use select::{Patterns, Tokens};
 
 /// Questions about the patterns in `root`'s tree, each about a place in it.

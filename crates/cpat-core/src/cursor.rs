@@ -281,6 +281,21 @@ impl<'t> Cursor<'t> {
         }
     }
 
+    /// Runs a take-until's terminator probe, called from the take-until's
+    /// frame. v12's `TakeUntil` never makes itself the terminator's parent,
+    /// so for the leaf matches' tie rule the terminator has no parent and
+    /// the matches inside it no ancestors above it. (Paths still go through
+    /// the take-until: DESIGN §15.)
+    pub(crate) fn detached<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let saved = self.leaves.floor;
+        // The path of the top frame's child, the terminator, has one step
+        // per frame.
+        self.leaves.floor = self.ancestors.len();
+        let result = f(self);
+        self.leaves.floor = saved;
+        result
+    }
+
     // ─── Recording (v12 `CursorHistory`) ────────────────────────────────
 
     /// From now on, every error and match is kept, in order, with the path

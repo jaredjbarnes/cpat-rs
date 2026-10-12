@@ -30,6 +30,28 @@ pub(super) trait Select<'r> {
     fn from_patterns(intro: &Introspection<'r>, locs: Vec<Rc<Loc<'r>>>) -> Vec<Self::Item>;
 }
 
+/// What a leaf offers (its `getTokens`), or `None` for a pattern that
+/// isn't a leaf. A leaf's `getPatterns` is itself, so this is its whole
+/// answer, wherever it sits.
+pub(crate) fn leaf_tokens(pattern: &Pattern) -> Option<Vec<String>> {
+    match pattern {
+        Pattern::Literal(literal) => Some(vec![literal.token().to_string()]),
+        Pattern::Regex(regex) => Some(regex.tokens().to_vec()),
+        Pattern::TakeUntil(take_until) => Some(take_until.tokens().to_vec()),
+        Pattern::Custom(custom) => Some(custom.tokens().to_vec()),
+        Pattern::Sequence(_)
+        | Pattern::Choice(_)
+        | Pattern::Repeat(_)
+        | Pattern::Optional(_)
+        | Pattern::Not(_)
+        | Pattern::Cut(_)
+        | Pattern::Reference(_)
+        | Pattern::Context(_)
+        | Pattern::RightAssociated(_)
+        | Pattern::Block(_) => None,
+    }
+}
+
 pub(super) struct Tokens;
 pub(super) struct Patterns;
 
@@ -37,13 +59,7 @@ impl<'r> Select<'r> for Tokens {
     type Item = String;
 
     fn leaf(loc: &Rc<Loc<'r>>) -> Vec<String> {
-        match loc.pattern() {
-            Pattern::Literal(literal) => vec![literal.token().to_string()],
-            Pattern::Regex(regex) => regex.tokens().to_vec(),
-            Pattern::TakeUntil(take_until) => take_until.tokens().to_vec(),
-            Pattern::Custom(custom) => custom.tokens().to_vec(),
-            _ => Vec::new(),
-        }
+        leaf_tokens(loc.pattern()).unwrap_or_default()
     }
 
     fn of_next(intro: &Introspection<'r>, loc: &Rc<Loc<'r>>) -> Vec<String> {

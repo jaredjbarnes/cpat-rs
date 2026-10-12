@@ -4,14 +4,18 @@
 //!
 //! The introspection tests (`getTokens`, `getTokensAfter`, `getPatterns`,
 //! `getPatternsAfter`, `getNextTokens`, `getNextPatterns`, `find`,
-//! `isEqual`, "continuation tokens") are in `tests/introspect_choice.rs`;
-//! "Suggest" waits for autocomplete. The "literal-set fast path" tests are
+//! `isEqual`, "continuation tokens") are in `tests/introspect_choice.rs`.
+//! "Options like" and "Suggest" are here, through `AutoComplete`. The
+//! "literal-set fast path" tests are
 //! in `tests/literal_set.rs` (their error messages in `error_message.rs`).
 
 mod common;
 
 use common::*;
-use cpat_core::{Choice, ChoiceMode, Cursor, Limits, NodeKind, Pattern, PatternError};
+use cpat_core::{
+    AutoComplete, AutoCompleteOptions, Choice, ChoiceMode, Cursor, Limits, NodeKind, Pattern,
+    PatternError,
+};
 
 fn e() -> Pattern {
     reference("expression")
@@ -19,7 +23,12 @@ fn e() -> Pattern {
 
 /// v12's `createExpressionPattern`.
 fn expression_pattern() -> Pattern {
-    let spaces = re("spaces", r"\s+");
+    expression_pattern_with(re("spaces", r"\s+"))
+}
+
+/// `createExpressionPattern` with its `spaces` pattern given (v12's
+/// "Suggest" gives it the token " ").
+fn expression_pattern_with(spaces: Pattern) -> Pattern {
     let optional_spaces = || opt("optional-spaces", spaces.clone());
     let variables = choice(
         "variables",
@@ -204,6 +213,63 @@ fn tail() {
         exec_outline(&mut expression, "a."),
         outlined("-", "expression@1..2", "refinement@1..2")
     );
+}
+
+#[test]
+fn options_like() {
+    // An expression of bare atoms is an ordered choice: "a" fully matches,
+    // so there is nothing left to suggest.
+    let options = choice(
+        "expression",
+        vec![lit("a", "a"), lit("b", "b"), lit("c", "c")],
+    );
+    let mut auto_complete = AutoComplete::new(options, AutoCompleteOptions::default()).unwrap();
+    let suggestion = auto_complete.suggest_for("a");
+
+    assert!(suggestion.is_complete);
+    assert!(suggestion.options.is_empty());
+    assert_eq!(suggestion.error_at_index, None);
+    assert!(suggestion.error.is_none());
+}
+
+#[test]
+fn suggest() {
+    // After "a ? b " the ternary still needs its ":", and any infix
+    // operator could continue the second operand instead; "?" starts a
+    // nested ternary. v12's order (options from matches, each list sorted
+    // as `localeCompare` sorts), its error and the matched prefix.
+    let mut spaces = cpat_core::Regex::new("spaces", r"\s+").unwrap();
+    cpat_core::Tokenizable::set_tokens(&mut spaces, vec![" ".to_string()]);
+    let mut auto_complete = AutoComplete::new(
+        expression_pattern_with(spaces.into()),
+        AutoCompleteOptions::default(),
+    )
+    .unwrap();
+    let suggestion = auto_complete.suggest_for("a ? b ");
+
+    let options: Vec<(&str, usize)> = suggestion
+        .options
+        .iter()
+        .map(|option| (option.text.as_str(), option.start_index))
+        .collect();
+    assert_eq!(
+        options,
+        [
+            (":", 6),
+            ("?", 6),
+            ("* ", 6),
+            ("/ ", 6),
+            ("+ ", 6),
+            ("- ", 6),
+            ("&& ", 6),
+            ("|| ", 6),
+        ]
+    );
+    assert!(!suggestion.is_complete);
+    let error = suggestion.error.as_ref().unwrap();
+    assert_eq!((error.start, error.last), (6, 6));
+    assert_eq!(suggestion.error_at_index, Some(6));
+    assert_eq!(suggestion.tree.as_ref().unwrap().root().value(), "a");
 }
 
 #[test]

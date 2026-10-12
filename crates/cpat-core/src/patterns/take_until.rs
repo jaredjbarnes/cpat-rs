@@ -44,7 +44,8 @@ impl TakeUntil {
         // does this: the loop ends at the end of the text.
         while !cursor.at_end() {
             let on = cursor.pos();
-            let terminated = self.terminator.parse(cursor).is_some();
+            let terminator = &mut self.terminator;
+            let terminated = cursor.detached(|c| terminator.parse(c)).is_some();
             cursor.set_cut(cut);
             cursor.resolve_error();
             cursor.set_pos(on);

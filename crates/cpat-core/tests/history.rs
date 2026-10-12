@@ -884,13 +884,14 @@ fn an_ordinary_exec_gives_the_leaf_match_its_path() {
 }
 
 #[test]
-fn deviation_a_take_until_terminator_has_its_take_until_as_parent() {
+fn a_take_until_terminator_has_no_parent_for_the_tie_rule() {
     // v12's `TakeUntil` never makes itself its terminator's parent, so the
     // terminator has none and v12 keeps an extra leaf: on "<ab>",
-    // [tag, close (the sequence's), close (the terminator's)]. Here the
-    // terminator is the take-until's child 0, `tag` is its ancestor, and
-    // the sequence's `close` is dropped like any match closing over a kept
-    // leaf.
+    // [tag, close (the sequence's), close (the terminator's)]. The path
+    // still goes through the take-until (`/1/0`, a deviation, DESIGN §15),
+    // but the tie rule follows v12's chain, which stops at the terminator:
+    // so the sequence's `close` is kept, and autocomplete can offer what
+    // follows it (milestone 9; milestones 7 and 8 dropped it).
     let mut tag = seq(
         "tag",
         vec![
@@ -902,7 +903,33 @@ fn deviation_a_take_until_terminator_has_its_take_until_as_parent() {
 
     assert_eq!(
         leaves_of(&tag.exec("<ab>")),
-        ["tag@0..4/", "close@3..4/1/0"]
+        ["tag@0..4/", "close@3..4/2", "close@3..4/1/0"]
+    );
+}
+
+#[test]
+fn a_match_inside_a_terminator_has_no_ancestors_above_it() {
+    // The terminator is a sequence here; its last leaf `gt` is kept first.
+    // The terminator `stop` ties with it and is kept: it has no parent in
+    // v12, so nothing can enclose it. The take-until's sibling `end` ties
+    // too, and `gt2` is kept: the chain from `gt` stops at `stop`, so
+    // `tag` is no ancestor of a kept match. (Checked against v12.)
+    let mut tag = seq(
+        "tag",
+        vec![
+            TakeUntil::new("name", seq("stop", vec![lit("dash", "-"), lit("gt", ">")])).into(),
+            seq("end", vec![lit("dash2", "-"), lit("gt2", ">")]),
+        ],
+    );
+
+    assert_eq!(
+        leaves_of(&tag.exec("ab->")),
+        [
+            "tag@0..4/",
+            "gt2@3..4/1/1",
+            "stop@2..4/0/0",
+            "gt@3..4/0/0/1"
+        ]
     );
 }
 

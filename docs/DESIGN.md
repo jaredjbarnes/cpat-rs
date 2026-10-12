@@ -28,6 +28,9 @@
 > limit from the asked-about place, so a leaf deeper than 256 steps still gets its hint; its
 > second refuses a path longer than any parse under the same `Limits` makes, so a long
 > caller-supplied path can't overflow the stack.
+> Milestone 9 (`AutoComplete` and `Suggestion`: v12's algorithm over a recording parse and the
+> milestone-8 queries, and JS `localeCompare` order) is implemented; see §17. It also makes the
+> leaf matches' tie rule treat a take-until's terminator as v12 does, parentless (§15).
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -705,12 +708,19 @@ build error naming the pattern.
   test fail.
 - **Deviations from v12:**
   - v12's `TakeUntil` never makes itself its terminator's parent (it doesn't call
-    `_assignChildrenToParent`), so the terminator has no parent there, records with a path that
-    stops at it, and its matches can sit beside their enclosing patterns' at the same end
-    (`"<" ?->| ">" ">"` on `"<ab>"`: v12 keeps `[tag, close, close]`). Here the terminator is
-    the take-until's child 0 like every other child (`[tag, close]`). The same missing link
-    would stop a reference inside a terminator from searching past it in v12; it looks like a
-    bug, and v12 should get the same fix. Pinned in `tests/history.rs`.
+    `_assignChildrenToParent`), so the terminator has no parent there and records with a path
+    that stops at it. Here the terminator is the take-until's child 0 like every other child,
+    so paths go through the take-until. The same missing link would stop a reference inside a
+    terminator from searching past it in v12. *Changed in milestone 9:* the leaf matches' tie
+    rule now follows v12's chain, which stops at the terminator (each kept match carries the
+    length of the terminator's path it was recorded in, its `floor`, set by
+    `Cursor::detached` around the probe). Milestone 7 made the terminator's parent the
+    take-until there too, so on `"<" ?->| ">" ">"` with `"<ab>"` it kept `[tag, close]` where
+    v12 keeps `[tag, close, close]`: the sequence's own `close` was dropped, and with it
+    autocomplete's suggestion of what follows the closing delimiter (v12 offers `"."` after
+    `"<abc>"` in `"<" ?->| ">" ">" "."`; the first version of milestone 9 offered nothing).
+    The terminator's probe is lookahead that v12 records anyway, so the leaf list it leaves is
+    v12's to match. Pinned in `tests/history.rs` and `tests/autocomplete.rs`.
   - `RightAssociated` deliberately doesn't parent its child in v12, so an atom wrapped in it
     has no parent there; here a path goes through the marker to the choice. Only the leaf-match
     tie rule could tell, and only for a marked atom (a marked operator is unwrapped into its
@@ -723,7 +733,7 @@ build error naming the pattern.
     recorded match), since keeping it otherwise would copy a path per match.
   - A bounded repeat with `trim_divider` whose first child fails throws a `TypeError` in v12
     (§10), recording or not.
-- **Not ported here:** `generateErrorMessage` (milestone 8, §16) and autocomplete, which read the leaf match's
+- **Not ported here:** `generateErrorMessage` (milestone 8, §16) and autocomplete (milestone 9, §17), which read the leaf match's
   pattern's tokens (`getNextTokens`), come with intellisense (milestone 8); the leaf match's
   path is what they will start from. v12's cursor-movement tests (`Move Cursor`, `Text
   Information`, `Empty Text`, `Text with Emojis`) are mapped onto `set_pos` and the snapping
@@ -884,6 +894,98 @@ build error naming the pattern.
   - A marked atom's recursion check uses the atom's id; v12's atom is the marker clone, with
     the marker's id. Only a marked atom that leads back into its own choice could tell.
 
+## 17. AutoComplete *(milestone 9)*
+
+- **v12's algorithm, step for step** (`src/intellisense`): a recording parse of the text; the
+  options from each leaf match (what may follow it, `next_patterns` by its path, then its own
+  suggestions trimmed by the text it matched) and from every recorded error whose `last` is at
+  the end of the text (its pattern's suggestions trimmed by the text from the error's start);
+  each list placed against the text (`findMatchIndex`), cut to the options that start furthest
+  and sorted; then merged, first option per text, cut to the furthest again. A composite
+  pattern's suggestions are its leaf patterns' tokens and custom tokens (custom first), deduped
+  by text plus the sorted segment names; a greedy name joins each with every suggestion of what
+  may follow it. The three error cases (options and no cursor error: from the earliest option
+  to the end; no options but a tree: from the tree's end; a cursor error: the further of the
+  last match's end and the furthest error's `last`, compared as v12 compares an exclusive end
+  with an inclusive last), and empty text (the root's suggestions, error `0..0`, no parse), are
+  v12's. Its own errors name the root, with no path.
+- **The parse is `parse`, not `exec`** (`exec::parse_recording`): v12 calls
+  `pattern.parse(cursor)`, so no summary error is recorded, the cursor's error is what the parse
+  left, and the tree is kept whether or not it spans the text (`Suggestion::tree`, v12's
+  `ast`). References are readied as `exec` readies them, and `AutoComplete::new` runs
+  `Pattern::check` (a name that resolves to nothing is a build error, §11; v12 throws when a
+  parse reaches it).
+- **Patterns are named by places.** A segment's `pattern` is a `SegmentPattern`: the path from
+  the root AutoComplete was built with, the name and the id (v12 hands out the pattern object,
+  which knows its parents; §2). Every query is a milestone-8 query by path, so a leaf match's
+  path from the parse is where autocomplete starts. A leaf's suggestions are read off the
+  pattern at the handle (`select::leaf_tokens`, the one rule both use), not asked by path: a
+  leaf's `getPatterns` is itself, and asking would walk its path from the root once per leaf
+  (a choice of 20 000 keywords takes 0.4 s in a debug build this way).
+- **Positions.** Byte offsets (§5). v12 selects the errors whose `lastIndex` is `length - 1`,
+  the last UTF-16 unit; here `last` at the start of the last `char`, which is what a `Literal`
+  that ran out of text records in both, on any text (an emoji's low surrogate there, its first
+  byte here). v12's `substring(start, last)` is inclusive, so an error's text runs to the end of
+  the text and a match's prefix to its end. `findMatchIndex` compares whole `char`s, so an
+  option never starts inside a character (v12 can split a surrogate pair when two emoji share
+  their high surrogate).
+- **Sorting: JS `localeCompare`, reproduced** (`intellisense/collate.rs`, `locale_compare`).
+  v12 sorts with ICU's default collation, which is not code-point order: case is a tie-break
+  (`a < A < b`), punctuation and symbols sort before digits and digits before letters in ICU's
+  own order (`_ - , ; : ! ? . ' " ( ) [ ] { } @ * / \ & # % \` ^ + < = > | ~ $`), accents
+  outrank case (`e < E < é`), a word sorts before a longer word it begins (`á < a b`), and
+  control characters are ignored. Here: the UCA's three levels (base character, accents as
+  separate elements, case), with weights generated once from Node 24: every ASCII character;
+  the Latin letters of U+00C0–U+017F, with their combining marks' secondary order, stroke
+  letters (`ø`, `đ`, `ł`) placed among them, and `æ`, `œ`, `ĳ`, `ß` as two letters set apart
+  above any accent; the dotless `ı` between `i` and `j`; the no-break space; the soft hyphen and
+  zero-width format characters ignored. Anything else sorts after every letter, by code point
+  (an approximation). *Checked:* 3 000 random strings of 1–4 characters from those sets, sorted
+  by both, for 10 seeds: the same order. `tests/autocomplete.rs` pins Node's order for a fixed
+  list. *Rejected:* `icu_collator` (megabytes of data in a wasm module that is mostly regex
+  tables already, §6, for characters no grammar here offers); byte order (every capital before
+  every lowercase letter, `"Z" < "a"`).
+- **Dedupe is chosen once.** `disable_dedupe` picks `Dedupe::Off` or `Dedupe::ByKey` in the
+  constructor. v12 also dedupes each match's composites and the error options; that step is left
+  out, because the merge that follows keeps only the first option per text, which drops
+  everything it would (a mutant that removed it survived every test, and no input can tell).
+- **Greedy joins are bounded, by counts.** v12 recurses without limit: a greedy pattern whose
+  continuation leads back to it (a greedy child of a repeat; `list = item sep list?` through a
+  reference) recurses until it throws `RangeError`. Joins nest at most `MAX_GREEDY_DEPTH` (32)
+  deep and the innermost offers nothing, so the whole chain does, as a greedy pattern with
+  nothing after it does in v12. Joins that branch (`item = "a" | "b"`, both greedy, recursing)
+  make 2^32 places before that depth, so the places expanded inside joins are also counted:
+  past `BUDGET` (10 000) per composite suggestion a place offers nothing. Only places inside a
+  join count; outside one, a pattern expands to its leaves once each, which is linear in the
+  grammar, so a long keyword list is never cut short. Every v12 test joins a few dozen places.
+- **Checked against v12** by running both (a TS runner against v12's `src` and a scratch Rust
+  binary, reading one JSON spec of grammars, options and inputs, with shared instances where
+  v12's tests share them) on 57 grammars and 364 inputs, many as every prefix of a full input:
+  every AutoComplete.test.ts grammar, the Expression.test.ts expression and tail grammars,
+  mutual recursion, a Pratt choice in a statement, blocks (content, optional content, wildcard),
+  take-until, contexts, `!x`, cuts, bounded repeats with and without trimming, multi-byte and
+  emoji text, CRLF, custom tokens through references, greedy chains, and the sort. Same
+  completeness, options (text, start, segment texts and names, order), error, error index and
+  tree value, except the deviations below. A mutation pass removed or bent each mechanism (the
+  merge, both furthest cuts, the error filter, each error case, the root fallback, the extending
+  suggestions, the trims and the segment filter, dedupe by key, custom tokens and their order,
+  the greedy check, the depth limit, the budget, each collation level, the digraph and no-break
+  weights, the ignorables, the tie rule's floor); each made a test fail or, for the budget,
+  never finish.
+- **Not ported:** `suggestForWithCursor` (it is `suggest_for` on a cursor's text) and the
+  `cursor` field (the parse's history is not kept on the `Suggestion`; the tree is). The wasm
+  layer gets AutoComplete with UTF-16 offsets in a later milestone.
+- **Deviations from v12:**
+  - A greedy join that never ends offers nothing (above); v12 throws `RangeError`. Pinned in
+    `tests/autocomplete.rs`.
+  - Unknown names fail `AutoComplete::new` (above); v12 throws when a parse or query reaches
+    one.
+  - Characters outside the collation tables sort by code point after every letter; v12 sorts
+    them as ICU does.
+  - Positions are bytes and options never start inside a character (above).
+  - The milestone-8 deviations apply to the queries autocomplete asks (the repeat facade, a
+    marked atom, unknown names, home binding).
+
 ## Behavior fixed relative to clarity-pattern-parser v11
 
 Each is pinned by a test here and fixed in v12:
@@ -900,3 +1002,4 @@ Each is pinned by a test here and fixed in v12:
 | Only sequences classify as operators (`b = a \| "d"` inside `a` is an atom) | `tests/expression.rs` |
 | A right-associated operator nests right past a tighter one (`a as b + c as d`) | `tests/precedence.rs` |
 | Mutually recursive choices (`a = b \| "c"`, `b = a \| "d"`) parse | `tests/expression.rs` |
+| Mutually recursive choices autocomplete without overflowing the stack | `tests/autocomplete.rs` |

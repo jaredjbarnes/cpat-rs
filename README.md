@@ -23,7 +23,7 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 8)
+## What's in the box (milestone 9)
 
 `Literal`, `Regex`, `Sequence`, `Choice`, `Repeat` (unbounded or bounded, with an optional
 divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for recursive
@@ -64,7 +64,34 @@ compares structure, `clone_named` renames a clone that keeps its id, and `Regex`
 parse under the same `Limits` can make one (`Introspection::with_limits` for `exec_with`'s paths). `generate_error_message(&pattern,
 &result)` prints v12's message character for character (`Error at line 1, column 6. Hint: Doe`).
 
-Still to come: autocomplete, the `.cpat` grammar, decorators.
+`AutoComplete` suggests what could come next in a text, as v12's does: build it with a pattern
+and `AutoCompleteOptions` (`greedy_pattern_names` join a pattern's suggestions with what may
+follow it, `custom_tokens` add suggestions by pattern name, `disable_dedupe` keeps duplicates),
+then `suggest_for(text)` returns a `Suggestion`: whether the text is complete, the options (each
+a `text` to insert at `start_index`, a byte offset, with the tokens it is made of and the path
+of the pattern each came from), where the text stops making sense (`error`, `error_at_index`),
+and the tree of what matched. Options are sorted as JS's `localeCompare` sorts them
+(`locale_compare`).
+
+```rust
+use cpat_core::{AutoComplete, AutoCompleteOptions, Choice, Literal, Pattern, Sequence};
+
+let name: Pattern = Sequence::new("name", vec![
+    Literal::new("john", "John")?.into(),
+    Literal::new("space", " ")?.into(),
+    Choice::new("last-name", vec![
+        Literal::new("smith", "Smith")?.into(),
+        Literal::new("doe", "Doe")?.into(),
+    ])?.into(),
+])?.into();
+
+let mut auto_complete = AutoComplete::new(name, AutoCompleteOptions::default())?;
+let suggestion = auto_complete.suggest_for("John Smi");
+assert_eq!(suggestion.options[0].text, "th");
+assert_eq!(suggestion.options[0].start_index, 8);
+```
+
+Still to come: the `.cpat` grammar, decorators, autocomplete in JS.
 
 ```rust
 use cpat_core::{Block, Choice, Literal, Pattern, Reference, Regex, Sequence};

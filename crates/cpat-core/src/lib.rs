@@ -28,6 +28,7 @@ mod exec;
 mod graphemes;
 mod halt;
 mod history;
+mod intellisense;
 mod introspect;
 mod leaves;
 mod link;
@@ -51,6 +52,10 @@ pub use error_message::generate_error_message;
 pub use exec::ParseResult;
 pub use halt::{DEFAULT_MAX_DEPTH, Limits, TooDeep};
 pub use history::HistoryRecord;
+pub use intellisense::{
+    AutoComplete, AutoCompleteOptions, SegmentPattern, Suggestion, SuggestionOption,
+    SuggestionSegment, locale_compare,
+};
 pub use introspect::{Handle, Introspection};
 pub use name::Name;
 pub use parse_error::{Match, ParseError};

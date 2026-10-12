@@ -21,6 +21,9 @@ pub(crate) struct Leaves {
     entries: Vec<Leaf>,
     spare: Vec<Vec<u32>>,
     scratch: Vec<u32>,
+    /// While a take-until probes its terminator, the length of the
+    /// terminator's path, else 0: what new matches record as their `floor`.
+    pub(crate) floor: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -30,6 +33,12 @@ struct Leaf {
     end: usize,
     path: Vec<u32>,
     parent: Parent,
+    /// How many leading steps of `path` lie outside v12's parent chain:
+    /// the length of the path to the take-until terminator this match was
+    /// recorded in, or 0. v12's `TakeUntil` never makes itself its
+    /// terminator's parent, so the chain a tie walks up from this match
+    /// stops at the terminator (DESIGN §15).
+    floor: usize,
 }
 
 /// Where the recording pattern's v12 `parent` is, for the tie rule.
@@ -55,6 +64,7 @@ impl Leaves {
         at: At<'_>,
         parent: Parent,
     ) {
+        let floor = self.floor;
         let furthest = self.entries.last().map(|leaf| leaf.end);
         match furthest {
             Some(furthest) if end < furthest => {}
@@ -69,6 +79,7 @@ impl Leaves {
                         end,
                         path,
                         parent,
+                        floor,
                     };
                     self.entries.insert(0, leaf);
                 }
@@ -89,6 +100,7 @@ impl Leaves {
                         leaf.start = start;
                         leaf.end = end;
                         leaf.parent = parent;
+                        leaf.floor = floor;
                         ancestors.path_into(at, &mut leaf.path);
                     }
                     None => {
@@ -100,6 +112,7 @@ impl Leaves {
                             end,
                             path,
                             parent,
+                            floor,
                         });
                     }
                 }
@@ -113,20 +126,26 @@ impl Leaves {
     /// kept match are the patterns at the proper prefixes of its path, plus
     /// its own facade when it is a repeat. A pattern with no parent (the
     /// exec root, unless it is a repeat) is never dropped.
+    ///
+    /// A take-until's terminator has no parent in v12 (`floor`): a kept
+    /// match inside one has no ancestors above it. (So nothing can enclose
+    /// a terminator either: only matches inside it lie below its parent.)
     fn parent_encloses_a_leaf(&self, parent: Parent) -> bool {
         let path = &self.scratch[..];
+        // Whether the pattern at `place` is on `leaf`'s v12 parent chain.
+        let encloses = |leaf: &Leaf, place: &[u32]| {
+            place.len() >= leaf.floor
+                && leaf.path.len() > place.len()
+                && leaf.path.starts_with(place)
+        };
         match parent {
             // The facade at `path`: above everything inside the repeat, and
             // the parent of the repeat itself.
             Parent::Facade => self.entries.iter().any(|leaf| {
-                leaf.path.starts_with(path)
-                    && (leaf.path.len() > path.len() || leaf.parent == Parent::Facade)
+                encloses(leaf, path) || (leaf.path == path && leaf.parent == Parent::Facade)
             }),
             Parent::Above => match path.split_last() {
-                Some((_, above)) => self
-                    .entries
-                    .iter()
-                    .any(|leaf| leaf.path.len() > above.len() && leaf.path.starts_with(above)),
+                Some((_, above)) => self.entries.iter().any(|leaf| encloses(leaf, above)),
                 None => false,
             },
         }

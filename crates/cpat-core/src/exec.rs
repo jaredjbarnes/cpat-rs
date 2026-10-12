@@ -115,15 +115,10 @@ pub(crate) fn exec<'t>(
     limits: Limits,
     record: Record,
 ) -> ParseResult<'t> {
-    let mut cursor = Cursor::with_limits(text, limits);
-
-    // Checked before the empty-text shortcut: a broken pattern is reported
-    // whatever the input. (v12 returns before it looks.)
-    match crate::link::prepare(pattern) {
-        Ok(Some(scope)) => cursor.push_scope(ScopeFrame::new(scope, pattern.meta())),
-        Ok(None) => {}
+    let mut cursor = match readied_cursor(pattern, text, limits) {
+        Ok(cursor) => cursor,
         Err(error) => return ParseResult::refused(text, limits, error),
-    }
+    };
 
     if text.is_empty() {
         return cursor.finish(None);
@@ -151,6 +146,41 @@ pub(crate) fn exec<'t>(
     };
 
     cursor.finish(root)
+}
+
+/// v12 AutoComplete's parse: `pattern.parse(cursor)` on a recording
+/// cursor, not `exec`. So no summary error is recorded (the cursor's error
+/// is whatever the parse left), and the root's node is kept in `tree`
+/// whether or not it spans the whole text (v12's `ast`). Empty text is
+/// parsed too; AutoComplete answers it before asking.
+pub(crate) fn parse_recording<'t>(
+    pattern: &mut Pattern,
+    text: &'t str,
+    limits: Limits,
+) -> ParseResult<'t> {
+    let mut cursor = match readied_cursor(pattern, text, limits) {
+        Ok(cursor) => cursor,
+        Err(error) => return ParseResult::refused(text, limits, error),
+    };
+    cursor.start_recording();
+    let root = pattern.parse(&mut cursor);
+    cursor.finish(root)
+}
+
+/// A cursor over `text` with `pattern`'s references readied, or the reason
+/// the pattern can't run. Checked before any shortcut for empty text: a
+/// broken pattern is reported whatever the input. (v12 returns before it
+/// looks.)
+fn readied_cursor<'t>(
+    pattern: &mut Pattern,
+    text: &'t str,
+    limits: Limits,
+) -> Result<Cursor<'t>, PatternError> {
+    let mut cursor = Cursor::with_limits(text, limits);
+    if let Some(scope) = crate::link::prepare(pattern)? {
+        cursor.push_scope(ScopeFrame::new(scope, pattern.meta()));
+    }
+    Ok(cursor)
 }
 
 /// The pattern the summary error names, and its path from the root: a
