@@ -328,7 +328,7 @@ fn ordered_never_takes_the_literal_set_mode_even_through_references() {
 #[test]
 fn a_clone_keeps_the_literal_set() {
     let original = keyword_choice();
-    let mut clone = original.renamed("words");
+    let mut clone = original.clone_named("words");
     fresh_log();
 
     assert_eq!(mode_of(&clone), Some(ChoiceMode::LiteralSet));

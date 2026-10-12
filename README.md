@@ -23,7 +23,7 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 7)
+## What's in the box (milestone 8)
 
 `Literal`, `Regex`, `Sequence`, `Choice`, `Repeat` (unbounded or bounded, with an optional
 divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for recursive
@@ -53,7 +53,17 @@ match in order (`errors()`, `matches()`, `records()`), each with a `PatternPath`
 indices from the root to the pattern instance that produced it; `Pattern::at_path` replays one.
 Every parse keeps the furthest matches (`leaf_matches()`), with their paths.
 
-Still to come: the `.cpat` grammar, decorators, intellisense.
+Introspection, for autocomplete and error messages, works without parent pointers: ask about a
+place by its path from a root. `tokens()`/`patterns()` say what can start a pattern;
+`next_tokens(&path)`/`next_patterns(&path)` what may follow the instance at `path`;
+`tokens_after(child)`/`patterns_after(child)` what may follow one of its children. Answers that
+name patterns are `Handle`s (path, pattern, name), so they can be asked about in turn; references
+are followed as a parse follows them. `find` returns the first match with its path, `is_equal`
+compares structure, `clone_named` renames a clone that keeps its id, and `Regex`, `TakeUntil` and
+`Custom` take suggested tokens (`Tokenizable::set_tokens`). `generate_error_message(&pattern,
+&result)` prints v12's message character for character (`Error at line 1, column 6. Hint: Doe`).
+
+Still to come: autocomplete, the `.cpat` grammar, decorators.
 
 ```rust
 use cpat_core::{Block, Choice, Literal, Pattern, Reference, Regex, Sequence};

@@ -22,6 +22,9 @@
 > Milestone 7 (cursor history: the recording parse, leaf matches, and a `PatternPath` on every
 > recorded match and error, replayed with `Pattern::at_path`) is implemented; see §2 for the
 > path and its cost, and §15 for the rest.
+> Milestone 8 (introspection without parent pointers: tokens, patterns, what comes after a
+> child and what comes next, by path; `find`, `is_equal`, `clone_named`, `Tokenizable`, and
+> `generate_error_message`) is implemented; see §16.
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -505,7 +508,8 @@ build error naming the pattern.
     reference inside an operator of a target reached from elsewhere, the name resolves here.
     This is the §11 deviation for references beneath a choice, met through an operator.
 - **Deferred:** introspection (`getTokens`, `getPatterns`, `…After`, `find`) to the
-  intellisense milestone, which will also skip an atom already being expanded higher up; the
+  intellisense milestone, which will also skip an atom already being expanded higher up (done
+  in milestone 8, §16); the
   `LiteralSet` mode and its tests to M5 (done, §13); the grammar-file cut tests (`~/` in `.cpat`, the
   shell-shaped blow-up test) to the grammar milestone.
 
@@ -633,7 +637,7 @@ build error naming the pattern.
     starts at the next boundary, where the open literal left the cursor. v12's `moveTo` goes back
     to the grapheme's start, so its content overlaps the open and its `exec` fails. Positions
     inside a grapheme don't exist here (§5c). Pinned in `tests/block.rs`.
-- **Deferred to M8 (intellisense):** `getTokens`/`getTokensAfter`/`getPatterns`/`…After`/`find`
+- **Deferred to M8 (intellisense), done there (§16):** `getTokens`/`getTokensAfter`/`getPatterns`/`…After`/`find`
   for both, and `isEqual` (Block.test.ts 'autocomplete introspection' and 'equality',
   TakeUntil.test.ts's introspection and equality tests). `Block::record_match` is called as in
   v12 but can't be observed yet: its close always ends where it does, and the leaf match keeps
@@ -716,11 +720,143 @@ build error naming the pattern.
     recorded match), since keeping it otherwise would copy a path per match.
   - A bounded repeat with `trim_divider` whose first child fails throws a `TypeError` in v12
     (§10), recording or not.
-- **Not ported here:** `generateErrorMessage` and autocomplete, which read the leaf match's
+- **Not ported here:** `generateErrorMessage` (milestone 8, §16) and autocomplete, which read the leaf match's
   pattern's tokens (`getNextTokens`), come with intellisense (milestone 8); the leaf match's
   path is what they will start from. v12's cursor-movement tests (`Move Cursor`, `Text
   Information`, `Empty Text`, `Text with Emojis`) are mapped onto `set_pos` and the snapping
   calls, since the half-open cursor has no `next`/`previous`.
+
+## 16. Introspection *(milestone 8)*
+
+- **Every question is asked about a place.** v12's introspection is defined by `parent`:
+  "what comes next" asks the parent what follows this child, and "am I already being
+  expanded" counts ancestors with my id. Rust patterns have no parents (§2), so a query names
+  its pattern by a `PatternPath` from a root, and the answer names places too: a `Handle` is
+  the path, the `&Pattern` there, and the name and id the instance answers to (a reference's
+  target is renamed after the reference, as v12's resolved clone is). AutoComplete can ask
+  about a handle in turn. `Pattern::introspect()` builds an `Introspection` over a root; the
+  shortcuts on `Pattern` (`tokens`, `patterns`, `tokens_after(child)`, `patterns_after`,
+  `next_tokens(path)`, `next_patterns(path)`, `find`) ask it about the root or a path.
+  `tokens_after` takes a child index where v12 takes the child pattern; an index that names
+  no child is v12's "bogus child" and gets nothing.
+- **The parent chain is rebuilt for one query** (`introspect/loc.rs`). A `Loc` is a link:
+  the place, its parent link, its index there, the scopes a parse would have there, and the
+  id and name the instance answers to. Walking a path makes the chain top-down from the root;
+  a query extends it as it expands patterns, through references too. The guards are v12's,
+  read off the chain: a sequence's first child expanded twice above it offers nothing
+  (`isRecursivePattern`), and a choice skips such an atom (the lesson that ends
+  `a = b | "c"`, `b = a | "d"`: v12 gives `["c", "d", "c", "d", "c"]`, and so does this).
+  Nothing is written into patterns, so a query takes `&Pattern`. *Rejected:* parent indices
+  stored in patterns (they would have to be kept right through every clone and move, for a
+  question asked rarely), and v12's lazy resolution that writes the resolved instance into
+  the reference (it would make a query need `&mut`, and the instance it makes is never
+  parsed).
+- **Children are numbered as `Pattern::at_path` numbers them,** so a leaf match's path from a
+  parse is a place a query can start from. A reference's child 0 is what it resolves to; a
+  choice's are its classified children (operators as their parts, self-references left out);
+  a bounded repeat's are v12's slots; `RightAssociated` is no step.
+- **References resolve as the parse resolves them** (`introspect/frames.rs`), borrowed instead
+  of cloned so a handle can point into the root: the instance or master a parse already found
+  (v12 `_pattern`, `_cachedPattern`), with its home when that home belongs to the implicit
+  scope in force; otherwise a lookup through the contexts on the chain, then the implicit
+  scope, with the same home binding as the parse (§11). The implicit scope is the one an
+  `exec` readied for this root when there is one (so homes found by the parse still apply,
+  compared by identity); otherwise the root's live tree, searched in v12's `findPattern`
+  order (`scope::visit_targets`, which `exec`'s scope is now built from too). `exec`'s scope
+  can't be used for a root never exec'd: it holds clones, which a handle couldn't borrow.
+- **A choice classifies with the parse's rule.** `classify::role_of` and `operator_part`,
+  split out of classification, decide each alternative's role (resolving a reference one
+  level), so a choice that hasn't classified yet (a reference alternative, never parsed)
+  answers as it will once it has. An operator's handle is the operator the choice built when
+  it is classified, else the sequence it is made from, named as the operator.
+- **One rule set for tokens and patterns** (`introspect/select.rs`). v12 writes each rule
+  twice (`getTokens`/`getPatterns`, `…After`, `getNext…`); the copies differ only in what a
+  leaf contributes, in how `!x` and a cut turn "what follows me" into their own answer, and in
+  how a list of next patterns becomes the answer. `Select` says those three things for
+  `Tokens` and for `Patterns`; every per-kind rule is written once.
+- **The repeat facade.** v12 wraps each repeat in a `Repeat` whose only child is the
+  `InfiniteRepeat`/`FiniteRepeat` that works. The Rust `Repeat` answers as the inner repeat
+  does with the facade as its parent, which is what every query climbing from inside the
+  repeat sees in v12 (after the child: the divider, or the child again, and what follows the
+  repeat). Asking the facade itself `getTokensAfter(x)` ignores `x` and answers what follows
+  the facade; no such second pattern exists here (a deviation below).
+- **`find` is each pattern's own `find`, then `findPattern`.** A literal, regex, take-until or
+  reference finds nothing, not even itself; a context runs its child's own `find` (so a
+  literal child finds nothing); everything else searches itself: children first, depth first,
+  never into a reference. A choice's children are its classified children, which v12 searches
+  once built. A bounded repeat's search stops after its first child and divider slots: later
+  slots hold the same patterns, and `{1,1000000}` has a million.
+- **`is_equal`** is v12's: the same type with equal children in order; a literal compares its
+  token, a regex its source, a reference its name. A choice compares its alternatives as given
+  (v12 compares classified children once built, which follow from them). A bounded repeat's
+  children are its slots, so its bound, divider and trimming count; `min` doesn't, as in v12.
+  `Pattern::type_name` is v12's `type` (`"expression"` for a choice).
+- **`clone_named`** replaces `renamed` (v12 `clone(name)`; one name for one operation).
+- **`Tokenizable`** is a trait (`tokens`, `set_tokens`) that `Regex`, `TakeUntil` and `Custom`
+  implement, so `Literal` and `Sequence` can't be given tokens at compile time; on a `Pattern`,
+  `tokenizable_mut()` is `None` for every other kind. The regex's and take-until's inherent
+  `tokens`/`set_tokens` moved onto it, and `Custom` got a token list (a v12 custom pattern
+  writes its own `getTokens`; a Rust one is told its tokens, like a regex).
+- **`generate_error_message(pattern, result)`** prints v12's text exactly, quirks included,
+  because callers match on it: with no leaf match (or one ending at 0), line 1, column 1 and
+  the root's tokens joined with `", "`; after one, its next tokens joined with `","` (a JS
+  array in a template string), and the line and column of the text up to ONE UTF-16 UNIT PAST
+  the match (v12's `substring` is inclusive): a newline right after the match starts line
+  n+1 at column 0, and an emoji right after it counts one unit. Suggestions are trimmed and
+  blanks dropped. It needs the text, so `ParseResult` keeps it (`ParseResult::text`).
+- **A name that resolves to nothing contributes nothing.** v12 throws "Couldn't find". A
+  query is a question, not a parse, and `check`/`exec` already report the name as data (§11).
+- **A query is bounded twice, by counts, never by time.** A grammar whose expansion never ends
+  (`a = "x"? a`: only a FIRST child is checked for recursion) makes v12 recurse until the JS
+  engine throws `RangeError`, and the same recursion would abort a Rust process. The chain
+  stops growing at `MAX_DEPTH` (256), which bounds the stack (checked on a 2 MB test thread).
+  Depth doesn't bound the work: an expansion that branches (`a = !"z" a`, `a = "x"?
+  ("y"? a)? a`) makes twice the places per level, and ran for minutes before the second
+  bound: a query makes at most `BUDGET` (100 000) places, then answers with what it found.
+  The budget is per query, reset at every public entry. Every query over the grammars of
+  v12's tests made at most 31 places (measured), so neither bound fires on a real grammar.
+- **Checked against v12** by running both (a TS runner against v12's `src` and a Rust one,
+  reading one JSON spec) on 34 grammars: every v12 test grammar here, references to
+  operators, renamed references, contexts found by their own name, nested contexts, homes,
+  roots parsed before the query, cuts and lookaheads in every position, every repeat kind,
+  blocks, take-until, literal sets, multi-line and emoji text. For every place reachable to
+  depth 6: tokens, patterns (names and paths), next tokens and patterns, and tokens and
+  patterns after each child (432 places); `find` for every name; the root's tokens; and
+  `generate_error_message` on 115 inputs. Same answers except the deviations below. The tests
+  pin v12's exact answers where v12's own tests only check `toContain` or a length. A
+  mutation pass removed or bent each mechanism above (the two recursion guards, the
+  continuation past optionals and lookaheads, each sibling and repeat rule, each choice role,
+  `!x`/cut answering what follows, home binding at each place it applies, resolved instances
+  first, the readied scope, the frames of contexts and operator parts, renaming, each `find`
+  rule, each `is_equal` rule, each message quirk, the depth limit, the budget and its reset);
+  each made a test fail.
+- **Deviations from v12:**
+  - The repeat facade (above): `Repeat.test.ts`'s 'Finite Repeat Get Tokens', 'Get Tokens
+    After' and 'Repeat Get Patterns' ask the facade for what follows `number`, a child it
+    doesn't have, and v12 answers what follows the facade (`[]`, `["B"]`, `[]`). Here the
+    repeat that owns `number` answers (`["1"]`, `["1", "B"]`, `[number]`), which is v12's
+    `number.getNextTokens()`. Pinned in `tests/introspect_repeat.rs`.
+  - v12's `RightAssociated` doesn't make itself its child's parent, so a marked atom asked
+    for what follows it answers `[]` there (and an error message after one has an empty
+    hint). The marker is no step here, so the atom answers what follows the marker. A marked
+    operator is unwrapped into its operator in both. Pinned in `tests/introspect_choice.rs`.
+  - v12's `TakeUntil` doesn't parent its terminator (§15): its handle's path stops at the
+    terminator there; here it is the take-until's child 0.
+  - Unknown names contribute nothing; v12 throws. Never-ending expansions answer within the
+    two bounds; v12 throws `RangeError`. Pinned in `tests/introspect_reference.rs` and
+    `tests/introspect_sequence.rs`.
+  - Home binding (§11) applies to queries as it does to the parse: a target found in the
+    implicit scope resolves its names among the contexts around its definition, so a
+    reference inside it to the enclosing context's own name finds that context, where v12
+    resolves from where the reference is used.
+  - A context found by its own name (v12 `getPatternWithinContext`) is built at lookup and is
+    in no tree, so a handle at its place holds its child (named as the context). v12 hands out
+    the context.
+  - v12's choice has no children until its first parse or `build()`, so `find` and `isEqual`
+    on an unbuilt choice see none; here they always see them (as the implicit scope does,
+    §11). v12's tests build first.
+  - A marked atom's recursion check uses the atom's id; v12's atom is the marker clone, with
+    the marker's id. Only a marked atom that leads back into its own choice could tell.
 
 ## Behavior fixed relative to clarity-pattern-parser v11
 

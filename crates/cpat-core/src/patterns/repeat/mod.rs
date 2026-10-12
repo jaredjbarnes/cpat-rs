@@ -93,6 +93,15 @@ impl Repeat {
         }
     }
 
+    /// v12's slot count for a bounded repeat (its `children.length`), `None`
+    /// without a bound.
+    pub(crate) fn slots(&self) -> Option<usize> {
+        match &self.strategy {
+            Strategy::Unbounded(_) => None,
+            Strategy::Bounded(s) => Some(s.slot_count()),
+        }
+    }
+
     /// The child and divider, for walks that may need to change them (the
     /// reference link cache).
     pub(crate) fn parts_mut(&mut self) -> (&mut Pattern, Option<&mut Pattern>) {

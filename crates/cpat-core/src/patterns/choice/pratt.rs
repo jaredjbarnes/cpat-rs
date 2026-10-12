@@ -58,8 +58,8 @@ impl Operator {
 }
 
 /// What a classified alternative became, in declaration order.
-#[derive(Clone, Copy, Debug)]
-pub(super) enum Role {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Role {
     Atom,
     Prefix,
     Postfix,

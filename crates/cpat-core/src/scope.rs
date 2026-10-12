@@ -76,6 +76,23 @@ pub(crate) struct Found {
     pub(crate) home: Option<Rc<[ScopeFrame]>>,
 }
 
+/// What a scope answers for a name, borrowed from it.
+pub(crate) enum TargetRef<'a> {
+    /// A definition, and where it sits when it came from the implicit scope.
+    Entry {
+        master: &'a Rc<Pattern>,
+        home: Option<&'a Rc<[ScopeFrame]>>,
+    },
+    /// The context that owns the scope, answering to its own name: `child`
+    /// is a pristine copy of its child (a scope can't hold the context that
+    /// holds it).
+    Owner {
+        scope: &'a Scope,
+        owner: Meta,
+        child: &'a Pattern,
+    },
+}
+
 impl Scope {
     /// A context's scope. Later patterns win over earlier ones with the same
     /// name, as v12's record assignment does.
@@ -117,6 +134,32 @@ impl Scope {
         }
     }
 
+    /// What this scope answers for `name` when it sits on the stack as
+    /// `owner`'s scope, borrowed: a definition, or the context itself
+    /// (v12 `getPatternWithinContext`). `None` means "look further out".
+    pub(crate) fn find_ref(&self, owner: Meta, name: Name) -> Option<TargetRef<'_>> {
+        if let Some(own) = &self.owner
+            && (name == owner.name || name == own.original_name)
+        {
+            // The context itself. If it only wraps a reference, v12 moves
+            // on to the next context out without checking this one's list.
+            if matches!(own.child, Pattern::Reference(_)) {
+                return None;
+            }
+            return Some(TargetRef::Owner {
+                scope: self,
+                owner,
+                child: &own.child,
+            });
+        }
+
+        let entry = self.patterns.get(&name)?;
+        is_valid_target(&entry.master).then_some(TargetRef::Entry {
+            master: &entry.master,
+            home: entry.home.as_ref(),
+        })
+    }
+
     pub(crate) fn patterns(&self) -> impl Iterator<Item = (Name, &Pattern)> {
         self.patterns
             .iter()
@@ -126,19 +169,39 @@ impl Scope {
 
 /// `contexts` are the contexts around `pattern` in the root's tree, which
 /// become each entry's home.
-fn collect_first_matches(
-    pattern: &Pattern,
-    contexts: &mut Vec<ScopeFrame>,
+fn collect_first_matches<'r>(
+    pattern: &'r Pattern,
+    contexts: &mut Vec<&'r Context>,
     into: &mut HashMap<Name, Entry>,
 ) {
+    visit_targets(pattern, contexts, &mut |target, contexts| {
+        into.entry(target.meta().name).or_insert_with(|| Entry {
+            master: Rc::new(target.clone()),
+            home: Some(contexts.iter().map(|context| context.frame()).collect()),
+        });
+    });
+}
+
+/// Calls `visit` with every valid target in `pattern`'s tree, in v12
+/// `findPattern` order (depth first, children before their parent, never
+/// into a reference), with the contexts around it, outermost first. The
+/// first target visited under a name is the one a search for it finds:
+/// `exec`'s implicit scope and introspection's live lookup both read it.
+pub(crate) fn visit_targets<'r>(
+    pattern: &'r Pattern,
+    contexts: &mut Vec<&'r Context>,
+    visit: &mut dyn FnMut(&'r Pattern, &[&'r Context]),
+) {
     if !matches!(pattern, Pattern::Reference(_)) {
-        let context = match pattern {
-            Pattern::Context(context) => Some(context.frame()),
-            _ => None,
+        let entered = match pattern {
+            Pattern::Context(context) => {
+                contexts.push(context);
+                true
+            }
+            _ => false,
         };
-        let entered = context.map(|frame| contexts.push(frame)).is_some();
         for child in pattern.child_patterns() {
-            collect_first_matches(child, contexts, into);
+            visit_targets(child, contexts, visit);
         }
         if entered {
             contexts.pop();
@@ -146,10 +209,7 @@ fn collect_first_matches(
     }
 
     if is_valid_target(pattern) {
-        into.entry(pattern.meta().name).or_insert_with(|| Entry {
-            master: Rc::new(pattern.clone()),
-            home: Some(contexts.as_slice().into()),
-        });
+        visit(pattern, contexts);
     }
 }
 
@@ -174,32 +234,36 @@ impl ScopeFrame {
     /// `home` here holds only the definition's contexts; `lookup` adds the
     /// frames below.
     fn find(&self, name: Name) -> Option<Found> {
-        if let Some(owner) = &self.scope.owner
-            && (name == self.owner.name || name == owner.original_name)
-        {
-            // The context itself. If it only wraps a reference, v12 moves
-            // on to the next context out without checking this one's list.
-            if matches!(owner.child, Pattern::Reference(_)) {
-                return None;
+        Some(match self.scope.find_ref(self.owner, name)? {
+            TargetRef::Owner {
+                scope,
+                owner,
+                child,
+            } => {
+                let context = Context::from_scope(owner, child.clone(), Rc::clone(&self.scope));
+                // No home: v12 clones the live context, but a context's
+                // clone clones its child twice and the second copy drops what
+                // its references resolved, so they resolve where they are used.
+                Found {
+                    master: Rc::new(context.into()),
+                    key: TargetKey::Owner(std::ptr::from_ref(scope)),
+                    home: None,
+                }
             }
-            let context =
-                Context::from_scope(self.owner, owner.child.clone(), Rc::clone(&self.scope));
-            // No home: v12 clones the live context, but a context's
-            // clone clones its child twice and the second copy drops what
-            // its references resolved, so they resolve where they are used.
-            return Some(Found {
-                master: Rc::new(context.into()),
-                key: TargetKey::Owner(Rc::as_ptr(&self.scope)),
-                home: None,
-            });
-        }
-
-        let entry = self.scope.patterns.get(&name)?;
-        is_valid_target(&entry.master).then(|| Found {
-            master: Rc::clone(&entry.master),
-            key: TargetKey::Entry(Rc::as_ptr(&entry.master)),
-            home: entry.home.clone(),
+            TargetRef::Entry { master, home } => Found {
+                master: Rc::clone(master),
+                key: TargetKey::Entry(Rc::as_ptr(master)),
+                home: home.map(Rc::clone),
+            },
         })
+    }
+
+    pub(crate) fn scope(&self) -> &Scope {
+        &self.scope
+    }
+
+    pub(crate) fn owner(&self) -> Meta {
+        self.owner
     }
 
     /// Which frame this is: frames with the same scope and owner name

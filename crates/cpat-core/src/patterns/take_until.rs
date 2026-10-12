@@ -14,8 +14,9 @@ pub struct TakeUntil {
     pub(crate) meta: Meta,
     pub(crate) terminator: Box<Pattern>,
     // What intellisense suggests for the free text (v12 `setTokens`). The
-    // pattern can't know what text is welcome, so the grammar author says.
-    tokens: Vec<String>,
+    // pattern can't know what text is welcome, so the grammar author says
+    // (`Tokenizable`).
+    pub(crate) tokens: Vec<String>,
 }
 
 impl TakeUntil {
@@ -29,14 +30,6 @@ impl TakeUntil {
 
     pub fn terminator(&self) -> &Pattern {
         &self.terminator
-    }
-
-    pub fn tokens(&self) -> &[String] {
-        &self.tokens
-    }
-
-    pub fn set_tokens(&mut self, tokens: Vec<String>) {
-        self.tokens = tokens;
     }
 
     pub(crate) fn parse(&mut self, cursor: &mut Cursor<'_>) -> Option<NodeId> {

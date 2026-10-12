@@ -190,9 +190,10 @@ impl Pattern {
         self.meta_ref().name.as_str()
     }
 
-    /// A clone under a new name. It keeps the original's id: it is the same
-    /// pattern, called something else.
-    pub fn renamed(&self, name: &str) -> Pattern {
+    /// A clone under a new name (v12 `clone(name)`). It keeps the
+    /// original's id: it is the same pattern, called something else, and
+    /// the recursion guards recognise it.
+    pub fn clone_named(&self, name: &str) -> Pattern {
         self.renamed_to(Name::new(name))
     }
 

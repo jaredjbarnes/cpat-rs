@@ -4,9 +4,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use cpat_core::{
-    Block, Choice, Context, Cursor, Custom, CustomParse, Cut, Literal, Meta, Node, NodeId,
-    NodeKind, Not, Optional, ParseError, Pattern, PatternId, Reference, Regex, Repeat,
-    RepeatOptions, RightAssociated, Sequence, TakeUntil,
+    Block, Choice, Context, Cursor, Custom, CustomParse, Cut, Handle, Literal, Meta, Node, NodeId,
+    NodeKind, Not, Optional, ParseError, Pattern, PatternId, PatternPath, Reference, Regex, Repeat,
+    RepeatOptions, RightAssociated, Sequence, TakeUntil, Tokenizable,
 };
 
 pub fn lit(name: &str, token: &str) -> Pattern {
@@ -210,4 +210,34 @@ pub fn frame_spy() -> (Pattern, SeenFrames) {
     let seen = SeenFrames::default();
     let spy = Custom::new("spy", Box::new(Spy(Rc::clone(&seen))));
     (spy.into(), seen)
+}
+
+/// A regex with intellisense tokens set.
+pub fn re_tokens(name: &str, source: &str, tokens: &[&str]) -> Pattern {
+    let mut regex = Regex::new(name, source).unwrap();
+    regex.set_tokens(tokens.iter().map(|t| t.to_string()).collect());
+    regex.into()
+}
+
+/// A `PatternPath` from its steps.
+pub fn at(steps: &[u32]) -> PatternPath {
+    PatternPath::new(steps)
+}
+
+/// The names of introspection results, in order.
+pub fn names(handles: &[Handle<'_>]) -> Vec<&'static str> {
+    handles.iter().map(Handle::name).collect()
+}
+
+/// The paths of introspection results, in order, as `/0/1` strings.
+pub fn paths(handles: &[Handle<'_>]) -> Vec<String> {
+    handles.iter().map(|h| format!("{:?}", h.path)).collect()
+}
+
+/// The path of the first pattern named `name` in `root` (v12
+/// `root.find(p => p.name === name)`).
+pub fn path_of(root: &Pattern, name: &str) -> PatternPath {
+    root.find(|p| p.name() == name)
+        .unwrap_or_else(|| panic!("no pattern named {name}"))
+        .path
 }

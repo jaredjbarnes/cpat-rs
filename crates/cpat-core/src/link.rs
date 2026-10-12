@@ -49,6 +49,18 @@ pub(crate) fn check(root: &Pattern) -> Result<(), PatternError> {
     check_with(root, &scope, CHECK_BUDGET)
 }
 
+/// The implicit scope `exec` readied for `root`, borrowed from its first
+/// reference, if `root` was exec'd as it is now. Introspection looks names
+/// up in it so that references a parse already resolved keep their homes
+/// (`scope::home_applies` compares scopes by identity).
+pub(crate) fn readied_scope_ref(root: &Pattern) -> Option<&Scope> {
+    let key = (root.id(), root.meta().name);
+    first_reference(root)?
+        .root_link()
+        .filter(|link| link.root == key)
+        .map(|link| &*link.scope)
+}
+
 /// The scope cached on `root`'s first reference, if it was readied for
 /// this very root.
 fn readied_scope(root: &Pattern, first: &Reference) -> Option<Rc<Scope>> {

@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use cpat_core::{Cursor, NodeKind, PatternError, Regex};
+use cpat_core::{Cursor, NodeKind, PatternError, Regex, Tokenizable};
 
 #[test]
 fn empty_source_is_rejected() {

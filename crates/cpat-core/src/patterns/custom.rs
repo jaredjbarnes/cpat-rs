@@ -28,6 +28,9 @@ impl Clone for Box<dyn CustomParse> {
 pub struct Custom {
     pub(crate) meta: Meta,
     parser: Box<dyn CustomParse>,
+    // What intellisense suggests for it (`Tokenizable`): only its author
+    // knows what text it takes.
+    pub(crate) tokens: Vec<String>,
 }
 
 impl Custom {
@@ -35,6 +38,7 @@ impl Custom {
         Custom {
             meta: Meta::new(name),
             parser,
+            tokens: Vec::new(),
         }
     }
 

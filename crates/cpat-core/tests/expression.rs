@@ -2,11 +2,11 @@
 //! Pratt and ordered modes), with hand-built references. Expected trees and
 //! errors come from running v12 on the same grammars and inputs.
 //!
-//! Deferred: the introspection tests (`getTokens`, `getTokensAfter`,
-//! `getPatterns`, `getPatternsAfter`, `getNextTokens`, `getNextPatterns`,
-//! `find`, `isEqual`, "Options like", "Suggest", "continuation tokens") to
-//! the intellisense milestone (M8). The "literal-set fast path" tests are
-//! in `tests/literal_set.rs`.
+//! The introspection tests (`getTokens`, `getTokensAfter`, `getPatterns`,
+//! `getPatternsAfter`, `getNextTokens`, `getNextPatterns`, `find`,
+//! `isEqual`, "continuation tokens") are in `tests/introspect_choice.rs`;
+//! "Suggest" waits for autocomplete. The "literal-set fast path" tests are
+//! in `tests/literal_set.rs` (their error messages in `error_message.rs`).
 
 mod common;
 
@@ -209,7 +209,7 @@ fn tail() {
 #[test]
 fn clone_with_new_name() {
     let original = expression_pattern();
-    let mut clone = original.renamed("new-expression");
+    let mut clone = original.clone_named("new-expression");
 
     assert_eq!(clone.name(), "new-expression");
     assert!(matches!(clone, Pattern::Choice(_)));
@@ -819,12 +819,12 @@ fn a_renamed_choice_still_recognises_its_self_references() {
     let Pattern::Context(context) = referenced_alternatives() else {
         unreachable!()
     };
-    let renamed = context.child().renamed("other");
+    let renamed = context.child().clone_named("other");
     let definitions = context
         .patterns_within_context()
         .into_values()
         .cloned()
-        .chain([renamed.renamed("expr")])
+        .chain([renamed.clone_named("expr")])
         .collect();
     let mut root = common::context("root", renamed, definitions);
 

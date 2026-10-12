@@ -2,10 +2,9 @@
 //! Every expected outline was produced by running v12 on the same pattern
 //! and input (`name@start..end`, TS inclusive `lastIndex` L printed as L+1).
 //!
-//! Deferred to the intellisense milestones: 'Get Tokens', 'Get Tokens After
-//! With No Parent', 'Get Next Tokens*', 'Get Tokens After*', 'Get Patterns*',
-//! 'Get Next Patterns*', 'Find Pattern' and 'Properties' (`parent`,
-//! `children`), which need the introspection API.
+//! 'Get Tokens', 'Get Tokens After*', 'Get Next Tokens*', 'Get Patterns*',
+//! 'Get Next Patterns*', 'Find Pattern' and 'Properties' are in
+//! `tests/introspect_reference.rs`.
 
 mod common;
 
@@ -493,7 +492,7 @@ fn a_renamed_root_is_checked_again() {
     let mut expr = parens();
     assert!(expr.test("(x)"));
 
-    let mut renamed = expr.renamed("other");
+    let mut renamed = expr.clone_named("other");
 
     assert_eq!(
         renamed.exec("((x))").pattern_error,
@@ -510,7 +509,7 @@ fn references_and_their_clones_keep_their_identity() {
     assert_eq!(clone.target_name(), "target");
     let original: Pattern = original.into();
     assert_eq!(Pattern::from(clone).id(), original.id());
-    assert_eq!(original.renamed("s").id(), original.id());
+    assert_eq!(original.clone_named("s").id(), original.id());
 }
 
 #[test]

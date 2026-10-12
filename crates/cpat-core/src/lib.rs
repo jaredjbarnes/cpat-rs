@@ -22,10 +22,13 @@
 mod ancestors;
 mod children;
 mod cursor;
+mod equality;
+mod error_message;
 mod exec;
 mod graphemes;
 mod halt;
 mod history;
+mod introspect;
 mod leaves;
 mod link;
 mod name;
@@ -39,13 +42,16 @@ mod pattern_path;
 mod patterns;
 mod regex_translate;
 mod scope;
+mod tokenizable;
 mod tree;
 
 pub use ancestors::Frame;
 pub use cursor::Cursor;
+pub use error_message::generate_error_message;
 pub use exec::ParseResult;
 pub use halt::{DEFAULT_MAX_DEPTH, Limits, TooDeep};
 pub use history::HistoryRecord;
+pub use introspect::{Handle, Introspection};
 pub use name::Name;
 pub use parse_error::{Match, ParseError};
 pub use pattern::Pattern;
@@ -56,4 +62,5 @@ pub use patterns::{
     Block, Choice, ChoiceMode, Context, Custom, CustomParse, Cut, Literal, Not, Optional,
     Reference, Regex, Repeat, RepeatOptions, RightAssociated, Sequence, TakeUntil,
 };
+pub use tokenizable::Tokenizable;
 pub use tree::{Node, NodeId, NodeKind, Tree};

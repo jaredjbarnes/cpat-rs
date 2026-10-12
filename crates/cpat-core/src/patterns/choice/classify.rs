@@ -117,73 +117,55 @@ pub(super) fn classify(
             Pattern::Reference(reference) => resolve(reference.target()),
             _ => None,
         };
-        // Only a sequence can be an operator: `e "+" e` reads its children
-        // in order. Any other pattern merely CONTAINS the choice and is an
-        // operand; reading its first and last children as operands would
-        // misread `b = a | "d"` as the postfix `a "d"`.
-        let Some(children) = sequence_children(resolved.as_deref().unwrap_or(inner)) else {
-            literals = match (
-                literals.take(),
-                literal_entry(alternative, resolved.as_deref()),
-            ) {
-                (Some(mut entries), Some(entry)) => {
-                    entries.push(entry);
-                    Some(entries)
-                }
-                _ => None,
-            };
-            atoms.push(index);
-            roles.push(Role::Atom);
+        let seen = resolved.as_deref().unwrap_or(inner);
+        let Some(role) = role_of(seen, self_name) else {
+            // Neither an operand nor an operator (`e e`, `"x" e e`): v12
+            // drops it, and it is never tried.
             continue;
         };
-        let is_self = |child: Option<&Pattern>| child.is_some_and(|c| c.meta().name == self_name);
-        let starts = is_self(children.first());
-        let ends = is_self(children.last());
-        if !starts && !ends {
-            literals = None;
-            atoms.push(index);
-            roles.push(Role::Atom);
-            continue;
-        }
-
-        let count = children.iter().filter(|c| is_self(Some(c))).count();
+        roles.push(role);
         // The operator's name, which keys its precedence and association and
         // names its nodes. Under a marker (which has no name) it is the
         // child's; a resolved reference's target answers to the reference's
         // name, as v12's resolved clone does.
         let name = inner.meta().name;
-        let operator = |suffix: &str, part: &[Pattern]| -> Result<Operator, PatternError> {
-            if part.is_empty() {
-                return Err(PatternError::SelfOnlyAlternative {
-                    choice: choice.as_str().to_string(),
-                    alternative: name.as_str().to_string(),
-                });
+        let operators = match role {
+            Role::Atom => {
+                literals = match (
+                    literals.take(),
+                    literal_entry(alternative, resolved.as_deref()),
+                ) {
+                    (Some(mut entries), Some(entry)) => {
+                        entries.push(entry);
+                        Some(entries)
+                    }
+                    _ => None,
+                };
+                atoms.push(index);
+                continue;
             }
-            let sequence = Sequence::new(&format!("{}-{suffix}", name.as_str()), part.to_vec())?;
-            Ok(Operator::new(sequence, name))
+            Role::Prefix => &mut prefixes,
+            Role::Postfix => &mut postfixes,
+            Role::Infix => {
+                let association = match alternative {
+                    Pattern::RightAssociated(_) => Association::Right,
+                    _ => Association::Left,
+                };
+                table.set_association(name, association);
+                &mut infixes
+            }
         };
 
-        let len = children.len();
-        if ends && count == 1 {
-            prefixes.push(operator("prefix", &children[..len - 1])?);
-            roles.push(Role::Prefix);
-            table.set_precedence(name, index);
-        } else if starts && count == 1 {
-            postfixes.push(operator("postfix", &children[1..])?);
-            roles.push(Role::Postfix);
-            table.set_precedence(name, index);
-        } else if starts && ends && len > 2 {
-            infixes.push(operator("delimiter", &children[1..len - 1])?);
-            roles.push(Role::Infix);
-            table.set_precedence(name, index);
-            let association = match alternative {
-                Pattern::RightAssociated(_) => Association::Right,
-                _ => Association::Left,
-            };
-            table.set_association(name, association);
+        let part = operator_part(role, sequence_children(seen).unwrap_or(&[]));
+        if part.is_empty() {
+            return Err(PatternError::SelfOnlyAlternative {
+                choice: choice.as_str().to_string(),
+                alternative: name.as_str().to_string(),
+            });
         }
-        // Anything else (`e e`, `"x" e e`) is neither an operand nor an
-        // operator, and v12 drops it: it is never tried.
+        let sequence = Sequence::new(&operator_name(role, name), part.to_vec())?;
+        operators.push(Operator::new(sequence, name));
+        table.set_precedence(name, index);
     }
 
     if prefixes.is_empty() && postfixes.is_empty() && infixes.is_empty() {
@@ -195,6 +177,63 @@ pub(super) fn classify(
     Ok(Ready::Pratt(Box::new(Pratt::new(
         atoms, prefixes, postfixes, infixes, table, &roles,
     ))))
+}
+
+/// What an alternative becomes, seen through its marker and a reference
+/// resolved one level (`seen`), in a choice whose self-references are
+/// children named `self_name`. `None`: neither an operand nor an operator,
+/// so it is dropped.
+///
+/// Only a sequence can be an operator: `e "+" e` reads its children in
+/// order. Any other pattern merely CONTAINS the choice and is an operand;
+/// reading its first and last children as operands would misread
+/// `b = a | "d"` as the postfix `a "d"`.
+pub(crate) fn role_of(seen: &Pattern, self_name: Name) -> Option<Role> {
+    let Some(children) = sequence_children(seen) else {
+        return Some(Role::Atom);
+    };
+    let is_self = |child: Option<&Pattern>| child.is_some_and(|c| c.meta().name == self_name);
+    let starts = is_self(children.first());
+    let ends = is_self(children.last());
+    if !starts && !ends {
+        return Some(Role::Atom);
+    }
+
+    let count = children.iter().filter(|c| is_self(Some(c))).count();
+    if ends && count == 1 {
+        Some(Role::Prefix)
+    } else if starts && count == 1 {
+        Some(Role::Postfix)
+    } else if starts && ends && children.len() > 2 {
+        Some(Role::Infix)
+    } else {
+        None
+    }
+}
+
+/// An operator's part of its sequence's `children`: the children without
+/// the self-references (all of them for an atom).
+pub(crate) fn operator_part(role: Role, children: &[Pattern]) -> &[Pattern] {
+    let len = children.len();
+    match role {
+        Role::Atom => children,
+        Role::Prefix => &children[..len.saturating_sub(1)],
+        Role::Postfix => &children[len.min(1)..],
+        Role::Infix if len >= 2 => &children[1..len - 1],
+        Role::Infix => &[],
+    }
+}
+
+/// The name of the operator made from the alternative called `name`
+/// (v12's `<name>-prefix`, `-postfix`, `-delimiter`).
+pub(crate) fn operator_name(role: Role, name: Name) -> String {
+    let suffix = match role {
+        Role::Atom => return name.as_str().to_string(),
+        Role::Prefix => "prefix",
+        Role::Postfix => "postfix",
+        Role::Infix => "delimiter",
+    };
+    format!("{}-{suffix}", name.as_str())
 }
 
 /// What an atom matches when it is a literal: the alternative itself, or
@@ -220,14 +259,14 @@ fn literal_entry(alternative: &Pattern, resolved: Option<&Pattern>) -> Option<En
 }
 
 /// The alternative without its `RightAssociated` marker.
-fn unmarked(alternative: &Pattern) -> &Pattern {
+pub(crate) fn unmarked(alternative: &Pattern) -> &Pattern {
     match alternative {
         Pattern::RightAssociated(marker) => marker.child(),
         _ => alternative,
     }
 }
 
-fn sequence_children(pattern: &Pattern) -> Option<&[Pattern]> {
+pub(crate) fn sequence_children(pattern: &Pattern) -> Option<&[Pattern]> {
     match pattern {
         Pattern::Sequence(sequence) => Some(sequence.children()),
         _ => None,

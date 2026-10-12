@@ -1,10 +1,10 @@
 //! The one choice pattern (DESIGN §8): `a | b | c`, in one of three modes
 //! picked by classifying its alternatives.
 
-mod classify;
+pub(crate) mod classify;
 mod literal_set;
 mod ordered;
-mod pratt;
+pub(crate) mod pratt;
 mod precedence;
 
 use std::rc::Rc;
@@ -117,6 +117,11 @@ impl Choice {
             choice.classify_with(&|_| None)?;
         }
         Ok(choice)
+    }
+
+    /// The name a self-reference has (v12 `_originalName`).
+    pub(crate) fn self_name(&self) -> Name {
+        self.self_name
     }
 
     /// The alternatives as they were given (v12 `originalPatterns`).

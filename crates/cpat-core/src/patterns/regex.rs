@@ -13,7 +13,8 @@ pub struct Regex {
     pub(crate) meta: Meta,
     source: Box<str>,
     matcher: Matcher,
-    tokens: Vec<String>,
+    // What intellisense suggests for it (`Tokenizable`).
+    pub(crate) tokens: Vec<String>,
 }
 
 /// The engine is chosen once, when the pattern is built: the linear-time
@@ -87,14 +88,6 @@ impl Regex {
     /// Whether this regex needed the backtracking engine.
     pub fn is_fancy(&self) -> bool {
         matches!(self.matcher, Matcher::Fancy(_))
-    }
-
-    pub fn tokens(&self) -> &[String] {
-        &self.tokens
-    }
-
-    pub fn set_tokens(&mut self, tokens: Vec<String>) {
-        self.tokens = tokens;
     }
 
     pub(crate) fn parse(&mut self, cursor: &mut Cursor<'_>) -> Option<NodeId> {

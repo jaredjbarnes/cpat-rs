@@ -1,10 +1,10 @@
 //! Ports of v12 `Context.test.ts`, plus naming and lookup cases checked
 //! against v12 on the same inputs.
 //!
-//! Deferred: 'With Grammar' (the grammar milestone), and 'isEqual…',
-//! 'find locates…', 'standalone introspection…', 'introspection delegates…',
-//! 'getTokens delegates…' and 'getPatterns delegates…' (the introspection
-//! API).
+//! Deferred: 'With Grammar' (the grammar milestone). 'isEqual…', 'find
+//! locates…', 'standalone introspection…', 'introspection delegates…',
+//! 'getTokens delegates…' and 'getPatterns delegates…' are in
+//! `tests/introspect_reference.rs`.
 
 mod common;
 
@@ -199,7 +199,7 @@ fn a_renamed_context_still_answers_to_its_original_name() {
         seq("s", vec![lit("a", "a"), opt("o", reference("c"))]),
         vec![],
     )
-    .renamed("d");
+    .clone_named("d");
 
     assert_eq!(exec_outline(&mut renamed, "a").0, "d@0..1[a@0..1]");
     assert_eq!(

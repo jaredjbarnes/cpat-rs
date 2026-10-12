@@ -1,6 +1,6 @@
 //! Ported from v12 `TakeUntil.test.ts`. Its introspection tests
 //! (`getTokensAfter`, `getPatterns`, `find`, `getNextTokens`, the parent
-//! getter) and `isEqual` belong to the intellisense milestone (M8). Cursor
+//! getter) and `isEqual` are in `introspect_leaves.rs`. Cursor
 //! positions are half-open bytes: v12's inclusive index L after a match is
 //! `pos` L+1 here. Values not in v12's tests were taken from running v12 on
 //! the same pattern and input.
@@ -8,7 +8,7 @@
 mod common;
 
 use common::*;
-use cpat_core::{Cursor, NodeKind, Pattern, TakeUntil};
+use cpat_core::{Cursor, NodeKind, Pattern, TakeUntil, Tokenizable};
 
 fn script_content() -> Pattern {
     take_until("script-content", lit("close-script-tag", "</script"))
@@ -120,7 +120,7 @@ fn a_clone_keeps_name_and_id_and_works_on_its_own() {
 #[test]
 fn a_clone_with_a_new_name() {
     let pattern = take_until("script-content", lit("close", "</script"));
-    let mut renamed = pattern.renamed("style-content");
+    let mut renamed = pattern.clone_named("style-content");
 
     assert_eq!(renamed.name(), "style-content");
     assert_eq!(renamed.id(), pattern.id());

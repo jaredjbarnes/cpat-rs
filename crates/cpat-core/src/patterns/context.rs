@@ -56,6 +56,12 @@ impl Context {
             .collect()
     }
 
+    /// The definitions this context puts in scope, borrowed (introspection
+    /// looks names up without parsing).
+    pub(crate) fn scope(&self) -> &Scope {
+        &self.scope
+    }
+
     pub(crate) fn frame(&self) -> ScopeFrame {
         ScopeFrame::new(Rc::clone(&self.scope), self.meta)
     }

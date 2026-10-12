@@ -178,6 +178,11 @@ impl Bounded {
 
     /// The pattern in `slot` (`Pattern::at_path`): v12's per-slot child
     /// list, child and divider alternating.
+    /// How many slots v12 would build (its `children.length`).
+    pub(super) fn slot_count(&self) -> usize {
+        self.slots
+    }
+
     pub(super) fn slot(&self, slot: usize) -> Option<&Pattern> {
         if slot >= self.slots {
             return None;

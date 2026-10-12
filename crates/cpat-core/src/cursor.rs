@@ -570,6 +570,7 @@ impl<'t> Cursor<'t> {
             too_deep,
             leaf_matches: self.leaves.to_matches(),
             history: self.history.map(|history| *history),
+            text: self.text,
         }
     }
 }

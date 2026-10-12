@@ -76,7 +76,7 @@ fn clone_keeps_name_and_identity() {
 #[test]
 fn renamed_keeps_identity() {
     let literal = lit("a", "A");
-    let renamed = literal.renamed("b");
+    let renamed = literal.clone_named("b");
 
     assert_eq!(renamed.name(), "b");
     assert_eq!(renamed.id(), literal.id());

@@ -1,7 +1,7 @@
 //! v12's `RightAssociated.test.ts` parse behavior. The introspection tests
-//! (`getTokens`, `getPatterns`, `find`, `getNextTokens`, parents) wait for
-//! the intellisense milestone (M8); `isEqual` and `startedOnIndex` have no
-//! counterpart (patterns keep no positions, DESIGN §2).
+//! (`getTokens`, `getPatterns`, `find`, `getNextTokens`, parents, `isEqual`)
+//! are in `tests/introspect_choice.rs`; `startedOnIndex` has no counterpart
+//! (patterns keep no positions, DESIGN §2).
 
 mod common;
 
@@ -57,7 +57,7 @@ fn a_clone_keeps_the_id() {
 fn renaming_it_changes_nothing() {
     // v12's `clone(name)` ignores the name: a reference to the marker
     // still produces the child's nodes, under the child's name.
-    let marker = right(lit("x", "x")).renamed("other");
+    let marker = right(lit("x", "x")).clone_named("other");
 
     assert_eq!(marker.name(), "");
 }

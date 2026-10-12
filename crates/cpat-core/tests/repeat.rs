@@ -5,19 +5,9 @@
 //! Positions are half-open: a TS inclusive `lastIndex` L is `end = L + 1`
 //! here, and a TS `cursor.index` of L after a success is `pos = L + 1`.
 //!
-//! Deferred to the introspection milestone (they test getTokens,
-//! getTokensAfter, getNextTokens, getPatterns, getPatternsAfter or
-//! getNextPatterns, none of which exist yet):
-//! - Repeat.test.ts: "Finite Repeat Get Tokens", "Get Tokens After",
-//!   "Get Next Tokens", "Get Next Patterns", "Repeat Get Patterns"
-//! - InfiniteRepeat.test.ts: "Get Tokens", "Get Tokens After With Bogus
-//!   Pattern", "Get Tokens After With Divider", "Get Tokens After Without
-//!   Divider", "Get Next Tokens", "Get Next Tokens With Null Parents",
-//!   "Get Patterns", "Get Next Patterns", "Get Next Patterns With Null Parents"
-//! - FiniteRepeat.test.ts: "Get Tokens", "Get Tokens After Without Parent",
-//!   "Get Tokens After With Parent", "Get Next Tokens", "Get Next Tokens
-//!   Without Parent", "Get Patterns", "Get Next Patterns Without Parent",
-//!   "Get Next Patterns With Parent"
+//! The introspection tests of all three files (getTokens, getTokensAfter,
+//! getNextTokens, getPatterns, getPatternsAfter, getNextPatterns, find,
+//! clone, isEqual) are in `tests/introspect_repeat.rs`.
 //!
 //! Not ported: FiniteRepeat.test.ts "startedOnIndex reflects last parse
 //! position". Rust patterns keep no parse position for others to read; the
@@ -222,7 +212,7 @@ fn repeat_clone() {
     assert_eq!(clone.name(), "numbers");
     assert_eq!(clone.id(), repeat.id());
 
-    let mut renamed = repeat.renamed("new-name");
+    let mut renamed = repeat.clone_named("new-name");
     assert_eq!(renamed.name(), "new-name");
     let nodes = parse(&mut renamed, "11").nodes.unwrap();
     assert_eq!(
@@ -701,7 +691,7 @@ fn finite_clone() {
     assert_eq!(clone.min(), numbers.min());
     assert_eq!(clone.max(), numbers.max());
 
-    let renamed = Pattern::from(numbers).renamed("cloned-numbers");
+    let renamed = Pattern::from(numbers).clone_named("cloned-numbers");
     assert_eq!(renamed.name(), "cloned-numbers");
 }
 

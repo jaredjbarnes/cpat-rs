@@ -26,11 +26,17 @@ pub struct ParseResult<'t> {
     pub(crate) leaf_matches: Vec<Match>,
     // Only from a recording parse (`Pattern::exec_recording`).
     pub(crate) history: Option<History>,
+    pub(crate) text: &'t str,
 }
 
-impl ParseResult<'_> {
+impl<'t> ParseResult<'t> {
+    /// The text that was parsed.
+    pub fn text(&self) -> &'t str {
+        self.text
+    }
+
     /// The pattern can't run: nothing is parsed, only the reason is kept.
-    fn refused(error: PatternError) -> Self {
+    fn refused(text: &'t str, error: PatternError) -> Self {
         ParseResult {
             tree: None,
             error: None,
@@ -40,6 +46,7 @@ impl ParseResult<'_> {
             too_deep: None,
             leaf_matches: Vec::new(),
             history: None,
+            text,
         }
     }
 
@@ -106,7 +113,7 @@ pub(crate) fn exec<'t>(
     match crate::link::prepare(pattern) {
         Ok(Some(scope)) => cursor.push_scope(ScopeFrame::new(scope, pattern.meta())),
         Ok(None) => {}
-        Err(error) => return ParseResult::refused(error),
+        Err(error) => return ParseResult::refused(text, error),
     }
 
     if text.is_empty() {

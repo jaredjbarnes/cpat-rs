@@ -1,8 +1,8 @@
 //! Ported from v12 `Block.test.ts`: 'simple blocks', 'nested blocks',
 //! 'error cases', 'content patterns', 'used with cursor directly', 'clone',
 //! 'metadata', 'recursive self-referencing block', 'boolean test()' and
-//! 'unicode and emoji'. 'autocomplete introspection' and 'equality' belong
-//! to the intellisense milestone (M8).
+//! 'unicode and emoji'. 'autocomplete introspection' and 'equality' are in
+//! `tests/introspect_block.rs`.
 //!
 //! Positions are half-open bytes: v12's inclusive index L after a match is
 //! `pos` L+1 here. Shapes not in v12's tests were taken from running v12 on
@@ -401,7 +401,7 @@ fn a_direct_parse_that_fails_after_the_open_leaves_the_cursor_at_the_start() {
 #[test]
 fn a_clone_with_a_new_name_keeps_the_id_and_names_its_content_after_itself() {
     let pattern = wildcard();
-    let mut renamed = pattern.renamed("braces-copy");
+    let mut renamed = pattern.clone_named("braces-copy");
 
     assert_eq!(renamed.name(), "braces-copy");
     assert_eq!(renamed.id(), pattern.id());
