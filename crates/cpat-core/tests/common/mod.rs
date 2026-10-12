@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
-use cpat_core::{Choice, Cut, Literal, Not, Optional, Pattern, Regex, Sequence};
+use cpat_core::{
+    Choice, Cut, Literal, Not, Optional, Pattern, Regex, Repeat, RepeatOptions, Sequence,
+};
 
 pub fn lit(name: &str, token: &str) -> Pattern {
     Literal::new(name, token).unwrap().into()
@@ -28,4 +30,16 @@ pub fn not(name: &str, child: Pattern) -> Pattern {
 
 pub fn cut() -> Pattern {
     Cut::default().into()
+}
+
+pub fn rep(name: &str, child: Pattern, options: RepeatOptions) -> Pattern {
+    Repeat::new(name, child, options).into()
+}
+
+/// `RepeatOptions` with a divider; the rest default.
+pub fn divided(divider: Pattern) -> RepeatOptions {
+    RepeatOptions {
+        divider: Some(divider),
+        ..RepeatOptions::default()
+    }
 }

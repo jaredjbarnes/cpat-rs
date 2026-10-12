@@ -7,6 +7,8 @@ pub enum NodeKind {
     Literal,
     Regex,
     Sequence,
+    InfiniteRepeat,
+    FiniteRepeat,
     Custom,
 }
 
@@ -53,6 +55,10 @@ impl TreeBuilder {
         children: &[NodeId],
     ) -> NodeId {
         self.push(kind, name, start, end, children)
+    }
+
+    pub fn start(&self, id: NodeId) -> usize {
+        self.nodes[id.0 as usize].start as usize
     }
 
     pub fn end(&self, id: NodeId) -> usize {

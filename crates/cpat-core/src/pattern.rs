@@ -2,7 +2,7 @@ use crate::ParseResult;
 use crate::cursor::Cursor;
 use crate::name::Name;
 use crate::pattern_id::{Meta, PatternId};
-use crate::patterns::{Choice, Custom, Cut, Literal, Not, Optional, Regex, Sequence};
+use crate::patterns::{Choice, Custom, Cut, Literal, Not, Optional, Regex, Repeat, Sequence};
 use crate::tree::NodeId;
 
 /// Every pattern cpat knows how to run.
@@ -20,6 +20,7 @@ pub enum Pattern {
     Regex(Regex),
     Sequence(Sequence),
     Choice(Choice),
+    Repeat(Repeat),
     Optional(Optional),
     Not(Not),
     Cut(Cut),
@@ -37,6 +38,7 @@ impl Pattern {
             Pattern::Regex(p) => p.parse(cursor),
             Pattern::Sequence(p) => p.parse(cursor),
             Pattern::Choice(p) => p.parse(cursor),
+            Pattern::Repeat(p) => p.parse(cursor),
             Pattern::Optional(p) => p.parse(cursor),
             Pattern::Not(p) => p.parse(cursor),
             Pattern::Cut(p) => p.parse(cursor),
@@ -79,6 +81,7 @@ impl Pattern {
             Pattern::Regex(p) => &p.meta,
             Pattern::Sequence(p) => &p.meta,
             Pattern::Choice(p) => &p.meta,
+            Pattern::Repeat(p) => &p.meta,
             Pattern::Optional(p) => &p.meta,
             Pattern::Not(p) => &p.meta,
             Pattern::Cut(p) => &p.meta,
@@ -92,6 +95,7 @@ impl Pattern {
             Pattern::Regex(p) => &mut p.meta,
             Pattern::Sequence(p) => &mut p.meta,
             Pattern::Choice(p) => &mut p.meta,
+            Pattern::Repeat(p) => &mut p.meta,
             Pattern::Optional(p) => &mut p.meta,
             Pattern::Not(p) => &mut p.meta,
             Pattern::Cut(p) => &mut p.meta,
@@ -110,4 +114,6 @@ macro_rules! into_pattern {
     )*};
 }
 
-into_pattern!(Literal, Regex, Sequence, Choice, Optional, Not, Cut, Custom);
+into_pattern!(
+    Literal, Regex, Sequence, Choice, Repeat, Optional, Not, Cut, Custom
+);

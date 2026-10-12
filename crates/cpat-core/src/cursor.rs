@@ -56,6 +56,18 @@ impl<'t> Cursor<'t> {
         self.pos >= self.text.len()
     }
 
+    /// The position as clarity-pattern-parser's inclusive cursor would report
+    /// it: `pos`, except at the end of the text, where that cursor can't go
+    /// past the last grapheme and sits on its start instead. Errors recorded
+    /// "where the cursor stopped" use this, so their `last` matches v12.
+    pub(crate) fn last_index(&self) -> usize {
+        if self.at_end() && !self.text.is_empty() {
+            self.boundaries.snap_back(self.text.len() - 1)
+        } else {
+            self.pos
+        }
+    }
+
     /// The unparsed rest of the text. Free: it is a slice.
     pub fn rest(&self) -> &'t str {
         &self.text[self.pos..]
@@ -156,6 +168,10 @@ impl<'t> Cursor<'t> {
         children: &[NodeId],
     ) -> NodeId {
         self.tree.branch(kind, name, start, end, children)
+    }
+
+    pub fn node_start(&self, id: NodeId) -> usize {
+        self.tree.start(id)
     }
 
     pub fn node_end(&self, id: NodeId) -> usize {

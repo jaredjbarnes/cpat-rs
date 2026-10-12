@@ -5,10 +5,15 @@
 //! with the familiar read API.
 
 mod exec_result;
+mod repeat_options;
 mod utf16;
 
-use cpat_core::{Choice, Cut, Literal, Not, Optional, Pattern, Regex, Sequence};
+use cpat_core::{
+    Choice, Cut, Literal, Not, Optional, Pattern, Regex, Repeat, RepeatOptions, Sequence,
+};
 use wasm_bindgen::prelude::*;
+
+use repeat_options::JsRepeatOptions;
 
 pub use exec_result::ExecResult;
 
@@ -47,6 +52,22 @@ impl JsPattern {
         Ok(Choice::new(name, unwrap(alternatives))
             .map_err(js_error)?
             .into())
+    }
+
+    /// `Pattern.repeat(name, child, { min, max, divider, trimDivider })`.
+    /// Every option may be left out: one or more, unbounded, no divider. A
+    /// `max` of `Infinity` is unbounded, as in clarity-pattern-parser. The
+    /// divider, like the child, is taken over by the repeat.
+    pub fn repeat(
+        name: &str,
+        child: JsPattern,
+        options: Option<JsRepeatOptions>,
+    ) -> Result<JsPattern, JsError> {
+        let options = match options {
+            Some(options) => repeat_options::read(name, &options)?,
+            None => RepeatOptions::default(),
+        };
+        Ok(Repeat::new(name, child.inner, options).into())
     }
 
     pub fn optional(name: &str, child: JsPattern) -> JsPattern {

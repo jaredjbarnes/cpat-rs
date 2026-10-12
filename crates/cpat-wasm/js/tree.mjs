@@ -5,7 +5,8 @@
 // Positions are UTF-16 offsets, so `value` is a plain `text.slice`.
 
 const STRIDE = 7;
-const KIND = ["literal", "regex", "sequence", "custom"];
+// Indexed by the kind codes in src/exec_result.rs.
+const KIND = ["literal", "regex", "sequence", "custom", "infinite-repeat", "finite-repeat"];
 const NO_PARENT = 0xffffffff;
 
 export class Tree {

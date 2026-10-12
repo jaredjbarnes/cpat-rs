@@ -23,10 +23,11 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 1)
+## What's in the box (milestone 2)
 
-`Literal`, `Regex`, `Sequence`, `Choice` (ordered), `Optional`, `Not`, `Cut`, and `Custom` for
-your own patterns. Still to come: `Repeat`, `Reference`/`Context`, `Expression` (the Pratt mode of
+`Literal`, `Regex`, `Sequence`, `Choice` (ordered), `Repeat` (unbounded or bounded, with an
+optional divider and `trim_divider`), `Optional`, `Not`, `Cut`, and `Custom` for your own
+patterns. Still to come: `Reference`/`Context`, `Expression` (the Pratt mode of
 `Choice`), `TakeUntil`, `Block`, the `.cpat` grammar, decorators, intellisense.
 
 ## Working on it
@@ -35,7 +36,7 @@ your own patterns. Still to come: `Repeat`, `Reference`/`Context`, `Expression` 
 cargo test --workspace                       # Rust tests
 cd crates/cpat-wasm
 wasm-pack build --target nodejs --out-dir pkg-node
-node --test js/tree.test.mjs                 # JS smoke tests against the wasm build
+node --test js/*.test.mjs                     # JS smoke tests against the wasm build
 ```
 
 **Positions are byte offsets in Rust and UTF-16 offsets in JS.** The wasm layer converts at the

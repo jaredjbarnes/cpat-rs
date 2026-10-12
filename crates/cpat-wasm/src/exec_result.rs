@@ -158,5 +158,7 @@ fn kind_code(kind: NodeKind) -> u32 {
         NodeKind::Regex => 1,
         NodeKind::Sequence => 2,
         NodeKind::Custom => 3,
+        NodeKind::InfiniteRepeat => 4,
+        NodeKind::FiniteRepeat => 5,
     }
 }

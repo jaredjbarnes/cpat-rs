@@ -2,7 +2,8 @@
 
 > **Status:** decided 2026-10-11. Items 1–9 are settled. Do not re-propose an alternative
 > without new evidence. Milestone 1 (cursor, tree, Literal, Regex, Sequence, ordered Choice,
-> Optional, Not, Cut, Custom, wasm layer) is implemented.
+> Optional, Not, Cut, Custom, wasm layer) is implemented. Milestone 2 (`Repeat`, unbounded and
+> bounded, with dividers, `trim_divider` and cut restoration) is implemented; see §10.
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -96,6 +97,38 @@ build error naming the pattern.
 - Mistakes are build errors.
 - JS decorators are fully supported. A JS custom pattern uses a minimal contract,
   `(text, pos) => end | null`, so each attempt is one boundary call.
+
+## 10. Repeat *(milestone 2)*
+
+- **One `Repeat` type, strategy chosen at construction.** `max: None` builds the `Unbounded`
+  strategy (v12 `InfiniteRepeat`), `Some(max)` the `Bounded` one (v12 `FiniteRepeat`). The
+  strategy is an exhaustive private enum; parsing never branches on `max`. Node kinds stay
+  `InfiniteRepeat` and `FiniteRepeat`, as in v12.
+- **Both strategies copy v12 line for line,** quirks included: min is clamped to 1, a bounded
+  `max` of 0 means `min`, a zero-width child with no divider ends the loop with "no node, no
+  error", the bounded repeat counts zero-width child slots toward `min` and decides "ended on a
+  divider" by node-count parity, only the unbounded repeat records a match, and its node starts
+  where the repeat started while the bounded node starts at its first kept node.
+- **A bounded repeat has one child and one divider, not `max` clones.** v12 clones the child into
+  every slot. Slots run one after another and never overlap, so a slot is just an index here, and
+  `{1,1000}` doesn't build a thousand patterns. Clones share ids anyway, so nothing observable
+  changes. *(Introspection that names "the child in slot i" will use the index.)*
+- **`last` of an error recorded "where the cursor stopped" at the end of the text** is the start of
+  the last grapheme (`Cursor::last_index`), because v12's inclusive cursor can't move past it. It
+  decides which error is furthest, so it is kept.
+- **Deviations from v12**, each pinned by a test in `tests/repeat.rs`:
+  - A bounded repeat with `trim_divider` whose first child fails throws a `TypeError` in v12 (it
+    pops a node that isn't there). Here there is nothing to trim, and it fails on `min` like the
+    untrimmed repeat.
+  - A bounded repeat whose only matches were zero-width and whose next slot failed throws a
+    `TypeError` in v12. Here the failed slot is dropped like any trailing failure: a zero-width
+    success.
+  - `Repeat::min()` reports the clamped minimum. v12's `Repeat` facade reports the unclamped
+    option while its implementation uses the clamped one.
+  - No `startedOnIndex`: patterns keep no position for others to read (§2).
+- **JS:** `Pattern.repeat(name, child, { min, max, divider, trimDivider })` takes a plain object,
+  read through imported getters (no `js-sys`). `max: Infinity` is unbounded, as in v12; a count
+  that isn't a whole number of zero or more is an error.
 
 ## Behavior fixed relative to clarity-pattern-parser v11
 

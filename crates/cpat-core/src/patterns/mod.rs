@@ -5,6 +5,7 @@ mod literal;
 mod not;
 mod optional;
 mod regex;
+mod repeat;
 mod sequence;
 
 pub use choice::Choice;
@@ -14,4 +15,5 @@ pub use literal::Literal;
 pub use not::Not;
 pub use optional::Optional;
 pub use regex::Regex;
+pub use repeat::{Repeat, RepeatOptions};
 pub use sequence::Sequence;

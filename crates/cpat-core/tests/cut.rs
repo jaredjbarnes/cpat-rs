@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use cpat_core::{Cursor, Pattern};
+use cpat_core::{Cursor, Pattern, RepeatOptions};
 
 /// A miniature of the shell's `$((arith))` vs `$(cmd)` ambiguity: both
 /// alternatives share the `<<` prefix, and `<<#` commits to "numeric".
@@ -197,4 +197,168 @@ fn a_cut_inside_a_lookahead_never_commits() {
     let mut choice = choice("choice", vec![committed, lit("xy", "xy")]);
 
     assert!(choice.test("xy"));
+}
+
+// ─── Only kept work commits: repeats ────────────────────────────────────
+// Ported from Cut.test.ts "Cut — only kept work commits". The grammar there
+// is built here with the direct API: `x*` is `Optional(Repeat(x))`, `x+` is
+// `Repeat(x)`, `x{1,3}` is a bounded `Repeat`, `(x, sep)+` has a divider and
+// `sep trim` sets trim_divider. Each fallback alternative matches if, and
+// only if, the repeat throws away the cut along with the work it dropped.
+
+/// `"x" ~/ "y"`
+fn x_cut_y() -> Pattern {
+    seq("xy", vec![lit("x", "x"), cut(), lit("y", "y")])
+}
+
+/// `item = "a" + ("x" ~/ "y")? + "!"`
+fn item() -> Pattern {
+    seq(
+        "item",
+        vec![lit("a", "a"), opt("xy?", x_cut_y()), lit("!", "!")],
+    )
+}
+
+fn up_to_three() -> RepeatOptions {
+    RepeatOptions {
+        min: 1,
+        max: Some(3),
+        ..RepeatOptions::default()
+    }
+}
+
+#[test]
+fn infinite_repeat_star_a_cut_inside_a_dropped_iteration_does_not_commit() {
+    // Cut.test.ts "InfiniteRepeat `*`: a cut inside a dropped iteration does
+    // not commit"
+    //   first = "w" + ("x" ~/ "y")* + "z";  first-choice = first | "wxq"
+    let first = seq(
+        "first",
+        vec![
+            lit("w", "w"),
+            opt("star", rep("inner", x_cut_y(), RepeatOptions::default())),
+            lit("z", "z"),
+        ],
+    );
+    let mut first_choice = choice("first-choice", vec![first, lit("wxq", "wxq")]);
+    assert!(first_choice.test("wxyxyz"));
+    assert!(first_choice.test("wxq"));
+
+    //   later = (item)* + "z";  later-choice = later | "a!axy?"
+    let later = seq(
+        "later",
+        vec![
+            opt("star", rep("inner", item(), RepeatOptions::default())),
+            lit("z", "z"),
+        ],
+    );
+    let mut later_choice = choice("later-choice", vec![later, lit("fallback", "a!axy?")]);
+    assert!(later_choice.test("a!axy!z"));
+    assert!(later_choice.test("a!axy?"));
+}
+
+#[test]
+fn infinite_repeat_plus_a_cut_inside_a_dropped_trailing_iteration_does_not_commit() {
+    // Cut.test.ts "InfiniteRepeat `+`: a cut inside a dropped trailing
+    // iteration does not commit"
+    //   committed = (item)+ + "z";  choice = committed | "a!axy?"
+    let committed = seq(
+        "committed",
+        vec![
+            rep("items", item(), RepeatOptions::default()),
+            lit("z", "z"),
+        ],
+    );
+    let mut choice = choice("choice", vec![committed, lit("fallback", "a!axy?")]);
+
+    assert!(choice.test("a!axy!z"));
+    assert!(choice.test("a!axy?"));
+}
+
+#[test]
+fn infinite_repeat_a_cut_inside_a_kept_iteration_still_commits() {
+    // Cut.test.ts "InfiniteRepeat: a cut inside a KEPT iteration still commits"
+    //   committed = ("x" ~/ "y")+ + "z";  choice = committed | "xyxq"
+    let committed = seq(
+        "committed",
+        vec![rep("r", x_cut_y(), RepeatOptions::default()), lit("z", "z")],
+    );
+    let mut choice = choice("choice", vec![committed, lit("xyxq", "xyxq")]);
+
+    assert!(!choice.test("xyxq"));
+}
+
+#[test]
+fn finite_repeat_a_cut_inside_a_dropped_iteration_does_not_commit() {
+    // Cut.test.ts "FiniteRepeat: a cut inside a dropped iteration does not
+    // commit"
+    //   committed = (item){1,3} + "z";  choice = committed | "a!axy?"
+    let committed = seq(
+        "committed",
+        vec![rep("items", item(), up_to_three()), lit("z", "z")],
+    );
+    let mut choice = choice("choice", vec![committed, lit("fallback", "a!axy?")]);
+
+    assert!(choice.test("a!axy!z"));
+    assert!(choice.test("a!axy?"));
+}
+
+#[test]
+fn finite_repeat_a_cut_inside_a_kept_iteration_still_commits() {
+    // Cut.test.ts "FiniteRepeat: a cut inside a KEPT iteration still commits"
+    //   committed = ("x" ~/ "y"){1,3} + "z";  choice = committed | "xyxq"
+    let committed = seq(
+        "committed",
+        vec![rep("r", x_cut_y(), up_to_three()), lit("z", "z")],
+    );
+    let mut choice = choice("choice", vec![committed, lit("xyxq", "xyxq")]);
+
+    assert!(!choice.test("xyxq"));
+}
+
+#[test]
+fn a_cut_inside_a_dropped_divider_does_not_commit() {
+    // Cut.test.ts "repeat with a divider: a cut inside a dropped divider does
+    // not commit"
+    //   sep = "," ~/ ";";  committed = ("a", sep)+ + "!";  choice = committed | "a,?"
+    let sep = seq("sep", vec![lit(",", ","), cut(), lit(";", ";")]);
+    let committed = seq(
+        "committed",
+        vec![rep("r", lit("a", "a"), divided(sep)), lit("!", "!")],
+    );
+    let mut choice = choice("choice", vec![committed, lit("fallback", "a,?")]);
+
+    assert!(choice.test("a,;a!"));
+    assert!(choice.test("a,?"));
+}
+
+#[test]
+fn a_cut_inside_a_trimmed_divider_does_not_commit() {
+    // Cut.test.ts "repeat with a trimmed divider: a cut inside the trimmed
+    // divider does not commit"
+    //   sep = "," ~/ " "
+    //   committed = ("a", sep trim)+ + "!";     choice = committed | "a, b"
+    //   bounded = ("a", sep trim){1,3} + "!";   bounded-choice = bounded | "a, b"
+    let trimmed = |max: Option<usize>| RepeatOptions {
+        max,
+        trim_divider: true,
+        ..divided(seq("sep", vec![lit(",", ","), cut(), lit("space", " ")]))
+    };
+    let alternatives = |options: RepeatOptions| {
+        vec![
+            seq(
+                "committed",
+                vec![rep("r", lit("a", "a"), options), lit("!", "!")],
+            ),
+            lit("fallback", "a, b"),
+        ]
+    };
+
+    let mut unbounded = choice("choice", alternatives(trimmed(None)));
+    assert!(unbounded.test("a, a!"));
+    assert!(unbounded.test("a, b"));
+
+    let mut bounded = choice("bounded-choice", alternatives(trimmed(Some(3))));
+    assert!(bounded.test("a, a!"));
+    assert!(bounded.test("a, b"));
 }

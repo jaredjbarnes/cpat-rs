@@ -82,3 +82,61 @@ test("cut and choice work across the boundary", () => {
   assert.equal(choice.test("<<abc>>"), true);
   assert.equal(choice.test("<<#abc>>"), false, "committed after <<#");
 });
+
+test("an unbounded repeat comes back as an infinite-repeat node", () => {
+  const text = "3,3,7,";
+  const numbers = Pattern.sequence("list", [
+    Pattern.repeat("numbers", Pattern.regex("digit", "\\d"), {
+      divider: Pattern.literal("comma", ","),
+      trimDivider: true,
+    }),
+    Pattern.literal("end", ","),
+  ]);
+  const root = new Tree(text, numbers.exec(text)).root;
+  const repeat = root.children[0];
+
+  assert.equal(repeat.type, "infinite-repeat");
+  assert.equal(repeat.name, "numbers");
+  assert.equal(repeat.value, "3,3,7", "the trailing divider is trimmed off");
+  assert.deepEqual(
+    repeat.children.map(c => [c.type, c.name, c.firstIndex, c.lastIndex]),
+    [
+      ["regex", "digit", 0, 0],
+      ["literal", "comma", 1, 1],
+      ["regex", "digit", 2, 2],
+      ["literal", "comma", 3, 3],
+      ["regex", "digit", 4, 4],
+    ]
+  );
+});
+
+test("a bounded repeat comes back as a finite-repeat node", () => {
+  const digits = Pattern.repeat("digits", Pattern.regex("digit", "\\d"), { min: 2, max: 3 });
+
+  const root = new Tree("123", digits.exec("123")).root;
+  assert.equal(root.type, "finite-repeat");
+  assert.equal(root.children.length, 3);
+
+  const tooShort = digits.exec("1");
+  assert.equal(tooShort.matched, false);
+  assert.equal(tooShort.furthestErrorPattern, "digits", "a min failure is the repeat's own");
+
+  assert.equal(digits.test("1234"), false, "max stops it short of the text");
+});
+
+test("repeat options default and validate", () => {
+  const plus = Pattern.repeat("plus", Pattern.literal("a", "a"));
+  assert.equal(plus.test("aaa"), true);
+
+  const unbounded = Pattern.repeat("all", Pattern.literal("a", "a"), { max: Infinity });
+  assert.equal(new Tree("aaaa", unbounded.exec("aaaa")).root.type, "infinite-repeat");
+
+  assert.throws(
+    () => Pattern.repeat("bad", Pattern.literal("a", "a"), { min: -1 }),
+    /min must be a whole number/
+  );
+  assert.throws(
+    () => Pattern.repeat("bad", Pattern.literal("a", "a"), { divider: "," }),
+    /divider must be a Pattern/
+  );
+});
