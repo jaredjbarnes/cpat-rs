@@ -3,9 +3,9 @@
 //! the ordered loop.
 //!
 //! v12 compares its fast path with a recording parse, which forces the
-//! plain loop. Recording lands in milestone 7; here the plain loop is the
-//! same alternatives built with `Choice::ordered`, which never takes the
-//! literal-set mode. v12 counts `Literal.prototype.parse` calls with a jest
+//! plain loop. Here the plain loop is the same alternatives built with
+//! `Choice::ordered`, which never takes the literal-set mode; the recording
+//! parse's own comparison is in `tests/history.rs`. v12 counts `Literal.prototype.parse` calls with a jest
 //! spy; here the `parse-log` feature logs every `Literal::parse` on the
 //! test's own thread, and the tests assert that sequence and its length.
 //! Expected trees and errors come from running v12 on the same grammars

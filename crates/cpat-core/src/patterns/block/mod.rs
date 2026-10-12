@@ -1,6 +1,8 @@
 mod scan;
 
+use crate::ancestors::At;
 use crate::cursor::Cursor;
+use crate::leaves::Parent;
 use crate::name::Name;
 use crate::pattern::Pattern;
 use crate::pattern_id::Meta;
@@ -67,6 +69,24 @@ impl Block {
         &self.close
     }
 
+    /// The child at `index` (`Pattern::at_path`): v12's `children`,
+    /// `[open, content, close]`, or `[open, close]` with no content.
+    pub(crate) fn child_at(&self, index: usize) -> Option<&Pattern> {
+        match (index, &self.content) {
+            (0, _) => Some(&self.open),
+            (1, Some(content)) => Some(content),
+            (1, None) | (2, Some(_)) => Some(&self.close),
+            _ => None,
+        }
+    }
+
+    fn close_child(&self) -> u32 {
+        match self.content {
+            Some(_) => 2,
+            None => 1,
+        }
+    }
+
     pub(crate) fn renamed_content(&mut self) {
         self.content_name = content_name(self.meta.name);
     }
@@ -79,7 +99,7 @@ impl Block {
                 // v12 rewinds, then records at (first, where the cursor is),
                 // which is `first` again.
                 cursor.set_pos(first);
-                cursor.record_error(first, first, self.meta);
+                cursor.record_error_at(first, first, self.meta, At::Frame);
                 None
             }
         }
@@ -87,6 +107,7 @@ impl Block {
 
     fn parse_parts(&mut self, cursor: &mut Cursor<'_>, first: usize) -> Option<NodeId> {
         // Phase 1: the open delimiter.
+        cursor.set_child(OPEN);
         let open = self.open.parse(cursor).filter(|_| !cursor.has_error())?;
         let open_end = cursor.node_end(open);
 
@@ -100,6 +121,7 @@ impl Block {
         // Phase 4: the close, where the scan found it. v12's `moveTo` lands
         // on the start of the grapheme holding that index; so does this.
         cursor.set_pos(cursor.snap_back(close_start));
+        cursor.set_child(self.close_child());
         let close = self.close.parse(cursor).filter(|_| !cursor.has_error())?;
         let end = cursor.node_end(close);
 
@@ -123,7 +145,7 @@ impl Block {
             ),
             None => cursor.branch(NodeKind::Block, self.meta.name, first, end, &[open, close]),
         };
-        cursor.record_match(self.meta, first, end);
+        cursor.record_match_at(self.meta, first, end, At::Frame, Parent::Above);
         Some(node)
     }
 
@@ -148,6 +170,7 @@ impl Block {
         // An open token can end inside a grapheme; the content starts at the
         // next boundary, where the open literal left the cursor.
         cursor.set_pos(cursor.snap_forward(open_end));
+        cursor.set_child(CONTENT);
         // v12 also checks `cursor.hasError` here. A failed pattern always
         // returns no node, and the only content allowed none is an
         // `Optional`, which never leaves an error, so the match says it all.
@@ -159,6 +182,10 @@ impl Block {
         }
     }
 }
+
+// The open delimiter's and the content's child indices (`child_at`).
+const OPEN: u32 = 0;
+const CONTENT: u32 = 1;
 
 fn content_name(block: Name) -> Name {
     Name::new(&format!("{block}-content"))

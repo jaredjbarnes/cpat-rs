@@ -1,6 +1,7 @@
 use std::fmt;
 use std::rc::Rc;
 
+use crate::ancestors::At;
 use crate::cursor::Cursor;
 use crate::halt::Halt;
 use crate::name::Name;
@@ -78,6 +79,12 @@ impl Reference {
         self.home.as_ref()
     }
 
+    /// This level's resolved instance, once it has parsed (child 0 in
+    /// `Pattern::at_path`).
+    pub(crate) fn instance(&self) -> Option<&Pattern> {
+        self.instance.as_deref()
+    }
+
     pub(crate) fn root_link(&self) -> Option<&RootLink> {
         self.root_link.as_ref()
     }
@@ -101,7 +108,7 @@ impl Reference {
             // up-front check gave up on a huge grammar (see `link`). v12
             // throws here; this halts the parse with the reason as data.
             let unknown = self.unknown();
-            cursor.halt(first, self.meta, Halt::Pattern(unknown));
+            cursor.halt(first, self.meta, At::Frame, Halt::Pattern(unknown));
             return None;
         }
         let instance = self.instance.as_deref_mut().expect("resolved above");
@@ -110,7 +117,7 @@ impl Reference {
         // parsing at this very spot once (that is how `a = a "b" | "b"`
         // gets its one inner level), but a second time would never end.
         if cursor.ancestors_at(instance.id(), first, 2) > 1 {
-            cursor.record_error(first, first, self.meta);
+            cursor.record_error_at(first, first, self.meta, At::Frame);
             return None;
         }
 

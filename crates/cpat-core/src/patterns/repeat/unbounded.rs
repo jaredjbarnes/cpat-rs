@@ -1,7 +1,14 @@
+use crate::ancestors::At;
 use crate::cursor::Cursor;
+use crate::leaves::Parent;
 use crate::pattern::Pattern;
 use crate::pattern_id::Meta;
 use crate::tree::{NodeId, NodeKind};
+
+// The child's and the divider's indices (`Pattern::at_path`), as v12's
+// `InfiniteRepeat` lists them.
+pub(super) const CHILD: u32 = 0;
+pub(super) const DIVIDER: u32 = 1;
 
 /// A repeat with no upper bound: child, divider, child, ... until something
 /// stops matching. Mirrors v12's `InfiniteRepeat`.
@@ -77,7 +84,7 @@ impl Unbounded {
 
         // Matched something, but not enough. This is the only failure that
         // is the repeat's own; every other one belongs to the child.
-        cursor.record_error(first, cursor.last_index(), meta);
+        cursor.record_error_at(first, cursor.last_index(), meta, At::Frame);
         cursor.set_pos(first);
         false
     }
@@ -88,6 +95,7 @@ impl Unbounded {
         loop {
             let running = cursor.pos();
             let cut_before = cursor.cut();
+            cursor.set_child(CHILD);
             let node = self.child.parse(cursor);
 
             if cursor.has_error() {
@@ -98,7 +106,7 @@ impl Unbounded {
                 // Nothing kept: the failure is the child's, reported from
                 // where the repeat started to where this attempt began.
                 cursor.set_pos(running);
-                cursor.record_error(first, running, self.child.meta());
+                cursor.record_error_at(first, running, self.child.meta(), At::Below(&[CHILD]));
                 return false;
             }
 
@@ -133,6 +141,7 @@ impl Unbounded {
 
             let divider_start = cursor.pos();
             let cut_before_divider = cursor.cut();
+            cursor.set_child(DIVIDER);
             let divider_node = divider.parse(cursor);
 
             if cursor.has_error() {
@@ -193,7 +202,7 @@ impl Unbounded {
         // The node spans from where the repeat started, as in v12.
         let end = cursor.node_end(last);
         let node = cursor.branch(NodeKind::InfiniteRepeat, meta.name, first, end, &self.nodes);
-        cursor.record_match(meta, first, end);
+        cursor.record_match_at(meta, first, end, At::Frame, Parent::Facade);
         cursor.set_pos(cursor.snap_forward(end));
         Some(node)
     }

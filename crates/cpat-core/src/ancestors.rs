@@ -1,6 +1,7 @@
 use crate::pattern_id::PatternId;
 
-/// One composite that is parsing right now: who it is and where it started.
+/// One composite that is parsing right now: who it is, where it started,
+/// and which of its children it is on.
 ///
 /// Patterns keep no parent pointers (DESIGN §2), so "which patterns enclose
 /// this one, and where did they start?" is answered by the cursor instead.
@@ -12,10 +13,11 @@ pub struct Frame {
     pub id: PatternId,
     /// Byte offset where this composite began parsing.
     pub start: usize,
-    /// Reserved for the intellisense milestones, which snapshot the path to
-    /// the furthest leaf and need to know which child each frame was on.
-    /// Always 0 until then: filling it would cost every composite a write
-    /// per child for a feature nothing uses yet.
+    /// The index of the child this composite is parsing (or last parsed),
+    /// in `Pattern::at_path`'s numbering. The frames' children, read from
+    /// the bottom, are the path of the pattern parsing now: what a match or
+    /// error is recorded under (`PatternPath`). Composites with one child
+    /// leave it at 0.
     pub child: u32,
 }
 
@@ -29,6 +31,21 @@ pub struct Frame {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Ancestors {
     frames: Vec<Frame>,
+}
+
+/// Which pattern a record is about, relative to the frames. Decides the
+/// path it is recorded under; a path is only built when one is kept.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum At<'a> {
+    /// A pattern with no frame of its own (a leaf, or a composite whose
+    /// frame was refused for depth): the top frame's current child.
+    Child,
+    /// The composite that owns the top frame.
+    Frame,
+    /// A descendant of the composite that owns the top frame, these steps
+    /// below it (a sequence recording its blocked lookahead child). With no
+    /// frames at all, the steps from the root.
+    Below(&'a [u32]),
 }
 
 impl Ancestors {
@@ -51,8 +68,33 @@ impl Ancestors {
         self.frames.len()
     }
 
+    /// The top composite moves on to child `index`. One store: every
+    /// composite with more than one child pays it per child, so the path to
+    /// whatever records next is always on hand without being built.
+    #[inline]
+    pub(crate) fn set_child(&mut self, index: u32) {
+        if let Some(top) = self.frames.last_mut() {
+            top.child = index;
+        }
+    }
+
     pub(crate) fn frames(&self) -> &[Frame] {
         &self.frames
+    }
+
+    /// Writes the path of the pattern `at` names into `out`.
+    pub(crate) fn path_into(&self, at: At<'_>, out: &mut Vec<u32>) {
+        out.clear();
+        let above = |n: usize| self.frames[..n].iter().map(|frame| frame.child);
+        let len = self.frames.len();
+        match at {
+            At::Child => out.extend(above(len)),
+            At::Frame => out.extend(above(len.saturating_sub(1))),
+            At::Below(steps) => {
+                out.extend(above(len.saturating_sub(1)));
+                out.extend_from_slice(steps);
+            }
+        }
     }
 
     /// How many active composites with `id` began at `pos`, counting no

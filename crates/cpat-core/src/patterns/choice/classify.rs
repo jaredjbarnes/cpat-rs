@@ -23,7 +23,7 @@ use crate::patterns::Sequence;
 
 use super::ChoiceMode;
 use super::literal_set::{Entry, LiteralSet};
-use super::pratt::{Operator, Pratt};
+use super::pratt::{Operator, Pratt, Role};
 use super::precedence::{Association, Table};
 
 /// A classified choice.
@@ -51,6 +51,21 @@ impl Ready {
             Ready::Ordered(atoms) => atoms,
             Ready::LiteralSet(set) => &set.atoms,
             Ready::Pratt(pratt) => &pratt.atoms,
+        }
+    }
+
+    /// The classified child at `index` (`Pattern::at_path`). Without
+    /// operators the children are the atoms.
+    pub(super) fn child<'a>(
+        &'a self,
+        alternatives: &'a [Pattern],
+        index: usize,
+    ) -> Option<&'a Pattern> {
+        match self {
+            Ready::Ordered(_) | Ready::LiteralSet(_) => {
+                self.atoms().get(index).map(|&i| &alternatives[i])
+            }
+            Ready::Pratt(pratt) => pratt.child(alternatives, index),
         }
     }
 }
@@ -91,6 +106,9 @@ pub(super) fn classify(
     let mut prefixes = Vec::new();
     let mut postfixes = Vec::new();
     let mut infixes = Vec::new();
+    // What each classified alternative became, in declaration order: the
+    // choice's children as v12 lists them (`Pattern::at_path`).
+    let mut roles = Vec::new();
     let mut table = Table::default();
 
     for (index, alternative) in alternatives.iter().enumerate() {
@@ -115,6 +133,7 @@ pub(super) fn classify(
                 _ => None,
             };
             atoms.push(index);
+            roles.push(Role::Atom);
             continue;
         };
         let is_self = |child: Option<&Pattern>| child.is_some_and(|c| c.meta().name == self_name);
@@ -123,6 +142,7 @@ pub(super) fn classify(
         if !starts && !ends {
             literals = None;
             atoms.push(index);
+            roles.push(Role::Atom);
             continue;
         }
 
@@ -140,18 +160,21 @@ pub(super) fn classify(
                 });
             }
             let sequence = Sequence::new(&format!("{}-{suffix}", name.as_str()), part.to_vec())?;
-            Ok(Operator { sequence, name })
+            Ok(Operator::new(sequence, name))
         };
 
         let len = children.len();
         if ends && count == 1 {
             prefixes.push(operator("prefix", &children[..len - 1])?);
+            roles.push(Role::Prefix);
             table.set_precedence(name, index);
         } else if starts && count == 1 {
             postfixes.push(operator("postfix", &children[1..])?);
+            roles.push(Role::Postfix);
             table.set_precedence(name, index);
         } else if starts && ends && len > 2 {
             infixes.push(operator("delimiter", &children[1..len - 1])?);
+            roles.push(Role::Infix);
             table.set_precedence(name, index);
             let association = match alternative {
                 Pattern::RightAssociated(_) => Association::Right,
@@ -170,7 +193,7 @@ pub(super) fn classify(
         });
     }
     Ok(Ready::Pratt(Box::new(Pratt::new(
-        atoms, prefixes, postfixes, infixes, table,
+        atoms, prefixes, postfixes, infixes, table, &roles,
     ))))
 }
 

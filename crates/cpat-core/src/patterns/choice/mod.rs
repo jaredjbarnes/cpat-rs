@@ -9,6 +9,7 @@ mod precedence;
 
 use std::rc::Rc;
 
+use crate::ancestors::At;
 use crate::cursor::Cursor;
 use crate::halt::Halt;
 use crate::name::Name;
@@ -161,7 +162,12 @@ impl Choice {
             Some(Ready::Pratt(pratt)) => list(pratt),
             _ => &[],
         };
-        operators.iter().map(|operator| &operator.sequence)
+        operators.iter().map(pratt::Operator::sequence)
+    }
+
+    /// The classified child at `index` (`Pattern::at_path`).
+    pub(crate) fn child_at(&self, index: usize) -> Option<&Pattern> {
+        self.ready.as_ref()?.child(&self.alternatives, index)
     }
 
     /// Classifies the alternatives, resolving a reference alternative's
@@ -190,7 +196,7 @@ impl Choice {
         if self.ready.is_none() {
             let resolve = |name| cursor.lookup(name).map(|found| found.master);
             if let Err(error) = self.classify_with(&resolve) {
-                cursor.halt(first, self.meta, Halt::Pattern(error));
+                cursor.halt(first, self.meta, At::Frame, Halt::Pattern(error));
                 return None;
             }
         }
@@ -198,7 +204,7 @@ impl Choice {
 
         // Nothing to start an expression with: nothing can match.
         if ready.atoms().is_empty() {
-            cursor.record_error(first, first, self.meta);
+            cursor.record_error_at(first, first, self.meta, At::Frame);
             return None;
         }
 
@@ -235,7 +241,7 @@ impl Choice {
         // that left no error matched nothing (a cut and absent optionals),
         // so the choice is that zero-width success too, as in v12.
         if !committed {
-            cursor.record_error(first, first, self.meta);
+            cursor.record_error_at(first, first, self.meta, At::Frame);
         }
 
         None
@@ -246,12 +252,11 @@ impl Choice {
 /// than the ordered loop over the same literals.
 ///
 /// At the end of the text every literal fails without comparing anything,
-/// and the loop is what v12 runs there. The one other case is v12's
-/// recording parse (`exec(text, true)`), which keeps every literal's
-/// error, so only the loop can produce it: when recording lands
-/// (milestone 7), its check goes here and nowhere else.
+/// and the loop is what v12 runs there. The one other case is a recording
+/// parse (v12 `exec(text, true)`), which keeps every literal's error, so
+/// only the loop can produce it.
 fn literal_set_applies(cursor: &Cursor<'_>, first: usize) -> bool {
-    first < cursor.len()
+    first < cursor.len() && !cursor.is_recording()
 }
 
 /// v12's recursion guard for a choice's atoms: an alternative that is

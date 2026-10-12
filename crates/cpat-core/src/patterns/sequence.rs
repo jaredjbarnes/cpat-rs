@@ -1,7 +1,10 @@
+use crate::ancestors::At;
 use crate::cursor::Cursor;
+use crate::leaves::Parent;
 use crate::pattern::Pattern;
 use crate::pattern_error::PatternError;
 use crate::pattern_id::Meta;
+use crate::pattern_path::step;
 use crate::tree::{NodeId, NodeKind};
 
 /// Matches its children one after another.
@@ -67,7 +70,7 @@ impl Sequence {
 
         let end = cursor.node_end(last);
         let node = cursor.branch(NodeKind::Sequence, self.meta.name, first, end, &self.nodes);
-        cursor.record_match(self.meta, first, end);
+        cursor.record_match_at(self.meta, first, end, At::Frame, Parent::Above);
         cursor.set_pos(cursor.snap_forward(end));
         Some(node)
     }
@@ -77,6 +80,7 @@ impl Sequence {
 
         for i in 0..count {
             let before = cursor.pos();
+            cursor.set_child(step(i));
             let node = self.children[i].parse(cursor);
 
             if cursor.has_error() {
@@ -92,7 +96,7 @@ impl Sequence {
                 // v12: a child can return no node yet have moved (an
                 // unbounded repeat over an optional does).
                 if self.nodes.is_empty() && !self.children.iter().all(is_zero_width_ok) {
-                    cursor.record_error(first, cursor.pos(), self.meta);
+                    cursor.record_error_at(first, cursor.pos(), self.meta, At::Frame);
                     return Run::FailedInPlace;
                 }
                 return Run::Matched;
@@ -124,9 +128,11 @@ impl Sequence {
         let end = cursor.pos();
         match &self.children[blocked] {
             // The lookahead's own failure, just past the end.
-            Pattern::Not(not) => cursor.record_error(end, end, not.meta),
+            Pattern::Not(not) => {
+                cursor.record_error_at(end, end, not.meta, At::Below(&[step(blocked)]));
+            }
             // `last` is the end itself: the input stopped short.
-            _ => cursor.record_error(first, end, self.meta),
+            _ => cursor.record_error_at(first, end, self.meta, At::Frame),
         }
         Run::FailedInPlace
     }
@@ -135,19 +141,25 @@ impl Sequence {
     /// tries its operators after an operand that ended the text: the walk
     /// `finish_at_end` makes, from the first child, recording nothing. A
     /// leading cut fires, exactly as it would mid-text. Returns the first
-    /// child that needs text, or `None` when the sequence would finish.
+    /// child that needs text (its index), or `None` when the sequence would
+    /// finish. Run it in this sequence's frame, so the lookahead probes see
+    /// it as their parent.
     ///
     /// A lookahead probe that halts (too deep, an unknown name) halts the
     /// cursor; callers check `Cursor::halted`.
-    pub fn child_blocked_at_end_of_text(&mut self, cursor: &mut Cursor<'_>) -> Option<&Pattern> {
-        let blocked = self.blocked_at_end(cursor, 0)?;
-        Some(&self.children[blocked])
+    pub(crate) fn child_blocked_at_end_of_text(
+        &mut self,
+        cursor: &mut Cursor<'_>,
+    ) -> Option<usize> {
+        self.blocked_at_end(cursor, 0)
     }
 
     /// The index of the first child from `from` on that can't finish with
     /// no text left (v12 `_childBlockedAtEndOfText`).
     fn blocked_at_end(&mut self, cursor: &mut Cursor<'_>, from: usize) -> Option<usize> {
         for (i, child) in self.children.iter_mut().enumerate().skip(from) {
+            // A probe that halts records its error as this child.
+            cursor.set_child(step(i));
             match child {
                 Pattern::Optional(_) => {}
                 Pattern::Cut(_) => {

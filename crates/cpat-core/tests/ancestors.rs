@@ -41,13 +41,11 @@ fn witness() -> (Pattern, Rc<RefCell<Vec<Vec<Frame>>>>) {
     (pattern, seen)
 }
 
-fn frames(of: &[(PatternId, usize)]) -> Vec<Frame> {
+/// Frames as `(id, start, child)`: `child` is the index of the child each
+/// composite was on, the step of the path to the witness.
+fn frames(of: &[(PatternId, usize, u32)]) -> Vec<Frame> {
     of.iter()
-        .map(|&(id, start)| Frame {
-            id,
-            start,
-            child: 0,
-        })
+        .map(|&(id, start, child)| Frame { id, start, child })
         .collect()
 }
 
@@ -62,7 +60,7 @@ fn composites_push_a_frame_while_their_children_parse() {
 
     assert!(pattern.parse(&mut cursor).is_some());
 
-    assert_eq!(*seen.borrow(), vec![frames(&[(s, 0), (o, 1)])]);
+    assert_eq!(*seen.borrow(), vec![frames(&[(s, 0, 1), (o, 1, 0)])]);
     assert!(cursor.ancestors().is_empty(), "every frame is popped");
 }
 
@@ -82,8 +80,8 @@ fn choices_repeats_and_lookaheads_push_frames_too() {
     assert_eq!(
         *seen.borrow(),
         vec![
-            frames(&[(r, 0), (c, 0), (alt, 0)]),
-            frames(&[(r, 0), (c, 1), (alt, 1)]),
+            frames(&[(r, 0, 0), (c, 0, 0), (alt, 0, 1)]),
+            frames(&[(r, 0, 0), (c, 1, 0), (alt, 1, 1)]),
         ]
     );
 }
@@ -106,7 +104,7 @@ fn references_contexts_and_resolved_targets_push_frames() {
 
     assert_eq!(
         *seen.borrow(),
-        vec![frames(&[(c, 0), (s, 0), (r, 0), (t, 0)])]
+        vec![frames(&[(c, 0, 0), (s, 0, 0), (r, 0, 0), (t, 0, 0)])]
     );
 }
 
@@ -132,7 +130,7 @@ fn a_lookahead_pushes_a_frame() {
     // `w` matches the "z", so `!w` fails; what matters is what it saw.
     assert!(!pattern.test("z"));
 
-    assert_eq!(*seen.borrow(), vec![frames(&[(s, 0), (n, 0)])]);
+    assert_eq!(*seen.borrow(), vec![frames(&[(s, 0, 0), (n, 0, 0)])]);
 }
 
 #[test]
@@ -169,7 +167,7 @@ fn a_right_associated_marker_pushes_no_frame() {
 
     pattern.parse(&mut Cursor::new("x"));
 
-    assert_eq!(*seen.borrow(), vec![frames(&[(s, 0)])]);
+    assert_eq!(*seen.borrow(), vec![frames(&[(s, 0, 0)])]);
 }
 
 #[test]
@@ -191,5 +189,5 @@ fn an_operator_of_a_pratt_choice_parses_inside_its_own_frame() {
 
     expr.parse(&mut Cursor::new("-a"));
 
-    assert_eq!(seen.borrow()[0], frames(&[(choice_id, 0), (neg, 0)]));
+    assert_eq!(seen.borrow()[0], frames(&[(choice_id, 0, 0), (neg, 0, 0)]));
 }

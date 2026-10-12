@@ -1,10 +1,12 @@
 use crate::ParseResult;
 use crate::children::{self, Children};
 use crate::cursor::Cursor;
+use crate::exec::Record;
 use crate::halt::Limits;
 use crate::name::Name;
 use crate::pattern_error::PatternError;
 use crate::pattern_id::{Meta, PatternId};
+use crate::pattern_path::PatternPath;
 use crate::patterns::{
     Block, Choice, Context, Custom, Cut, Literal, Not, Optional, Reference, Regex, Repeat,
     RightAssociated, Sequence, TakeUntil,
@@ -82,16 +84,91 @@ impl Pattern {
     /// Input nested deeper than `Limits::default().max_depth` stops the parse
     /// with `ParseResult::too_deep` set; see `exec_with`.
     pub fn exec<'t>(&mut self, text: &'t str) -> ParseResult<'t> {
-        crate::exec::exec(self, text, Limits::default())
+        crate::exec::exec(self, text, Limits::default(), Record::No)
     }
 
     /// `exec` with explicit limits.
     pub fn exec_with<'t>(&mut self, text: &'t str, limits: Limits) -> ParseResult<'t> {
-        crate::exec::exec(self, text, limits)
+        crate::exec::exec(self, text, limits, Record::No)
+    }
+
+    /// `exec` that keeps a history (v12 `exec(text, true)`): every error
+    /// and match, in order, each with the path of the pattern instance that
+    /// produced it (`ParseResult::errors`, `matches`, `records`,
+    /// `root_match`). Replay a path with `at_path` on this pattern. A choice
+    /// of literals runs its plain loop, so every literal's error is kept.
+    pub fn exec_recording<'t>(&mut self, text: &'t str) -> ParseResult<'t> {
+        crate::exec::exec(self, text, Limits::default(), Record::Yes)
+    }
+
+    /// `exec_recording` with explicit limits.
+    pub fn exec_recording_with<'t>(&mut self, text: &'t str, limits: Limits) -> ParseResult<'t> {
+        crate::exec::exec(self, text, limits, Record::Yes)
     }
 
     pub fn test(&mut self, text: &str) -> bool {
         self.exec(text).is_match()
+    }
+
+    /// `test` on a recording parse (v12 `test(text, true)`): the same
+    /// answer; only the work done to reach it differs.
+    pub fn test_recording(&mut self, text: &str) -> bool {
+        self.exec_recording(text).is_match()
+    }
+
+    /// The pattern instance `path` leads to from this one, as a parse from
+    /// here numbered it: the instance a recorded match or error came from.
+    /// `None` when the path leads nowhere (a reference that hasn't
+    /// resolved, a choice not yet classified, an index out of range).
+    ///
+    /// Child indices per kind (v12's `children` as the parse sees them):
+    ///
+    /// - `Sequence`: its children.
+    /// - `Choice`: the classified list in declaration order, skipping
+    ///   alternatives that are neither operand nor operator; an operator is
+    ///   its sequence without the self-references.
+    /// - `Repeat` without a bound: `[child, divider]`. With a bound, v12's
+    ///   slots: child, divider, child, … (`max` children, and no divider
+    ///   after the last with `trim_divider`); every slot is the one child or
+    ///   divider here.
+    /// - `Block`: `[open, content, close]`, without content when there is
+    ///   none.
+    /// - `Optional`, `Not`, `Context`, `TakeUntil`: child 0.
+    /// - `Reference`: child 0 is its resolved instance.
+    /// - `RightAssociated` is not a step: it is not a link in v12's pattern
+    ///   tree, so a path goes straight through it to its child.
+    pub fn at_path(&self, path: &PatternPath) -> Option<&Pattern> {
+        path.steps()
+            .iter()
+            .try_fold(self.unmarked(), |pattern, &step| {
+                let index = usize::try_from(step).ok()?;
+                pattern.child_at(index).map(Pattern::unmarked)
+            })
+    }
+
+    /// The child at `index` in `at_path`'s numbering.
+    fn child_at(&self, index: usize) -> Option<&Pattern> {
+        match self {
+            Pattern::Literal(_) | Pattern::Regex(_) | Pattern::Cut(_) | Pattern::Custom(_) => None,
+            Pattern::Sequence(p) => p.children.get(index),
+            Pattern::Choice(p) => p.child_at(index),
+            Pattern::Repeat(p) => p.child_at(index),
+            Pattern::Block(p) => p.child_at(index),
+            Pattern::Reference(p) => p.instance().filter(|_| index == 0),
+            Pattern::Optional(p) => (index == 0).then_some(&*p.child),
+            Pattern::Not(p) => (index == 0).then_some(&*p.child),
+            Pattern::Context(p) => (index == 0).then_some(&*p.child),
+            Pattern::TakeUntil(p) => (index == 0).then_some(&*p.terminator),
+            Pattern::RightAssociated(p) => p.child.child_at(index),
+        }
+    }
+
+    /// This pattern without `RightAssociated` markers around it.
+    fn unmarked(&self) -> &Pattern {
+        match self {
+            Pattern::RightAssociated(marker) => marker.child.unmarked(),
+            _ => self,
+        }
     }
 
     /// Whether every reference a parse could reach resolves, with `exec`'s

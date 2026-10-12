@@ -1,10 +1,13 @@
-use crate::ancestors::{Ancestors, Frame};
+use crate::ancestors::{Ancestors, At, Frame};
 use crate::graphemes::Boundaries;
 use crate::halt::{Halt, Limits, TooDeep};
+use crate::history::{History, HistoryRecord};
+use crate::leaves::{Leaves, Parent};
 use crate::name::Name;
 use crate::parse_error::{Match, ParseError};
 use crate::pattern_error::PatternError;
 use crate::pattern_id::{Meta, PatternId};
+use crate::pattern_path::PatternPath;
 use crate::scope::{self, Found, ScopeFrame};
 use crate::tree::{NodeId, NodeKind, Tree, TreeBuilder};
 
@@ -23,7 +26,11 @@ pub struct Cursor<'t> {
     boundaries: Boundaries,
     error: Option<ParseError>,
     furthest_error: Option<ParseError>,
-    leaf_match: Option<Match>,
+    leaves: Leaves,
+    // Only on a recording cursor (`start_recording`), so the branch on it
+    // is decided once per parse and an ordinary parse allocates nothing
+    // for history (DESIGN §7c).
+    history: Option<Box<History>>,
     choice_scopes: Vec<bool>,
     ancestors: Ancestors,
     scopes: Vec<ScopeFrame>,
@@ -49,7 +56,8 @@ impl<'t> Cursor<'t> {
             boundaries: Boundaries::new(text),
             error: None,
             furthest_error: None,
-            leaf_match: None,
+            leaves: Leaves::default(),
+            history: None,
             choice_scopes: Vec::new(),
             ancestors: Ancestors::default(),
             scopes: Vec::new(),
@@ -160,44 +168,73 @@ impl<'t> Cursor<'t> {
     }
 
     pub fn error(&self) -> Option<ParseError> {
-        self.error
+        self.error.clone()
     }
 
     pub fn furthest_error(&self) -> Option<ParseError> {
-        self.furthest_error
+        self.furthest_error.clone()
     }
 
+    /// The match that ended furthest (v12 `leafMatch`), with its path.
     pub fn leaf_match(&self) -> Option<Match> {
-        self.leaf_match
+        self.leaves.furthest()
     }
 
+    /// v12 `leafMatches`: the furthest match last, preceded by matches that
+    /// ended at the same spot and that no kept match's parent chain
+    /// already covers (see `Leaves`).
+    pub fn leaf_matches(&self) -> Vec<Match> {
+        self.leaves.to_matches()
+    }
+
+    /// Records a failure of `pattern`, a pattern with no frame of its own:
+    /// a leaf, as a `Custom` pattern is.
     pub fn record_error(&mut self, start: usize, last: usize, pattern: Meta) {
+        self.record_error_at(start, last, pattern, At::Child);
+    }
+
+    /// Records a failure of the pattern `at` names (it decides the path a
+    /// recording parse keeps).
+    pub(crate) fn record_error_at(&mut self, start: usize, last: usize, pattern: Meta, at: At<'_>) {
         // A halted parse keeps the error it halted on (see `halt`).
         if self.halt.is_some() {
             return;
         }
+        let path = self.recorded_path(at);
         let error = ParseError {
             start,
             last,
             pattern,
+            path,
         };
-        self.error = Some(error);
 
         if self
             .furthest_error
+            .as_ref()
             .is_none_or(|furthest| last > furthest.last)
         {
-            self.furthest_error = Some(error);
+            self.furthest_error = Some(error.clone());
         }
+        if let Some(history) = self.recording_history() {
+            history.push_error(error.clone());
+        }
+        self.error = Some(error);
     }
 
     /// Records an error that summarizes the whole parse ("this didn't match
     /// all of the text") rather than a pattern's own failure. Its `last` is
     /// the text length, which would beat every real failure, so it only
-    /// becomes the furthest error when no pattern recorded one.
-    pub(crate) fn record_summary_error(&mut self, start: usize, last: usize, pattern: Meta) {
-        let furthest = self.furthest_error;
-        self.record_error(start, last, pattern);
+    /// becomes the furthest error when no pattern recorded one. `steps`
+    /// lead from the root to the pattern it names.
+    pub(crate) fn record_summary_error(
+        &mut self,
+        start: usize,
+        last: usize,
+        pattern: Meta,
+        steps: &[u32],
+    ) {
+        let furthest = self.furthest_error.take();
+        self.record_error_at(start, last, pattern, At::Below(steps));
         if furthest.is_some() {
             self.furthest_error = furthest;
         }
@@ -212,14 +249,98 @@ impl<'t> Cursor<'t> {
         }
     }
 
+    /// Records a match of `pattern`, a pattern with no frame of its own: a
+    /// leaf, as a `Custom` pattern is.
     pub fn record_match(&mut self, pattern: Meta, start: usize, end: usize) {
-        if self.leaf_match.is_none_or(|leaf| end > leaf.end) {
-            self.leaf_match = Some(Match {
+        self.record_match_at(pattern, start, end, At::Child, Parent::Above);
+    }
+
+    /// Records a match of the pattern `at` names, whose v12 parent is
+    /// `parent` (only the leaf matches' tie rule reads it).
+    pub(crate) fn record_match_at(
+        &mut self,
+        pattern: Meta,
+        start: usize,
+        end: usize,
+        at: At<'_>,
+        parent: Parent,
+    ) {
+        self.leaves
+            .record(pattern, start, end, &self.ancestors, at, parent);
+        if self.is_recording() {
+            let path = self.path_of(at);
+            let found = Match {
                 pattern,
                 start,
                 end,
-            });
+                path,
+            };
+            if let Some(history) = self.recording_history() {
+                history.push_match(found);
+            }
         }
+    }
+
+    // ─── Recording (v12 `CursorHistory`) ────────────────────────────────
+
+    /// From now on, every error and match is kept, in order, with the path
+    /// of the pattern instance that produced it. `exec_recording` calls
+    /// this before parsing.
+    pub fn start_recording(&mut self) {
+        self.history.get_or_insert_with(Default::default).on = true;
+    }
+
+    /// Stops adding to the history; what it holds stays readable.
+    pub fn stop_recording(&mut self) {
+        if let Some(history) = &mut self.history {
+            history.on = false;
+        }
+    }
+
+    pub fn is_recording(&self) -> bool {
+        self.history.as_ref().is_some_and(|history| history.on)
+    }
+
+    /// Every error recorded while recording, in order (v12 `errors`).
+    pub fn errors(&self) -> &[ParseError] {
+        self.history.as_ref().map_or(&[], |history| &history.errors)
+    }
+
+    /// Every match recorded while recording, in order (v12
+    /// `allMatchedNodes` and `allMatchedPatterns` in one list).
+    pub fn matches(&self) -> &[Match] {
+        self.history
+            .as_ref()
+            .map_or(&[], |history| &history.matches)
+    }
+
+    /// Errors and matches together, in the order they were recorded.
+    pub fn records(&self) -> &[HistoryRecord] {
+        self.history
+            .as_ref()
+            .map_or(&[], |history| &history.records)
+    }
+
+    /// The last match recorded while recording (v12 `rootMatch`).
+    pub fn root_match(&self) -> Option<&Match> {
+        self.history
+            .as_ref()
+            .and_then(|history| history.root_match())
+    }
+
+    fn recording_history(&mut self) -> Option<&mut History> {
+        self.history.as_deref_mut().filter(|history| history.on)
+    }
+
+    /// The path a new error keeps: only a recording parse builds one.
+    fn recorded_path(&self, at: At<'_>) -> Option<PatternPath> {
+        self.is_recording().then(|| self.path_of(at))
+    }
+
+    fn path_of(&self, at: At<'_>) -> PatternPath {
+        let mut steps = Vec::new();
+        self.ancestors.path_into(at, &mut steps);
+        PatternPath::new(&steps)
     }
 
     // ─── Halting ────────────────────────────────────────────────────────
@@ -248,14 +369,16 @@ impl<'t> Cursor<'t> {
         }
     }
 
-    /// Records `pattern`'s failure at `pos` as the last error, then halts.
-    pub(crate) fn halt(&mut self, pos: usize, pattern: Meta, halt: Halt) {
-        self.record_error(pos, pos, pattern);
+    /// Records the failure of `pattern` (named by `at`) at `pos` as the
+    /// last error, then halts.
+    pub(crate) fn halt(&mut self, pos: usize, pattern: Meta, at: At<'_>, halt: Halt) {
+        self.record_error_at(pos, pos, pattern, at);
         self.halt.get_or_insert(halt);
     }
 
     /// Carries a probe's halt over: a lookahead's child that halted halts
-    /// the real parse too, at the lookahead's position.
+    /// the real parse too, at the lookahead's position. The lookahead is
+    /// the top frame's current child.
     pub(crate) fn halt_from(&mut self, probe: Cursor<'_>, pattern: Meta) {
         let halt = match probe.halt {
             Some(Halt::TooDeep(too_deep)) => Halt::TooDeep(TooDeep {
@@ -265,7 +388,7 @@ impl<'t> Cursor<'t> {
             Some(halt) => halt,
             None => return,
         };
-        self.halt(self.pos, pattern, halt);
+        self.halt(self.pos, pattern, At::Child, halt);
     }
 
     // ─── Ancestors (DESIGN §2) ──────────────────────────────────────────
@@ -280,23 +403,32 @@ impl<'t> Cursor<'t> {
     /// `max_depth` halts the parse instead (see `Limits`): the stack is the
     /// one resource a parse can't get back once it overflows.
     #[inline]
-    pub(crate) fn framed(
+    pub(crate) fn framed<R>(
         &mut self,
         meta: Meta,
-        f: impl FnOnce(&mut Self) -> Option<NodeId>,
-    ) -> Option<NodeId> {
+        f: impl FnOnce(&mut Self) -> Option<R>,
+    ) -> Option<R> {
         if self.ancestors.len() >= self.max_depth {
             let too_deep = TooDeep {
                 max_depth: self.max_depth,
                 pos: self.pos,
             };
-            self.halt(self.pos, meta, Halt::TooDeep(too_deep));
+            // Refused before its frame exists: it is the top frame's child.
+            self.halt(self.pos, meta, At::Child, Halt::TooDeep(too_deep));
             return None;
         }
         self.ancestors.push(meta.id, self.pos);
         let result = f(self);
         self.ancestors.pop();
         result
+    }
+
+    /// The top composite moves on to its child `index` (in
+    /// `Pattern::at_path`'s numbering), so whatever records next is recorded
+    /// under the right path.
+    #[inline]
+    pub(crate) fn set_child(&mut self, index: u32) {
+        self.ancestors.set_child(index);
     }
 
     /// How many active composites with `id` began at `pos`, up to `limit`.
@@ -433,9 +565,11 @@ impl<'t> Cursor<'t> {
             tree: root.map(|root| self.tree.finish(self.text, root)),
             error: self.error,
             furthest_error: self.furthest_error,
-            leaf_match: self.leaf_match,
+            leaf_match: self.leaves.furthest(),
             pattern_error,
             too_deep,
+            leaf_matches: self.leaves.to_matches(),
+            history: self.history.map(|history| *history),
         }
     }
 }

@@ -105,8 +105,9 @@ impl ExecResult {
         }
 
         let error_of = |error: &ParseError| vec![offsets.of(error.start), offsets.of(error.last)];
-        let name_of = |error: Option<ParseError>| {
+        let name_of = |error: &Option<ParseError>| {
             error
+                .as_ref()
                 .map(|e| e.pattern.name.as_str().to_string())
                 .unwrap_or_default()
         };
@@ -117,7 +118,7 @@ impl ExecResult {
             names: flat.names,
             error: result.error.as_ref().map(error_of),
             furthest_error: result.furthest_error.as_ref().map(error_of),
-            error_names: vec![name_of(result.error), name_of(result.furthest_error)],
+            error_names: vec![name_of(&result.error), name_of(&result.furthest_error)],
             pattern_error: result.pattern_error.as_ref().map(ToString::to_string),
             // Saturating: a depth past u32 can't be asked for from JS anyway.
             too_deep: result.too_deep.map(|too_deep| {

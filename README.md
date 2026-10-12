@@ -23,7 +23,7 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 6)
+## What's in the box (milestone 7)
 
 `Literal`, `Regex`, `Sequence`, `Choice`, `Repeat` (unbounded or bounded, with an optional
 divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for recursive
@@ -47,6 +47,11 @@ composites by default; `exec_with` raises it) stops the parse with `ParseResult:
 `Block` matches literal delimiters by counting them (`{ { } }` is one block), then parses its
 content only between them; with no content pattern, the inner text becomes a `block-content`
 node named `<name>-content`. A block whose content refers to the block itself nests.
+
+`exec_recording` keeps the parse's history, as v12's `exec(text, true)` does: every error and
+match in order (`errors()`, `matches()`, `records()`), each with a `PatternPath`, the child
+indices from the root to the pattern instance that produced it; `Pattern::at_path` replays one.
+Every parse keeps the furthest matches (`leaf_matches()`), with their paths.
 
 Still to come: the `.cpat` grammar, decorators, intellisense.
 

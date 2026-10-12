@@ -19,6 +19,9 @@
 > Milestone 6 (`TakeUntil` and `Block`, with node kinds `TakeUntil`, `Block` and `BlockContent`
 > in Rust and JS) is implemented; see §14. Its fix round keeps `\r\n` one grapheme in ASCII
 > text (§5c) and pins the block's rewind after a failure past the open.
+> Milestone 7 (cursor history: the recording parse, leaf matches, and a `PatternPath` on every
+> recorded match and error, replayed with `Pattern::at_path`) is implemented; see §2 for the
+> path and its cost, and §15 for the rest.
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -39,8 +42,36 @@ reaches a fresh clone. Every pattern is `Clone`; custom patterns implement `clon
 A child can't point at a parent that is mutably borrowed while parsing. The cursor keeps the
 ancestor stack instead: `(PatternId, start)` per active composite. That stack drives the
 recursion guard. Start indices on the stack never decrease, so the guard scans down from the top
-only while the start equals the current position. Autocomplete will snapshot the path of the
-furthest leaf match. *(Implemented in milestone 3: `Cursor::ancestors()`, see §11.)*
+only while the start equals the current position. *(Implemented in milestone 3:
+`Cursor::ancestors()`, see §11.)*
+
+- **Paths instead of parent pointers** *(decided in milestone 7)*. A recorded match or error
+  names its pattern instance by a `PatternPath`: the child index taken at each level from the
+  exec root (`Rc<[u32]>`, so the one error kept as the current error, the furthest error and two
+  history lists is one allocation). Each frame's `child` field is the index of the child that
+  composite is on; every composite with more than one child stores it before parsing a child
+  (`Cursor::set_child`). The path of whatever records next is therefore the frames' `child`
+  values, read on demand, never built while nothing keeps one. `Pattern::at_path` replays a
+  path on the root after the parse; the numbering per kind is listed there (a reference's child
+  0 is its resolved instance, a Pratt choice numbers its classified alternatives in declaration
+  order, an unbounded repeat is `[child, divider]`, a bounded one has v12's per-slot list, a
+  block `[open, content?, close]`, `RightAssociated` is no step). The ancestors of an instance
+  are exactly the prefixes of its path, which is what v12's leaf-match rule asks of `parent`.
+  *Why indices:* a parse can't hold references into patterns it is mutating (§1), ids are
+  shared by clones and so don't tell instances apart, and an index route is what v12's
+  `parent`/`children` chain is, read top-down. *Rejected:* storing the path on each frame
+  (a `Vec` per frame, cloned per push), and capturing a path at every record (an allocation per
+  failed attempt).
+- **The cost we're accepting** (measured, release build, against milestone 6): a store per child
+  in every composite, a path copy (depth × 4 bytes into a reused buffer) whenever a match ties
+  or beats the furthest end, and `ParseError` growing by an `Option<PatternPath>`. The path copy
+  buys the furthest match its path in every parse, so an error message or autocomplete can
+  start from it without recording. On a 60 000-token arithmetic
+  expression (Pratt, references, groups) an ordinary `exec` is about 10% slower (97 → 107 ms
+  for 20 runs); on 50 000 keywords through a literal-set choice in a repeat, where nearly every
+  match is a new furthest one, about 30% (27 → 35 ms). Nothing allocates once the buffers are
+  warm; with leaf tracking switched off the second case was 29 ms, so the copy is most of it.
+  A recording parse adds an allocation per record, as v12's history does.
 
 ## 3. References resolve by name against a shared scope
 
@@ -93,7 +124,8 @@ build error naming the pattern.
   (`Name` is a `u32`), and values are slices of the input.
 - **7b:** an editable form (`to_mut`) gets built only when something needs to edit a tree.
 - **7c:** the arena only grows during a parse. Nodes from failed alternatives stay in it,
-  unreachable. History stores copies (`Match`, `ParseError`), not node references.
+  unreachable. History stores copies (`Match`, `ParseError`), not node references, each with
+  its `PatternPath` (§2). *(Implemented in milestone 7, §15.)*
 - **7d:** JS gets flat `Uint32Array`s with a thin `Node` view class (`js/tree.mjs`), so walking
   the tree never calls into wasm.
 - **7e:** no walk over a finished tree recurses: writing an expression tree, `find`/`find_all`,
@@ -244,10 +276,8 @@ build error naming the pattern.
 
 - **The ancestor stack.** `Pattern::parse` pushes a `Frame { id, start, child }` for every
   composite (Sequence, Choice, Repeat, Optional, Not, Reference, Context) around its parse, in
-  the dispatch `match`, so no composite can forget to. Leaves push nothing. `child` is reserved
-  for intellisense and always 0 for now: writing it would cost every composite a store per child
-  for a feature nothing reads yet. When intellisense lands, it snapshots the path of the
-  furthest leaf from this stack, filling `child` then. Guards ask "how many frames with this id
+  the dispatch `match`, so no composite can forget to. Leaves push nothing. `child` was 0 until
+  milestone 7, which fills it so the stack spells the path of whatever records next (§2). Guards ask "how many frames with this id
   began here?"; starts never decrease going up, so the scan stops at the first frame that began
   earlier.
 - **Two recursion guards, both v12's.** A `Reference` fails, with its own error at
@@ -608,6 +638,89 @@ build error naming the pattern.
   TakeUntil.test.ts's introspection and equality tests). `Block::record_match` is called as in
   v12 but can't be observed yet: its close always ends where it does, and the leaf match keeps
   the first match with the greatest end. Milestone 7's recording parse will see it.
+
+## 15. Cursor history *(milestone 7)*
+
+- **Recording is chosen once per parse.** `Pattern::exec_recording` (v12 `exec(text, true)`)
+  starts recording on the cursor before parsing; `test_recording` is its `test`. The cursor
+  holds `Option<Box<History>>`, created only then, so an ordinary parse pays one never-taken
+  branch per record and allocates nothing for history. While recording, the cursor keeps every
+  error (`errors()`), every match (`matches()`, v12's `allMatchedNodes`/`allMatchedPatterns` as
+  one list of copies), both in order (`records()`, `HistoryRecord::Match | Error`), and the root
+  match (`root_match()`, the last match recorded). `stop_recording` stops appending and keeps
+  what is there. As in v12, empty text is never recorded (`is_recording()` is false: v12
+  returns before it starts recording), and exec's summary error is recorded last, naming the
+  context's child with path `[0]` through each context (v12's `Context.exec` runs its child).
+- **Every record carries its path; an ordinary error doesn't.** A recorded `ParseError` has
+  `path: Some(…)`; outside a recording `path` is `None`, because almost every failed attempt
+  records an error and a path per error would cost an allocation that only readers of the
+  recording want. A `Match` always has its path: matches are kept only in the history and in
+  the leaf matches. Which pattern a record names is said where it is recorded
+  (`ancestors::At`): a leaf (no frame) is the top frame's current child, a composite owns the
+  top frame, and a few patterns record for a descendant (a repeat for its child, a sequence for
+  its blocked lookahead, a Pratt choice for an operator's blocked child, the literal set for an
+  atom). The public `Cursor::record_error`/`record_match` are the leaf case, which is what a
+  `Custom` pattern is.
+- **Leaf matches** (v12 `leafMatches`) are kept in every parse, as in v12: the furthest match
+  last, and in front of it, matches that ended at the same spot whose parent is no ancestor of a
+  match already kept. With paths, "ancestor of m" is "at a proper prefix of m's path", plus the
+  repeat facade below. Paths live in buffers recycled when a further match replaces the list,
+  so the ordinary parse copies but doesn't allocate once warm.
+- **v12's `Repeat` facade.** v12 wraps every repeat in a `Repeat` whose only child is the
+  `InfiniteRepeat`/`FiniteRepeat` that parses and records, so that repeat's parent is a pattern
+  at the same place: an ancestor of everything inside the repeat, and of the repeat itself, and
+  nothing else. A repeat's match is recorded with `Parent::Facade`, which reproduces it. It is
+  observable: `a+` on `"aa"` at the root keeps `[a]` in v12 (a sequence at the root would be
+  kept beside its last leaf, since the root has no parent).
+- **The literal set falls back to the ordered loop while recording** (`literal_set_applies`),
+  closing the milestone-5 hook: v12 does the same, since only the loop records every literal's
+  error. `tests/history.rs` asserts the recording parse's `errors()`, `records()` and leaf
+  matches are the same as `Choice::ordered`'s.
+- **The Pratt choice's end-of-text operator walk** now runs in the operator's own frame, as
+  v12 walks it with the operator as the probes' parent, so a committed operator's error and a
+  halting probe are recorded under the operator. The frame counts toward `Limits::max_depth`
+  like any other.
+- **API changes:** `ParseError` and `Match` are `Clone`, not `Copy`, since they carry a path
+  (`Cursor::error()` and friends return clones). `Sequence::child_blocked_at_end_of_text` is
+  now crate-private and returns the child's index.
+- **Checked against v12** by running both (a TS script against v12's `src` printing each
+  record's pattern, span and path, walking `parent` and `children.indexOf` and stepping over the
+  facade, and a scratch Rust binary that also replays every path with `at_path`) on 28 grammars
+  and 103 inputs, each plain and recording: the name grammar of `Cursor.test.ts`, literal sets
+  (plain, in a sequence, through references), Pratt choices (every operator kind, right
+  association, a leading cut at the end of the text), both repeats (dividers, trimming, at the
+  root), lookaheads and optionals, sibling and ancestor ties, take-until, blocks (with and
+  without content, nested), recursion through references and contexts, cuts. Same errors, same
+  records in the same order with the same paths, same leaf matches, except the deviations
+  below. A mutation pass removed each mechanism (every `set_child`, each `At` choice, the
+  facade rule and its self case, the proper-prefix rule, the tie order, the literal-set
+  fallback, the summary path, the history pushes, the marker skip in `at_path`); each made a
+  test fail.
+- **Deviations from v12:**
+  - v12's `TakeUntil` never makes itself its terminator's parent (it doesn't call
+    `_assignChildrenToParent`), so the terminator has no parent there, records with a path that
+    stops at it, and its matches can sit beside their enclosing patterns' at the same end
+    (`"<" ?->| ">" ">"` on `"<ab>"`: v12 keeps `[tag, close, close]`). Here the terminator is
+    the take-until's child 0 like every other child (`[tag, close]`). The same missing link
+    would stop a reference inside a terminator from searching past it in v12; it looks like a
+    bug, and v12 should get the same fix. Pinned in `tests/history.rs`.
+  - `RightAssociated` deliberately doesn't parent its child in v12, so an atom wrapped in it
+    has no parent there; here a path goes through the marker to the choice. Only the leaf-match
+    tie rule could tell, and only for a marked atom (a marked operator is unwrapped into its
+    operator sequence, which has the choice as parent in both).
+  - A bounded repeat ends its walk at an idle lap (§10), so a recording parse records the
+    failures of that lap once where v12 records them in every remaining slot (`(x?){1,3} "b"`
+    on `"b"`: one `x` error here, three in v12). Results, errors and furthest errors are the
+    same. Pinned in `tests/history.rs`.
+  - v12 sets `rootMatch` in every parse; here it is part of the recording only (the last
+    recorded match), since keeping it otherwise would copy a path per match.
+  - A bounded repeat with `trim_divider` whose first child fails throws a `TypeError` in v12
+    (§10), recording or not.
+- **Not ported here:** `generateErrorMessage` and autocomplete, which read the leaf match's
+  pattern's tokens (`getNextTokens`), come with intellisense (milestone 8); the leaf match's
+  path is what they will start from. v12's cursor-movement tests (`Move Cursor`, `Text
+  Information`, `Empty Text`, `Text with Emojis`) are mapped onto `set_pos` and the snapping
+  calls, since the half-open cursor has no `next`/`previous`.
 
 ## Behavior fixed relative to clarity-pattern-parser v11
 

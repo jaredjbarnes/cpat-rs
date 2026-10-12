@@ -1,4 +1,6 @@
+use crate::ancestors::At;
 use crate::cursor::Cursor;
+use crate::leaves::Parent;
 use crate::pattern::Pattern;
 use crate::pattern_id::Meta;
 use crate::tree::{NodeId, NodeKind};
@@ -70,12 +72,12 @@ impl TakeUntil {
         let end = cursor.pos();
         if end == first {
             cursor.set_pos(first);
-            cursor.record_error(first, first, self.meta);
+            cursor.record_error_at(first, first, self.meta, At::Frame);
             return None;
         }
 
         let node = cursor.leaf(NodeKind::TakeUntil, self.meta.name, first, end);
-        cursor.record_match(self.meta, first, end);
+        cursor.record_match_at(self.meta, first, end, At::Frame, Parent::Above);
         Some(node)
     }
 }

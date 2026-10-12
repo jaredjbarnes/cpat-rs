@@ -1,5 +1,6 @@
 use crate::cursor::Cursor;
 use crate::pattern::Pattern;
+use crate::pattern_path::step;
 use crate::tree::NodeId;
 
 use super::already_parsing_here;
@@ -18,8 +19,10 @@ pub(super) fn run(
     first: usize,
     cursor: &mut Cursor<'_>,
 ) -> (Option<NodeId>, bool) {
-    for &i in atoms {
+    for (k, &i) in atoms.iter().enumerate() {
         cursor.set_pos(first);
+        // Without operators, the choice's children are its atoms.
+        cursor.set_child(step(k));
         let alternative = &mut alternatives[i];
 
         if already_parsing_here(cursor, alternative, first) {

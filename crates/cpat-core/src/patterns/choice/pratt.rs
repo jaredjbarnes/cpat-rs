@@ -2,9 +2,11 @@
 //! operators, an operand, postfix operators, then an infix operator and
 //! round again, with the precedence tree assembling the result.
 
+use crate::ancestors::At;
 use crate::cursor::Cursor;
 use crate::name::Name;
 use crate::pattern::Pattern;
+use crate::pattern_path::step;
 use crate::patterns::Sequence;
 use crate::tree::NodeId;
 
@@ -15,30 +17,76 @@ use super::precedence::{PrecedenceTree, Table};
 /// alternative's name, which its nodes carry.
 #[derive(Clone, Debug)]
 pub(crate) struct Operator {
-    pub(crate) sequence: Sequence,
+    // Always a `Pattern::Sequence`, built so by `new`. Held as a `Pattern`
+    // so `Pattern::at_path` can hand it out like any other child.
+    pattern: Pattern,
     pub(super) name: Name,
+    // Its index among the choice's classified children (`Pattern::at_path`);
+    // set by `Pratt::new`.
+    child: u32,
 }
 
 impl Operator {
-    /// What `Pattern::parse` does for a sequence. An operator is a link in
-    /// the pattern tree (v12 makes the choice its parent), so it gets a
-    /// frame like any composite.
-    fn parse(&mut self, cursor: &mut Cursor<'_>) -> Option<NodeId> {
-        if cursor.halted() {
-            return None;
+    pub(super) fn new(sequence: Sequence, name: Name) -> Operator {
+        Operator {
+            pattern: Pattern::Sequence(sequence),
+            name,
+            child: 0,
         }
-        let sequence = &mut self.sequence;
-        cursor.framed(sequence.meta, |cursor| sequence.parse(cursor))
     }
+
+    pub(crate) fn sequence(&self) -> &Sequence {
+        match &self.pattern {
+            Pattern::Sequence(sequence) => sequence,
+            _ => unreachable!("an operator is built from a sequence"),
+        }
+    }
+
+    fn sequence_mut(&mut self) -> &mut Sequence {
+        match &mut self.pattern {
+            Pattern::Sequence(sequence) => sequence,
+            _ => unreachable!("an operator is built from a sequence"),
+        }
+    }
+
+    /// An operator is a link in the pattern tree (v12 makes the choice its
+    /// parent), so it parses like any composite, in its own frame.
+    fn parse(&mut self, cursor: &mut Cursor<'_>) -> Option<NodeId> {
+        cursor.set_child(self.child);
+        self.pattern.parse(cursor)
+    }
+}
+
+/// What a classified alternative became, in declaration order.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Role {
+    Atom,
+    Prefix,
+    Postfix,
+    Infix,
+}
+
+/// One of the choice's classified children (`Pattern::at_path`).
+#[derive(Clone, Copy, Debug)]
+enum Slot {
+    /// The k-th atom.
+    Atom(usize),
+    Prefix(usize),
+    Postfix(usize),
+    Infix(usize),
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct Pratt {
     /// Indices of the operand alternatives, parsed in place.
     pub(super) atoms: Vec<usize>,
+    /// Each atom's index among the classified children.
+    atom_children: Vec<u32>,
     pub(super) prefixes: Vec<Operator>,
     pub(super) postfixes: Vec<Operator>,
     pub(super) infixes: Vec<Operator>,
+    /// The classified children in declaration order (v12 `children`).
+    children: Vec<Slot>,
     tree: PrecedenceTree,
 }
 
@@ -54,20 +102,66 @@ struct Progress {
 }
 
 impl Pratt {
+    /// `roles` says what each classified alternative became, in
+    /// declaration order; the operators get their child indices from it.
     pub(super) fn new(
         atoms: Vec<usize>,
-        prefixes: Vec<Operator>,
-        postfixes: Vec<Operator>,
-        infixes: Vec<Operator>,
+        mut prefixes: Vec<Operator>,
+        mut postfixes: Vec<Operator>,
+        mut infixes: Vec<Operator>,
         table: Table,
+        roles: &[Role],
     ) -> Pratt {
+        let mut atom_children = Vec::with_capacity(atoms.len());
+        let mut children = Vec::with_capacity(roles.len());
+        let mut counts = [0usize; 4];
+        for (index, role) in roles.iter().enumerate() {
+            let child = step(index);
+            let slot = match role {
+                Role::Atom => {
+                    atom_children.push(child);
+                    Slot::Atom(counts[0])
+                }
+                Role::Prefix => {
+                    prefixes[counts[1]].child = child;
+                    Slot::Prefix(counts[1])
+                }
+                Role::Postfix => {
+                    postfixes[counts[2]].child = child;
+                    Slot::Postfix(counts[2])
+                }
+                Role::Infix => {
+                    infixes[counts[3]].child = child;
+                    Slot::Infix(counts[3])
+                }
+            };
+            counts[*role as usize] += 1;
+            children.push(slot);
+        }
         Pratt {
             atoms,
+            atom_children,
             prefixes,
             postfixes,
             infixes,
+            children,
             tree: PrecedenceTree::new(table),
         }
+    }
+
+    /// The classified child at `index`: an atom (an alternative) or an
+    /// operator's sequence.
+    pub(super) fn child<'a>(
+        &'a self,
+        alternatives: &'a [Pattern],
+        index: usize,
+    ) -> Option<&'a Pattern> {
+        Some(match *self.children.get(index)? {
+            Slot::Atom(k) => &alternatives[self.atoms[k]],
+            Slot::Prefix(i) => &self.prefixes[i].pattern,
+            Slot::Postfix(i) => &self.postfixes[i].pattern,
+            Slot::Infix(i) => &self.infixes[i].pattern,
+        })
     }
 
     /// Runs inside the choice's cut scope. Returns the assembled tree (the
@@ -165,6 +259,7 @@ impl Pratt {
 
         for k in 0..self.atoms.len() {
             cursor.set_pos(on);
+            cursor.set_child(self.atom_children[k]);
             let atom = &mut alternatives[self.atoms[k]];
 
             if already_parsing_here(cursor, atom, on) {
@@ -263,18 +358,24 @@ impl Pratt {
     /// `_tryOperatorsAtEndOfText`).
     fn try_operators_at_end(&mut self, cursor: &mut Cursor<'_>, progress: &mut Progress) {
         for operator in self.postfixes.iter_mut().chain(self.infixes.iter_mut()) {
-            let blocked = operator
-                .sequence
-                .child_blocked_at_end_of_text(cursor)
-                .map(Pattern::meta);
+            // Walked in the operator's own frame, as v12 walks it with the
+            // operator as the probes' parent, so a halted probe and the
+            // committed error below are recorded under the operator.
+            cursor.set_child(operator.child);
+            let meta = operator.sequence().meta;
+            let sequence = operator.sequence_mut();
+            let blocked =
+                cursor.framed(meta, |cursor| sequence.child_blocked_at_end_of_text(cursor));
             if cursor.halted() {
                 return;
             }
-            if let Some(blocked) = blocked
+            if let Some(index) = blocked
                 && cursor.cut()
             {
+                let blocked = operator.sequence().children()[index].meta();
                 let end = cursor.pos();
-                cursor.record_error(end, end, blocked);
+                let below = [operator.child, step(index)];
+                cursor.record_error_at(end, end, blocked, At::Below(&below));
                 check_cut(cursor, progress);
                 return;
             }

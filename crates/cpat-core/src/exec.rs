@@ -1,5 +1,6 @@
 use crate::cursor::Cursor;
 use crate::halt::{Limits, TooDeep};
+use crate::history::{History, HistoryRecord};
 use crate::parse_error::{Match, ParseError};
 use crate::pattern::Pattern;
 use crate::pattern_error::PatternError;
@@ -14,6 +15,7 @@ pub struct ParseResult<'t> {
     pub error: Option<ParseError>,
     /// The error that got furthest into the text: usually the best diagnosis.
     pub furthest_error: Option<ParseError>,
+    /// The match that ended furthest, with its path (v12 `leafMatch`).
     pub leaf_match: Option<Match>,
     /// The pattern itself can't run (a reference names nothing). Nothing was
     /// parsed, so the other fields are empty.
@@ -21,6 +23,9 @@ pub struct ParseResult<'t> {
     /// The input nested deeper than `Limits::max_depth`, and the parse
     /// stopped there. No tree; the errors are those recorded up to that point.
     pub too_deep: Option<TooDeep>,
+    pub(crate) leaf_matches: Vec<Match>,
+    // Only from a recording parse (`Pattern::exec_recording`).
+    pub(crate) history: Option<History>,
 }
 
 impl ParseResult<'_> {
@@ -33,11 +38,67 @@ impl ParseResult<'_> {
             leaf_match: None,
             pattern_error: Some(error),
             too_deep: None,
+            leaf_matches: Vec::new(),
+            history: None,
         }
+    }
+
+    /// Whether this parse kept a history (v12 `cursor.isRecording`). False
+    /// for empty text even when asked: v12 returns before it starts
+    /// recording there.
+    pub fn is_recording(&self) -> bool {
+        self.history.as_ref().is_some_and(|history| history.on)
+    }
+
+    /// Every error recorded, in order, each with its path. Empty unless the
+    /// parse was recording: an ordinary parse keeps only `error` and
+    /// `furthest_error`.
+    pub fn errors(&self) -> &[ParseError] {
+        self.history.as_ref().map_or(&[], |history| &history.errors)
+    }
+
+    /// Every match recorded, in order, each with its path (v12
+    /// `allMatchedNodes`/`allMatchedPatterns`). Empty unless recording.
+    pub fn matches(&self) -> &[Match] {
+        self.history
+            .as_ref()
+            .map_or(&[], |history| &history.matches)
+    }
+
+    /// Errors and matches in the order they were recorded. Empty unless
+    /// recording.
+    pub fn records(&self) -> &[HistoryRecord] {
+        self.history
+            .as_ref()
+            .map_or(&[], |history| &history.records)
+    }
+
+    /// The last match recorded (v12 `rootMatch`). Only while recording.
+    pub fn root_match(&self) -> Option<&Match> {
+        self.history.as_ref().and_then(History::root_match)
+    }
+
+    /// v12 `leafMatches`: the furthest match last, preceded by matches that
+    /// ended at the same spot from patterns outside every kept match's
+    /// parent chain. Kept in every parse, as in v12.
+    pub fn leaf_matches(&self) -> &[Match] {
+        &self.leaf_matches
     }
 }
 
-pub(crate) fn exec<'t>(pattern: &mut Pattern, text: &'t str, limits: Limits) -> ParseResult<'t> {
+/// Whether `exec` keeps a history (v12's `record` argument).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Record {
+    No,
+    Yes,
+}
+
+pub(crate) fn exec<'t>(
+    pattern: &mut Pattern,
+    text: &'t str,
+    limits: Limits,
+    record: Record,
+) -> ParseResult<'t> {
     let mut cursor = Cursor::with_limits(text, limits);
 
     // Checked before the empty-text shortcut: a broken pattern is reported
@@ -52,19 +113,23 @@ pub(crate) fn exec<'t>(pattern: &mut Pattern, text: &'t str, limits: Limits) -> 
         return cursor.finish(None);
     }
 
+    if record == Record::Yes {
+        cursor.start_recording();
+    }
+
     // v12's `Context.exec` runs its child's exec, so the summary error
     // names the child; see through contexts the same way.
-    let summary = summary_meta(pattern);
+    let (summary, steps) = summary_meta(pattern, Vec::new());
 
     let root = match pattern.parse(&mut cursor) {
         Some(root) if cursor.node_end(root) == text.len() => Some(root),
         // Matched, but not all of it: the rest of the text is the error.
         Some(root) => {
-            cursor.record_summary_error(cursor.node_end(root), text.len(), summary);
+            cursor.record_summary_error(cursor.node_end(root), text.len(), summary, &steps);
             None
         }
         None => {
-            cursor.record_summary_error(0, text.len(), summary);
+            cursor.record_summary_error(0, text.len(), summary, &steps);
             None
         }
     };
@@ -72,11 +137,16 @@ pub(crate) fn exec<'t>(pattern: &mut Pattern, text: &'t str, limits: Limits) -> 
     cursor.finish(root)
 }
 
-fn summary_meta(pattern: &Pattern) -> crate::Meta {
+/// The pattern the summary error names, and its path from the root: a
+/// context's child is child 0, and a marker is no step at all.
+fn summary_meta(pattern: &Pattern, mut steps: Vec<u32>) -> (crate::Meta, Vec<u32>) {
     match pattern {
-        Pattern::Context(context) => summary_meta(context.child()),
+        Pattern::Context(context) => {
+            steps.push(0);
+            summary_meta(context.child(), steps)
+        }
         // v12's `RightAssociated.exec` is its child's exec.
-        Pattern::RightAssociated(marker) => summary_meta(marker.child()),
-        _ => pattern.meta(),
+        Pattern::RightAssociated(marker) => summary_meta(marker.child(), steps),
+        _ => (pattern.meta(), steps),
     }
 }

@@ -20,9 +20,11 @@
 //! would hold literals that only share a UTF-8 lead byte, `é` and `è`, and
 //! still fail at the start.)
 
+use crate::ancestors::At;
 use crate::cursor::Cursor;
 use crate::pattern::Pattern;
 use crate::pattern_id::Meta;
+use crate::pattern_path::step;
 use crate::patterns::literal::mismatch;
 use crate::tree::NodeId;
 
@@ -134,10 +136,15 @@ impl LiteralSet {
         let outcome = self.outcome(cursor.text(), first);
 
         if let Some((k, last)) = outcome.furthest {
-            cursor.record_error(first, last, self.entries[k].meta);
+            // Recorded under the atom. A recording parse never gets here
+            // (it runs the loop, `literal_set_applies`), so no path is ever
+            // built from this, and a reference's instance one step further
+            // down needs no telling apart.
+            cursor.record_error_at(first, last, self.entries[k].meta, At::Below(&[step(k)]));
         }
 
         let winner = outcome.winner?;
+        cursor.set_child(step(winner));
         alternatives[self.atoms[winner]].parse(cursor)
     }
 }

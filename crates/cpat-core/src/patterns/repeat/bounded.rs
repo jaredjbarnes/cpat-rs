@@ -1,6 +1,8 @@
+use crate::ancestors::At;
 use crate::cursor::Cursor;
 use crate::pattern::Pattern;
 use crate::pattern_id::Meta;
+use crate::pattern_path::step;
 use crate::tree::{NodeId, NodeKind};
 
 /// A repeat with an upper bound. It walks a fixed row of slots, child and
@@ -82,7 +84,7 @@ impl Bounded {
         if match_count < self.min {
             let last = cursor.last_index();
             cursor.set_pos(first);
-            cursor.record_error(first, last, meta);
+            cursor.record_error_at(first, last, meta, At::Frame);
             return None;
         }
 
@@ -128,6 +130,9 @@ impl Bounded {
 
             let running = cursor.pos();
             let cut_before = cursor.cut();
+            // Each slot is its own child in v12, which clones the child
+            // and divider into every slot.
+            cursor.set_child(step(slot));
             let node = pattern.parse(cursor);
 
             if cursor.has_error() {
@@ -169,6 +174,18 @@ impl Bounded {
         }
 
         (match_count, kept_cut)
+    }
+
+    /// The pattern in `slot` (`Pattern::at_path`): v12's per-slot child
+    /// list, child and divider alternating.
+    pub(super) fn slot(&self, slot: usize) -> Option<&Pattern> {
+        if slot >= self.slots {
+            return None;
+        }
+        match (&self.divider, slot % 2) {
+            (Some(divider), 1) => Some(divider),
+            _ => Some(&self.child),
+        }
     }
 
     /// How many of the slots are child slots: with a divider they take the

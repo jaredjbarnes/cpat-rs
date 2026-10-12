@@ -25,6 +25,8 @@ mod cursor;
 mod exec;
 mod graphemes;
 mod halt;
+mod history;
+mod leaves;
 mod link;
 mod name;
 mod parse_error;
@@ -33,6 +35,7 @@ pub mod parse_log;
 mod pattern;
 mod pattern_error;
 mod pattern_id;
+mod pattern_path;
 mod patterns;
 mod regex_translate;
 mod scope;
@@ -42,11 +45,13 @@ pub use ancestors::Frame;
 pub use cursor::Cursor;
 pub use exec::ParseResult;
 pub use halt::{DEFAULT_MAX_DEPTH, Limits, TooDeep};
+pub use history::HistoryRecord;
 pub use name::Name;
 pub use parse_error::{Match, ParseError};
 pub use pattern::Pattern;
 pub use pattern_error::PatternError;
 pub use pattern_id::{Meta, PatternId};
+pub use pattern_path::PatternPath;
 pub use patterns::{
     Block, Choice, ChoiceMode, Context, Custom, CustomParse, Cut, Literal, Not, Optional,
     Reference, Regex, Repeat, RepeatOptions, RightAssociated, Sequence, TakeUntil,

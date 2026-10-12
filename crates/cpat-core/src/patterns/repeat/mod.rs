@@ -102,6 +102,19 @@ impl Repeat {
         }
     }
 
+    /// The child at `index` (`Pattern::at_path`): `[child, divider]`
+    /// without a bound, v12's slots with one.
+    pub(crate) fn child_at(&self, index: usize) -> Option<&Pattern> {
+        match &self.strategy {
+            Strategy::Unbounded(s) => match u32::try_from(index).ok()? {
+                unbounded::CHILD => Some(&s.child),
+                unbounded::DIVIDER => s.divider.as_deref(),
+                _ => None,
+            },
+            Strategy::Bounded(s) => s.slot(index),
+        }
+    }
+
     pub(crate) fn parse(&mut self, cursor: &mut Cursor<'_>) -> Option<NodeId> {
         match &mut self.strategy {
             Strategy::Unbounded(s) => s.parse(self.meta, cursor),

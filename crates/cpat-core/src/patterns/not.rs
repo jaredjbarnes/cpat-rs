@@ -1,3 +1,4 @@
+use crate::ancestors::At;
 use crate::cursor::Cursor;
 use crate::pattern::Pattern;
 use crate::pattern_id::Meta;
@@ -35,7 +36,7 @@ impl Not {
         cursor.resolve_error();
 
         if !child_failed {
-            cursor.record_error(first, first, self.meta);
+            cursor.record_error_at(first, first, self.meta, At::Frame);
         }
 
         None
