@@ -362,3 +362,38 @@ fn a_cut_inside_a_trimmed_divider_does_not_commit() {
     assert!(bounded.test("a, a!"));
     assert!(bounded.test("a, b"));
 }
+
+#[test]
+fn a_cut_inside_a_kept_divider_still_commits() {
+    // The counterpart of the dropped-divider case: the divider `,;` is kept,
+    // so its cut commits even though the iteration after it fails, and the
+    // fallback is never tried (v12 agrees: no match, error on "!" at 3).
+    //   sep = "," ~/ ";";  committed = ("a", sep)+ + "!";  choice = committed | "a,;?"
+    let alternatives = |max: Option<usize>| {
+        let sep = seq("sep", vec![lit(",", ","), cut(), lit(";", ";")]);
+        let options = RepeatOptions {
+            max,
+            ..divided(sep)
+        };
+        vec![
+            seq(
+                "committed",
+                vec![rep("r", lit("a", "a"), options), lit("!", "!")],
+            ),
+            lit("fallback", "a,;?"),
+        ]
+    };
+
+    for max in [None, Some(3)] {
+        let mut choice = choice("choice", alternatives(max));
+        let mut cursor = Cursor::new("a,;?");
+        assert!(choice.parse(&mut cursor).is_none(), "max {max:?}");
+        let error = cursor.error().unwrap();
+        assert_eq!(
+            (error.pattern.name.as_str(), error.start, error.last),
+            ("!", 3, 3),
+            "max {max:?}"
+        );
+        assert!(choice.test("a,;a!"), "max {max:?}");
+    }
+}

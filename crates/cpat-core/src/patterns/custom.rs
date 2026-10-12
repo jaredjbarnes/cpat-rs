@@ -8,7 +8,9 @@ use crate::tree::NodeId;
 ///
 /// The contract matches the built-ins: on success, return the node and leave
 /// the cursor just past it; on failure, record an error and return `None`; to
-/// succeed without consuming anything, return `None` with no error.
+/// succeed without consuming anything, return `None` with no error. A
+/// zero-width node is taken as that zero-width success: it is dropped and
+/// the cursor goes back to where the parse began.
 pub trait CustomParse {
     fn parse(&mut self, meta: Meta, cursor: &mut Cursor<'_>) -> Option<NodeId>;
 
@@ -37,7 +39,20 @@ impl Custom {
     }
 
     pub(crate) fn parse(&mut self, cursor: &mut Cursor<'_>) -> Option<NodeId> {
-        self.parser.parse(self.meta, cursor)
+        let first = cursor.pos();
+        let node = self.parser.parse(self.meta, cursor)?;
+
+        if cursor.node_end(node) > cursor.node_start(node) {
+            return Some(node);
+        }
+
+        // A zero-width node breaks the contract every built-in keeps (no
+        // built-in makes one), and a repeat that keeps it makes no progress
+        // and would loop forever. Enforced here, at the one door user code
+        // comes through, so the composites can rely on it: the node becomes
+        // what the contract says it is, a success with nothing consumed.
+        cursor.set_pos(first);
+        None
     }
 }
 

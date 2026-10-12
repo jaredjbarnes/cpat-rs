@@ -1264,3 +1264,167 @@ fn an_unbounded_lap_where_neither_child_nor_divider_consumes_ends_the_loop() {
     assert_eq!(calls.get(), 3);
     assert_eq!(furthest(&mut repeat, "a,ab"), Some(("c".into(), 3, 3)));
 }
+
+// ─── Fix round 2: where the cursor stays, end-of-text stops, progress ───
+// Each expectation below was checked against v12 on the same input.
+
+/// `(a?)+`: an unbounded repeat that ends with "no node, no error" after
+/// it has moved the cursor (v12's own quirk, kept).
+fn optional_as_plus() -> Pattern {
+    rep("i", opt("oa", lit("a", "a")), RepeatOptions::default())
+}
+
+#[test]
+fn an_unbounded_repeat_leaves_the_cursor_where_a_nodeless_child_left_it() {
+    // v12 InfiniteRepeat never rewinds after a child that returned null with
+    // no error: the divider is tried from where the child stopped.
+    let mut repeat = rep("o", optional_as_plus(), divided(lit("c", ",")));
+
+    let outcome = parse(&mut repeat, "aa,");
+    assert_eq!(
+        outcome.nodes.unwrap(),
+        vec![
+            n(NodeKind::InfiniteRepeat, "o", 0, 3, "aa,"),
+            n(NodeKind::Literal, "c", 2, 3, ","),
+        ]
+    );
+    assert_eq!(outcome.error, None);
+    assert_eq!(furthest(&mut repeat, "aa,"), Some(("a".into(), 2, 2)));
+
+    let outcome = parse(&mut repeat, "a,a,");
+    assert_eq!(
+        outcome.nodes.unwrap(),
+        vec![
+            n(NodeKind::InfiniteRepeat, "o", 0, 4, "a,a,"),
+            n(NodeKind::Literal, "c", 1, 2, ","),
+            n(NodeKind::Literal, "c", 3, 4, ","),
+        ]
+    );
+
+    let outcome = parse(&mut repeat, "aa,b");
+    assert_eq!(
+        outcome.nodes.unwrap()[0],
+        n(NodeKind::InfiniteRepeat, "o", 0, 3, "aa,")
+    );
+    assert_eq!(furthest(&mut repeat, "aa,b"), Some(("a".into(), 3, 3)));
+}
+
+#[test]
+fn without_a_divider_a_nodeless_child_ends_the_loop_where_it_left_the_cursor() {
+    let mut repeat = rep("o", optional_as_plus(), RepeatOptions::default());
+
+    let outcome = parse(&mut repeat, "aab");
+    assert!(outcome.nodes.is_none());
+    assert_eq!(outcome.error, None);
+    assert_eq!(outcome.pos, 2);
+}
+
+#[test]
+fn a_bounded_repeat_stops_at_the_end_of_the_text() {
+    // v12 FiniteRepeat breaks on `!cursor.hasNext()`: no slot runs past the
+    // end, so none records an error there.
+    let mut plain = rep(
+        "r",
+        re("d", "\\d"),
+        RepeatOptions {
+            max: Some(3),
+            ..RepeatOptions::default()
+        },
+    );
+    assert_eq!(
+        parse(&mut plain, "12").nodes.unwrap()[0],
+        n(NodeKind::FiniteRepeat, "r", 0, 2, "12")
+    );
+    assert_eq!(furthest(&mut plain, "12"), None);
+
+    let mut with_divider = rep(
+        "r",
+        re("d", "\\d"),
+        RepeatOptions {
+            max: Some(3),
+            ..divided(lit("c", ","))
+        },
+    );
+    // Stopped after a child, and after a divider.
+    assert_eq!(furthest(&mut with_divider, "1"), None);
+    assert_eq!(furthest(&mut with_divider, "1,"), None);
+    assert_eq!(
+        parse(&mut with_divider, "1,").nodes.unwrap()[0],
+        n(NodeKind::FiniteRepeat, "r", 0, 2, "1,")
+    );
+}
+
+#[test]
+fn an_unbounded_repeat_stops_at_the_end_of_the_text_after_a_divider() {
+    let mut repeat = rep("r", re("d", "\\d"), divided(lit("c", ",")));
+
+    assert_eq!(furthest(&mut repeat, "1,"), None);
+    assert_eq!(furthest(&mut repeat, "1,2,"), None);
+    assert_eq!(
+        parse(&mut repeat, "1,2,").nodes.unwrap()[0],
+        n(NodeKind::InfiniteRepeat, "r", 0, 4, "1,2,")
+    );
+}
+
+/// A custom pattern that "matches" zero-width wherever it is: it breaks
+/// the contract, which asks for `None` instead.
+#[derive(Clone)]
+struct ZeroWidth {
+    calls: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl CustomParse for ZeroWidth {
+    fn parse(&mut self, meta: Meta, cursor: &mut Cursor<'_>) -> Option<NodeId> {
+        self.calls.set(self.calls.get() + 1);
+        assert!(
+            self.calls.get() <= 1_000,
+            "the repeat keeps calling its child"
+        );
+        let pos = cursor.pos();
+        Some(cursor.leaf(NodeKind::Custom, meta.name, pos, pos))
+    }
+
+    fn clone_box(&self) -> Box<dyn CustomParse> {
+        Box::new(self.clone())
+    }
+}
+
+fn zero_width() -> (Pattern, std::rc::Rc<std::cell::Cell<usize>>) {
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+    let pattern = Custom::new(
+        "zw",
+        Box::new(ZeroWidth {
+            calls: calls.clone(),
+        }),
+    )
+    .into();
+    (pattern, calls)
+}
+
+#[test]
+fn a_custom_zero_width_node_is_a_zero_width_success_so_a_repeat_ends() {
+    // Kept as a node, it would make the repeat loop without progress until
+    // memory ran out. Taken as the contract's zero-width success, the loop
+    // ends after one call, as for any child that matches nothing.
+    let (child, calls) = zero_width();
+    let mut repeat = rep("r", child, RepeatOptions::default());
+
+    let outcome = parse(&mut repeat, "abc");
+    assert!(outcome.nodes.is_none());
+    assert_eq!(outcome.error, None);
+    assert_eq!(outcome.pos, 0);
+    assert_eq!(calls.get(), 1);
+
+    // An enormous bound takes the idle-lap exit after one call too.
+    let (child, calls) = zero_width();
+    let mut bounded = rep(
+        "r",
+        child,
+        RepeatOptions {
+            max: Some(usize::MAX),
+            ..RepeatOptions::default()
+        },
+    );
+    assert!(parse(&mut bounded, "abc").nodes.is_none());
+    assert_eq!(calls.get(), 1);
+}

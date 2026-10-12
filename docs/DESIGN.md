@@ -108,7 +108,12 @@ build error naming the pattern.
   `max` of 0 means `min`, a zero-width child with no divider ends the loop with "no node, no
   error", the bounded repeat counts zero-width child slots toward `min` and decides "ended on a
   divider" by node-count parity, only the unbounded repeat records a match, and its node starts
-  where the repeat started while the bounded node starts at its first kept node.
+  where the repeat started while the bounded node starts at its first kept node. Only the
+  bounded repeat rewinds after a slot that returned no node; the unbounded one leaves the cursor
+  where the child left it and tries the divider from there (a child can return "no node, no
+  error" after moving, e.g. an inner `(a?)+`). Both stop at the end of the text after a kept
+  node or divider, translated from v12's `!cursor.hasNext()` to `at_end()`, so nothing records
+  an error past the end.
 - **A bounded repeat has one child and one divider, not `max` clones.** v12 clones the child into
   every slot. Slots run one after another and never overlap, so a slot is just an index here, and
   `{1,1000}` doesn't build a thousand patterns. Clones share ids anyway, so nothing observable
@@ -132,6 +137,25 @@ build error naming the pattern.
   - `Repeat::min()` reports the clamped minimum. v12's `Repeat` facade reports the unclamped
     option while its implementation uses the clamped one.
   - No `startedOnIndex`: patterns keep no position for others to read (§2).
+  - A `Custom` pattern that returns a zero-width node gets a zero-width success instead (no
+    node, cursor back where it began), which is what its contract asks for. Kept as a node, it
+    would make an unbounded repeat loop forever: v12 always advances with `cursor.next()` after a
+    kept node, which half-open positions don't need. No built-in makes a zero-width node, so only
+    custom code can reach this; checked once, in `Custom::parse`, so no composite has to.
+- **Differences from milestone 1 that show through a repeat** (found by running both on the same
+  inputs; they belong to Literal and the tree, not to Repeat, and are kept):
+  - On empty text v12's Literal records its error with `lastIndex` −1. Positions here are
+    unsigned and half-open (§5), so it records `last` 0. A repeat's own `min` error at 0..0 then
+    ties with the literal's instead of beating it, and the furthest error stays the literal's
+    (`(a?, ",")+` on `""`: v12 says `r`, cpat-rs says `a`). The same holds for `!a` children and a
+    `Sequence` of `!a`. The current error is the same in both.
+  - A composite node's value is a slice of the text it spans (§7a); in v12 it is the join of its
+    children's values. They differ when the span holds text no child covers: a literal `e`
+    matching the base of `e` + combining accent skips the accent, and an unbounded repeat whose
+    node starts where the repeat started can begin with text only a nodeless child consumed.
+    `exec` compares the value's length with the text's, so it can match here where v12 reports
+    "did not consume all the text" (`(e){1,3}` on `"ée"`, `((a?)+, ",")+` on `"aa,"`). Slices are
+    a settled decision, and the slice is the honest value: it is what the node's range covers.
 - **JS:** `Pattern.repeat(name, child, { min, max, divider, trimDivider })` takes a plain object,
   read through imported getters (no `js-sys`). `max: Infinity` is unbounded, as in v12; a count
   that isn't a whole number of zero or more is an error.

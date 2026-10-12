@@ -112,7 +112,12 @@ impl Unbounded {
                     }
                 }
                 None => {
-                    cursor.set_pos(running);
+                    // The cursor stays where the child left it, as in v12
+                    // (only the bounded strategy rewinds a slot). A child can
+                    // succeed without a node and still have moved: an inner
+                    // unbounded repeat over an `Optional` does, and the
+                    // divider is then tried from there.
+                    //
                     // A zero-width child with no divider would match the
                     // same nothing forever: stop. v12 reports this as "no
                     // result, no error", whatever was kept before.
