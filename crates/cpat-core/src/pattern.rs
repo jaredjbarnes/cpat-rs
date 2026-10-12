@@ -6,7 +6,8 @@ use crate::name::Name;
 use crate::pattern_error::PatternError;
 use crate::pattern_id::{Meta, PatternId};
 use crate::patterns::{
-    Choice, Context, Custom, Cut, Literal, Not, Optional, Reference, Regex, Repeat, Sequence,
+    Choice, Context, Custom, Cut, Literal, Not, Optional, Reference, Regex, Repeat,
+    RightAssociated, Sequence,
 };
 use crate::tree::NodeId;
 
@@ -31,6 +32,7 @@ pub enum Pattern {
     Cut(Cut),
     Reference(Reference),
     Context(Context),
+    RightAssociated(RightAssociated),
     Custom(Custom),
 }
 
@@ -54,6 +56,9 @@ impl Pattern {
             Pattern::Regex(p) => p.parse(cursor),
             Pattern::Cut(p) => p.parse(cursor),
             Pattern::Custom(p) => p.parse(cursor),
+            // A marker, not a link in the pattern tree (v12 doesn't make it
+            // its child's parent), so it pushes no frame.
+            Pattern::RightAssociated(p) => p.parse(cursor),
             Pattern::Sequence(p) => cursor.framed(p.meta, |c| p.parse(c)),
             Pattern::Choice(p) => cursor.framed(p.meta, |c| p.parse(c)),
             Pattern::Repeat(p) => cursor.framed(p.meta, |c| p.parse(c)),
@@ -120,6 +125,11 @@ impl Pattern {
     /// name too, so a context resolved by a reference produces nodes named
     /// after the reference.
     fn rename(&mut self, name: Name) {
+        // v12's `RightAssociated.clone(name)` ignores the name: the marker
+        // stays nameless and its child keeps its own.
+        if let Pattern::RightAssociated(_) = self {
+            return;
+        }
         self.meta_mut().name = name;
         if let Pattern::Context(context) = self {
             context.child.rename(name);
@@ -155,6 +165,7 @@ impl Pattern {
             Pattern::Optional(p) => Children::Few([Some(&*p.child), None]),
             Pattern::Not(p) => Children::Few([Some(&*p.child), None]),
             Pattern::Context(p) => Children::Few([Some(&*p.child), None]),
+            Pattern::RightAssociated(p) => Children::Few([Some(&*p.child), None]),
         }
     }
 
@@ -174,6 +185,7 @@ impl Pattern {
             Pattern::Optional(p) => Children::Few([Some(&mut *p.child), None]),
             Pattern::Not(p) => Children::Few([Some(&mut *p.child), None]),
             Pattern::Context(p) => Children::Few([Some(&mut *p.child), None]),
+            Pattern::RightAssociated(p) => Children::Few([Some(&mut *p.child), None]),
         }
     }
 
@@ -189,6 +201,7 @@ impl Pattern {
             Pattern::Cut(p) => &p.meta,
             Pattern::Reference(p) => &p.meta,
             Pattern::Context(p) => &p.meta,
+            Pattern::RightAssociated(p) => &p.meta,
             Pattern::Custom(p) => &p.meta,
         }
     }
@@ -205,6 +218,7 @@ impl Pattern {
             Pattern::Cut(p) => &mut p.meta,
             Pattern::Reference(p) => &mut p.meta,
             Pattern::Context(p) => &mut p.meta,
+            Pattern::RightAssociated(p) => &mut p.meta,
             Pattern::Custom(p) => &mut p.meta,
         }
     }
@@ -221,5 +235,16 @@ macro_rules! into_pattern {
 }
 
 into_pattern!(
-    Literal, Regex, Sequence, Choice, Repeat, Optional, Not, Cut, Reference, Context, Custom
+    Literal,
+    Regex,
+    Sequence,
+    Choice,
+    Repeat,
+    Optional,
+    Not,
+    Cut,
+    Reference,
+    Context,
+    RightAssociated,
+    Custom
 );

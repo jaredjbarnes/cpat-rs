@@ -463,3 +463,317 @@ fn a_cut_commits_only_its_own_recursion_level() {
         outlined("-", "expr@0..7", "open@4..4")
     );
 }
+
+// ─── Cut in a choice's Pratt mode ───────────────────────────────────────
+// The grammars below are built as v12's `Grammar.parseString` builds them
+// (the named rules inlined, the whole wrapped in a context named after the
+// rule), so the names in errors are v12's.
+
+/// `word = /[a-z0-9]+/`, `arith-cmd = "((" ~/ word + "))"`,
+/// `and-expr = expr + "&&" + expr`, `expr = and-expr | arith-cmd | word`.
+fn shell_statement() -> Pattern {
+    let word = re("word", "[a-z0-9]+");
+    choice(
+        "expr",
+        vec![
+            seq(
+                "and-expr",
+                vec![reference("expr"), lit("&&", "&&"), reference("expr")],
+            ),
+            seq(
+                "arith-cmd",
+                vec![lit("((", "(("), cut(), word.clone(), lit("))", "))")],
+            ),
+            word,
+        ],
+    )
+}
+
+#[test]
+fn commitment_is_discharged_by_success() {
+    // `((1))` commits at `((` and succeeds; the choice then probes for an
+    // infix continuation (`&&`). Failing to find one is ordinary "no
+    // continuation", not a committed failure of the whole statement.
+    let mut expr = shell_statement();
+
+    assert!(expr.test("((1))"));
+    assert!(expr.test("((1))&&yes"));
+    assert!(expr.test("a&&b"));
+    assert_eq!(
+        exec_shape(&mut expr, "((1))&&yes"),
+        "and-expr:expression@0..10[arith-cmd:sequence@0..5[((:literal@0..2 word:regex@2..3 \
+         )):literal@3..5] &&:literal@5..7 word:regex@7..10]"
+    );
+
+    // A committed failure still is one: bad content after `((` is an error,
+    // not a fallthrough to `word`.
+    assert!(!expr.test("((!bad))"));
+    assert_eq!(
+        exec_outline(&mut expr, "((!bad))"),
+        outlined("-", "expr@0..8", "word@2..2")
+    );
+}
+
+/// `expr = expr ~/ "+" + expr | "a"`.
+fn cut_leading_infix() -> Pattern {
+    let expr = choice(
+        "expr",
+        vec![
+            seq(
+                "anonymous-pattern-0",
+                vec![reference("expr"), cut(), lit("+", "+"), reference("expr")],
+            ),
+            lit("a", "a"),
+        ],
+    );
+    context("expr", expr, vec![])
+}
+
+#[test]
+fn a_cut_leading_an_infix_operator_fires_after_the_last_operand_too() {
+    // `expr ~/ "+" expr` commits, after EVERY operand, to continuing with
+    // `+`. Mid-text a `;` after the operand is a committed failure; with no
+    // text after the operand the cut is reached all the same, so the end of
+    // the text is a committed failure too, the error just past the operand.
+    let mut expr = cut_leading_infix();
+
+    assert_eq!(
+        parse_shape(&mut expr, "a;"),
+        outlined("-", "+@1..1", "+@1..1")
+    );
+    assert_eq!(
+        parse_shape(&mut expr, "a"),
+        outlined("-", "+@1..1", "+@1..1")
+    );
+    assert_eq!(
+        parse_shape(&mut expr, "a+a"),
+        outlined("-", "+@3..3", "+@3..3")
+    );
+}
+
+#[test]
+fn a_cut_leading_a_postfix_operator_fires_at_the_end_too() {
+    let mut expr = choice(
+        "expr",
+        vec![
+            seq("bang", vec![reference("expr"), cut(), lit("!", "!")]),
+            lit("a", "a"),
+        ],
+    );
+
+    assert_eq!(
+        exec_outline(&mut expr, "a"),
+        outlined("-", "expr@0..1", "!@1..1")
+    );
+    assert_eq!(
+        exec_outline(&mut expr, "a!!"),
+        outlined("-", "expr@0..3", "!@3..3")
+    );
+}
+
+#[test]
+fn deviation_the_end_of_text_operator_error_sits_at_the_end_of_a_wide_last_grapheme() {
+    // v12 records it at `index + 1`, one UTF-16 unit past the start of the
+    // last grapheme: inside `😀` (two units). Positions here are grapheme
+    // boundaries (DESIGN §5c), so it is the end of the text, as for a
+    // sequence that runs out of text (DESIGN §11).
+    let mut expr = context(
+        "expr",
+        choice(
+            "expr",
+            vec![
+                seq(
+                    "op",
+                    vec![reference("expr"), cut(), lit("+", "+"), reference("expr")],
+                ),
+                lit("e", "😀"),
+            ],
+        ),
+        vec![],
+    );
+
+    assert_eq!(
+        parse_shape(&mut expr, "😀"),
+        outlined("-", "+@4..4", "+@4..4")
+    );
+}
+
+#[test]
+fn operators_without_a_leading_cut_still_end_cleanly_at_the_end_of_the_text() {
+    // `expr = expr + "+" ~/ expr | "a"`: the cut comes after `+`, so it is
+    // never reached at the end of the text.
+    let mut expr = choice(
+        "expr",
+        vec![
+            seq(
+                "anonymous-pattern-0",
+                vec![reference("expr"), lit("+", "+"), cut(), reference("expr")],
+            ),
+            lit("a", "a"),
+        ],
+    );
+
+    assert_eq!(
+        exec_shape(&mut expr, "a+a"),
+        "anonymous-pattern-0:expression@0..3[a:literal@0..1 +:literal@1..2 a:literal@2..3]"
+    );
+    assert_eq!(exec_outline(&mut expr, "a"), outlined("a@0..1", "-", "-"));
+    // Past its cut, the operator commits: a missing right operand is an
+    // error, not the `a` alone.
+    assert_eq!(
+        exec_outline(&mut expr, "a+b"),
+        outlined("-", "expr@1..3", "a@2..2")
+    );
+}
+
+#[test]
+fn a_cut_inside_a_prefix_operator_commits_the_choice() {
+    let mut expr = choice(
+        "expr",
+        vec![
+            seq(
+                "neg",
+                vec![
+                    lit("-", "-"),
+                    cut(),
+                    opt("o", lit("~", "~")),
+                    reference("expr"),
+                ],
+            ),
+            lit("a", "a"),
+        ],
+    );
+
+    assert_eq!(
+        exec_shape(&mut expr, "--a"),
+        "neg:expression@0..3[-:literal@0..1 neg:expression@1..3[-:literal@1..2 a:literal@2..3]]"
+    );
+    assert_eq!(
+        exec_outline(&mut expr, "-b"),
+        outlined("-", "expr@0..2", "~@1..1")
+    );
+}
+
+#[test]
+fn a_cut_inside_an_operand_of_a_pratt_choice_commits_it() {
+    let mut expr = choice(
+        "expr",
+        vec![
+            seq(
+                "add",
+                vec![reference("expr"), lit("+", "+"), reference("expr")],
+            ),
+            seq(
+                "grp",
+                vec![lit("(", "("), cut(), reference("expr"), lit(")", ")")],
+            ),
+            lit("a", "a"),
+        ],
+    );
+
+    assert_eq!(
+        exec_shape(&mut expr, "(a)+a"),
+        "add:expression@0..5[grp:sequence@0..3[(:literal@0..1 a:literal@1..2 ):literal@2..3] \
+         +:literal@3..4 a:literal@4..5]"
+    );
+    assert_eq!(
+        exec_outline(&mut expr, "a+(a"),
+        outlined("-", "expr@0..4", "grp@2..4")
+    );
+    assert_eq!(
+        exec_outline(&mut expr, "a+(b)"),
+        outlined("-", "expr@0..5", "(@3..3")
+    );
+}
+
+#[test]
+fn a_cut_inside_a_successful_postfix_is_discharged() {
+    // `call = expr "(" ~/ ")"`: after `a()` the text ends, and the operators
+    // are tried at the end. The kept call's cut must not make that probe
+    // (blocked at `(`) a committed failure.
+    let mut expr = choice(
+        "expr",
+        vec![
+            seq(
+                "call",
+                vec![reference("expr"), lit("(", "("), cut(), lit(")", ")")],
+            ),
+            lit("a", "a"),
+        ],
+    );
+
+    assert_eq!(
+        exec_shape(&mut expr, "a()()"),
+        "call:expression@0..5[call:expression@0..3[a:literal@0..1 (:literal@1..2 ):literal@2..3] \
+         (:literal@3..4 ):literal@4..5]"
+    );
+    assert_eq!(
+        exec_outline(&mut expr, "a("),
+        outlined("-", "expr@0..2", "call-postfix@1..2")
+    );
+}
+
+#[test]
+fn a_cut_inside_a_failed_prefix_keeps_its_deep_error() {
+    // `neg = "-" ~/ "!" expr`: on `-a` the prefix commits at `-` and fails
+    // at `!`. The choice fails right there, with that error, rather than
+    // going on to try `-` as an operand.
+    let mut expr = choice(
+        "expr",
+        vec![
+            seq(
+                "neg",
+                vec![lit("-", "-"), cut(), lit("!", "!"), reference("expr")],
+            ),
+            lit("a", "a"),
+        ],
+    );
+
+    assert_eq!(
+        parse_shape(&mut expr, "-a"),
+        outlined("-", "!@1..1", "!@1..1")
+    );
+    assert_eq!(
+        parse_shape(&mut expr, "-!a").0,
+        "neg:expression@0..3[-:literal@0..1 !:literal@1..2 a:literal@2..3]"
+    );
+}
+
+#[test]
+fn a_committed_alternative_that_matched_nothing_leaves_the_choice_matching_nothing() {
+    // `p = ~/ "~"?` on text without `~` matches nothing: the cut fires and
+    // the optional is absent. The choice is committed to it, so it too
+    // matches nothing, with no error, and a sequence carries on past it (as
+    // in v12). Milestone 1 recorded the choice's own error here instead.
+    let committed = || seq("p", vec![cut(), opt("o", lit("~", "~"))]);
+    let mut ordered = seq(
+        "s",
+        vec![choice("x", vec![committed(), lit("a", "a")]), lit("b", "b")],
+    );
+    let mut pratt = seq(
+        "s",
+        vec![
+            choice(
+                "expr",
+                vec![
+                    seq("p", vec![cut(), opt("o", lit("~", "~")), reference("expr")]),
+                    lit("a", "a"),
+                ],
+            ),
+            lit("b", "b"),
+        ],
+    );
+
+    assert_eq!(
+        exec_outline(&mut ordered, "b"),
+        outlined("s@0..1[b@0..1]", "-", "~@0..0")
+    );
+    assert_eq!(
+        exec_outline(&mut ordered, "ab"),
+        outlined("-", "s@0..2", "~@0..0")
+    );
+    assert_eq!(
+        exec_outline(&mut pratt, "b"),
+        outlined("s@0..1[b@0..1]", "-", "~@0..0")
+    );
+}

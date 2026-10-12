@@ -6,7 +6,15 @@
 
 const STRIDE = 7;
 // Indexed by the kind codes in src/exec_result.rs.
-const KIND = ["literal", "regex", "sequence", "custom", "infinite-repeat", "finite-repeat"];
+const KIND = [
+  "literal",
+  "regex",
+  "sequence",
+  "custom",
+  "infinite-repeat",
+  "finite-repeat",
+  "expression",
+];
 const NO_PARENT = 0xffffffff;
 
 export class Tree {

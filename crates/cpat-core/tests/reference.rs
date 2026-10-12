@@ -35,7 +35,7 @@ fn the_reference(value: &Pattern) -> Pattern {
     let Pattern::Choice(value) = value else {
         unreachable!()
     };
-    let Pattern::Sequence(array) = &value.alternatives()[1] else {
+    let Pattern::Sequence(array) = &value.original_alternatives()[1] else {
         unreachable!()
     };
     let Pattern::Repeat(values) = &array.children()[1] else {
@@ -218,15 +218,15 @@ fn resolved_instances_are_reused_by_later_parses() {
     );
 }
 
-/// `a = a "b" | "b"`, built by hand. In v12 a sequence that starts with a
-/// child named like the choice becomes a postfix operator (the Pratt mode,
-/// a later milestone); the expected values come from v12 with the
-/// reference renamed, which keeps it an ordered choice like this one.
+/// `a = a "b" | "b"` with the reference named `self`, so no child is named
+/// like the choice and it stays an ordered choice: left recursion ended by
+/// the guards alone. (Named `a`, the sequence is a postfix operator; see
+/// `tests/expression.rs`.)
 fn left_recursive() -> Pattern {
     choice(
         "a",
         vec![
-            seq("ab", vec![reference("a"), lit("b", "b")]),
+            seq("ab", vec![reference_to("self", "a"), lit("b", "b")]),
             lit("b", "b"),
         ],
     )

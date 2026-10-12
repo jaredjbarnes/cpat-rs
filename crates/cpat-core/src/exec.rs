@@ -75,6 +75,8 @@ pub(crate) fn exec<'t>(pattern: &mut Pattern, text: &'t str, limits: Limits) -> 
 fn summary_meta(pattern: &Pattern) -> crate::Meta {
     match pattern {
         Pattern::Context(context) => summary_meta(context.child()),
+        // v12's `RightAssociated.exec` is its child's exec.
+        Pattern::RightAssociated(marker) => summary_meta(marker.child()),
         _ => pattern.meta(),
     }
 }

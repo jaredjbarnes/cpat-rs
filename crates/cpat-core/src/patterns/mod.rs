@@ -8,9 +8,10 @@ mod optional;
 mod reference;
 mod regex;
 mod repeat;
+mod right_associated;
 mod sequence;
 
-pub use choice::Choice;
+pub use choice::{Choice, ChoiceMode};
 pub use context::Context;
 pub use custom::{Custom, CustomParse};
 pub use cut::Cut;
@@ -21,4 +22,5 @@ pub use reference::Reference;
 pub(crate) use reference::RootLink;
 pub use regex::Regex;
 pub use repeat::{Repeat, RepeatOptions};
+pub use right_associated::RightAssociated;
 pub use sequence::Sequence;

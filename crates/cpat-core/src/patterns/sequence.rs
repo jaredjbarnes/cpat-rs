@@ -31,6 +31,10 @@ impl Sequence {
         })
     }
 
+    pub fn name(&self) -> &'static str {
+        self.meta.name.as_str()
+    }
+
     pub fn children(&self) -> &[Pattern] {
         &self.children
     }
@@ -111,33 +115,53 @@ impl Sequence {
     /// reached commits. A lookahead `!x` holds unless `x` matches the empty
     /// rest of the text. Any other child means the input ended too early.
     fn finish_at_end(&mut self, cursor: &mut Cursor<'_>, first: usize, from: usize) -> Run {
-        for child in &mut self.children[from..] {
+        let Some(blocked) = self.blocked_at_end(cursor, from) else {
+            return Run::Matched;
+        };
+        if cursor.halted() {
+            return Run::ChildFailed;
+        }
+        let end = cursor.pos();
+        match &self.children[blocked] {
+            // The lookahead's own failure, just past the end.
+            Pattern::Not(not) => cursor.record_error(end, end, not.meta),
+            // `last` is the end itself: the input stopped short.
+            _ => cursor.record_error(first, end, self.meta),
+        }
+        Run::FailedInPlace
+    }
+
+    /// This sequence tried with no text left, as a choice in Pratt mode
+    /// tries its operators after an operand that ended the text: the walk
+    /// `finish_at_end` makes, from the first child, recording nothing. A
+    /// leading cut fires, exactly as it would mid-text. Returns the first
+    /// child that needs text, or `None` when the sequence would finish.
+    ///
+    /// A lookahead probe that halts (too deep, an unknown name) halts the
+    /// cursor; callers check `Cursor::halted`.
+    pub fn child_blocked_at_end_of_text(&mut self, cursor: &mut Cursor<'_>) -> Option<&Pattern> {
+        let blocked = self.blocked_at_end(cursor, 0)?;
+        Some(&self.children[blocked])
+    }
+
+    /// The index of the first child from `from` on that can't finish with
+    /// no text left (v12 `_childBlockedAtEndOfText`).
+    fn blocked_at_end(&mut self, cursor: &mut Cursor<'_>, from: usize) -> Option<usize> {
+        for (i, child) in self.children.iter_mut().enumerate().skip(from) {
             match child {
                 Pattern::Optional(_) => {}
                 Pattern::Cut(_) => {
                     child.parse(cursor);
                 }
                 Pattern::Not(not) => {
-                    let matches = not.child_matches_empty(cursor);
-                    if cursor.halted() {
-                        return Run::ChildFailed;
-                    }
-                    if matches {
-                        // The lookahead's own failure, just past the end.
-                        let end = cursor.pos();
-                        cursor.record_error(end, end, not.meta);
-                        return Run::FailedInPlace;
+                    if not.child_matches_empty(cursor) || cursor.halted() {
+                        return Some(i);
                     }
                 }
-                _ => {
-                    // `last` is the end itself: the input stopped short.
-                    cursor.record_error(first, cursor.pos(), self.meta);
-                    return Run::FailedInPlace;
-                }
+                _ => return Some(i),
             }
         }
-
-        Run::Matched
+        None
     }
 }
 

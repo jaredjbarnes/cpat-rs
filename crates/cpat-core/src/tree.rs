@@ -10,6 +10,8 @@ pub enum NodeKind {
     InfiniteRepeat,
     FiniteRepeat,
     Custom,
+    /// An operator applied to its operands, built by a choice in Pratt mode.
+    Expression,
 }
 
 /// Index of a node in its tree.
@@ -65,6 +67,12 @@ impl TreeBuilder {
         self.nodes[id.0 as usize].end as usize
     }
 
+    pub fn children(&self, id: NodeId) -> &[NodeId] {
+        let data = &self.nodes[id.0 as usize];
+        let at = data.children_at as usize;
+        &self.child_ids[at..at + data.children_len as usize]
+    }
+
     pub fn finish<'t>(self, text: &'t str, root: NodeId) -> Tree<'t> {
         Tree {
             text,
@@ -85,7 +93,10 @@ impl TreeBuilder {
         let id = self.nodes.len() as u32;
 
         // A parent is always made after its children, so this is where their
-        // parent link gets filled in. Nothing ever re-parents a node.
+        // parent link gets filled in. The one re-parenting is a choice in
+        // Pratt mode: an operator's expression node takes over the children
+        // of the operator's sequence node, which is left unreachable (as v12
+        // passes `node.children` on and drops the sequence node).
         for child in children {
             self.nodes[child.0 as usize].parent = id;
         }

@@ -10,7 +10,7 @@ mod utf16;
 
 use cpat_core::{
     Choice, Context, Cut, Literal, Not, Optional, Pattern, Reference, Regex, Repeat, RepeatOptions,
-    Sequence,
+    RightAssociated, Sequence,
 };
 use wasm_bindgen::prelude::*;
 
@@ -49,6 +49,10 @@ impl JsPattern {
             .into())
     }
 
+    /// `Pattern.choice(name, alternatives)`: the first alternative that
+    /// matches wins, unless some alternatives are operators (sequences that
+    /// start or end with a reference to `name`), which are assembled by
+    /// precedence: declaration order, earlier binds tighter.
     pub fn choice(name: &str, alternatives: Vec<JsPattern>) -> Result<JsPattern, JsError> {
         Ok(Choice::new(name, unwrap(alternatives))
             .map_err(js_error)?
@@ -69,6 +73,14 @@ impl JsPattern {
             None => RepeatOptions::default(),
         };
         Ok(Repeat::new(name, child.inner, options).into())
+    }
+
+    /// `Pattern.rightAssociated(child)`: marks an infix alternative of a
+    /// choice as right-associative (`a ^ b ^ c` is `a ^ (b ^ c)`). Anywhere
+    /// else it parses as `child`.
+    #[wasm_bindgen(js_name = rightAssociated)]
+    pub fn right_associated(child: JsPattern) -> JsPattern {
+        RightAssociated::new(child.inner).into()
     }
 
     pub fn optional(name: &str, child: JsPattern) -> JsPattern {

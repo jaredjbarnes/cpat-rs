@@ -158,3 +158,38 @@ fn the_lookaheads_frame_feeds_the_choice_guard() {
         outlined("-", "root@0..1", "x@0..0")
     );
 }
+
+#[test]
+fn a_right_associated_marker_pushes_no_frame() {
+    // Not a link in the pattern tree (v12 doesn't make it its child's
+    // parent), so the child's recursion guards look straight past it.
+    let (w, seen) = witness();
+    let mut pattern = seq("s", vec![right(w)]);
+    let s = pattern.id();
+
+    pattern.parse(&mut Cursor::new("x"));
+
+    assert_eq!(*seen.borrow(), vec![frames(&[(s, 0)])]);
+}
+
+#[test]
+fn an_operator_of_a_pratt_choice_parses_inside_its_own_frame() {
+    // v12 makes the choice the operator sequence's parent, so the
+    // operator is on the chain below the choice.
+    let (w, seen) = witness();
+    let mut expr = choice(
+        "expr",
+        vec![seq("neg", vec![w, reference("expr")]), lit("a", "a")],
+    );
+    let choice_id = expr.id();
+    let Pattern::Choice(classified) = &expr else {
+        unreachable!()
+    };
+    let operator = classified.prefix_patterns().next().unwrap();
+    assert_eq!(operator.name(), "neg-prefix");
+    let neg = cpat_core::Pattern::from(operator.clone()).id();
+
+    expr.parse(&mut Cursor::new("-a"));
+
+    assert_eq!(seen.borrow()[0], frames(&[(choice_id, 0), (neg, 0)]));
+}

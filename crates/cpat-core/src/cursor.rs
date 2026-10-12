@@ -365,6 +365,10 @@ impl<'t> Cursor<'t> {
         self.tree.end(id)
     }
 
+    pub fn node_children(&self, id: NodeId) -> &[NodeId] {
+        self.tree.children(id)
+    }
+
     // ─── Committed choice (cut, `~/`) ───────────────────────────────────
     // Every choice runs its alternatives inside a scope. A `Cut` marks the
     // innermost scope; the choice checks the mark after a failed alternative
@@ -389,6 +393,15 @@ impl<'t> Cursor<'t> {
     /// Whether the innermost choice is committed.
     pub fn cut(&self) -> bool {
         self.choice_scopes.last().copied().unwrap_or(false)
+    }
+
+    /// Discharges the innermost choice's commitment: an attempt that
+    /// SUCCEEDED keeps nothing to answer for. A choice in Pratt mode calls
+    /// this after every operand or operator it keeps, so a cut fired inside
+    /// a success can't turn a later failed probe (no further operator) into
+    /// a committed failure.
+    pub fn clear_cut(&mut self) {
+        self.set_cut(false);
     }
 
     /// Restores a saved commitment. Patterns that throw away a child's work

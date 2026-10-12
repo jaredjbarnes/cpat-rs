@@ -30,6 +30,13 @@ pub enum PatternError {
         name: String,
         target: String,
     },
+    /// An alternative of the choice `choice` is a sequence of nothing but a
+    /// reference to the choice itself: as an operator it would have no
+    /// operator part, and as an operand it would only ever recurse.
+    SelfOnlyAlternative {
+        choice: String,
+        alternative: String,
+    },
 }
 
 impl fmt::Display for PatternError {
@@ -67,6 +74,13 @@ impl fmt::Display for PatternError {
             PatternError::UnknownReference { name, target } => write!(
                 f,
                 "reference `{name}` looks up `{target}`, but no enclosing context and nothing in the pattern being run is named `{target}`; define it in a Context around the reference, or put it in the pattern's tree"
+            ),
+            PatternError::SelfOnlyAlternative {
+                choice,
+                alternative,
+            } => write!(
+                f,
+                "alternative `{alternative}` of choice `{choice}` is a sequence of only `{choice}` itself, so it can neither be an operator nor match anything; remove it, or add the operator it should match around the self-reference"
             ),
         }
     }

@@ -185,5 +185,6 @@ fn kind_code(kind: NodeKind) -> u32 {
         NodeKind::Custom => 3,
         NodeKind::InfiniteRepeat => 4,
         NodeKind::FiniteRepeat => 5,
+        NodeKind::Expression => 6,
     }
 }

@@ -8,6 +8,9 @@
 > is implemented; see §11, including its fix rounds (a depth limit, a check that can't blow
 > up, parse-time halts, and implicit-scope targets resolving their names at home, including
 > references wrapped inside a choice target, a documented deviation).
+> Milestone 4 (the choice's Pratt mode: classification, the precedence tree, `RightAssociated`,
+> the atom recursion guard in both modes, the end-of-text operator cut) is implemented; see §8
+> for when a choice classifies and how `RightAssociated` is represented, and §12 for the rest.
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -92,6 +95,34 @@ build error naming the pattern.
 - **One `Choice` pattern** with modes `Ordered`, `LiteralSet` and `Pratt`, picked at build time
   from the classified alternatives (references resolved one level, alias cycles detected).
   There is no `Options`/`Expression` split and no greedy `<|>`.
+- **When a choice classifies** *(decided in milestone 4)*. In `Choice::new`, unless an
+  alternative (seen through `RightAssociated`) is a `Reference`; then at the choice's first
+  parse, resolving the reference one level against the cursor's scopes, as a `Reference` would
+  (`Choice::classify_with` lets the grammar builder do it earlier with the definitions it
+  holds). `Choice::mode()` is `None` until then. *Why:* only a sequence can be an operator, and
+  whether a reference's target is one is known only once the name resolves; the scopes that
+  decide that exist only while parsing, and a Rust pattern has no parents to search from (§2).
+  Everything else is decided where the pattern is built, so a grammar mistake that needs no
+  scope (an alternative that is nothing but a self-reference) is a build error, and a choice
+  with no references never branches on "classified yet?" again. A clone keeps the
+  classification (so a renamed reference instance doesn't redo it), and classification reads
+  the name the choice was built with (v12's `_originalName`), so a renamed clone that classifies
+  late still recognises its self-references. *Rejected:* v12's "classify every clone from the
+  original alternatives": its references cache their resolution on the shared originals anyway,
+  so the result is the same, and re-deriving it per clone only costs. *The cost we're
+  accepting:* a master with reference alternatives (masters never parse) is classified again by
+  each recursion level's instance on its first parse, as v12 builds each clone.
+- **`RightAssociated` is a pattern, not a flag** *(decided in milestone 4)*: a
+  `Pattern::RightAssociated` variant wrapping one child, as in v12. It has no name (`""`),
+  pushes no ancestor frame (v12 doesn't make it its child's parent), ignores renames (v12's
+  `clone(name)` does), and parses, tests and execs as its child. Only classification reads it:
+  an infix alternative wrapped in it associates right, and its precedence is keyed by the
+  child's name. *Why a variant:* the marker travels with the alternative it marks, through a
+  vector of alternatives, a reference (`right(reference("pow"))`) and, later, the grammar
+  builder, and every exhaustive `match` on `Pattern` has to say what it does with it.
+  *Rejected:* a flag per alternative on `Choice::new` (a second list kept in step with the
+  first by position, and impossible to put on a referenced definition), and a separate
+  constructor for operator choices (a second way to build the one choice).
 - Shadowed literals, unknown names and alias cycles are build errors.
 
 ## 9. Decorators *(next milestones)*
@@ -340,6 +371,78 @@ build error naming the pattern.
     `children` are empty until it builds), so a reference parsed before a sibling choice can't see
     inside it. The implicit scope here always sees every alternative.
 
+## 12. The choice's Pratt mode *(milestone 4)*
+
+- **Classification** ports `classifyExpressionPatterns` exactly. Seen through `RightAssociated`
+  and a reference resolved one level, an alternative that is a sequence whose last child (only)
+  is named like the choice is a prefix operator (`<name>-prefix`, the sequence without that
+  child); first child only, a postfix (`<name>-postfix`); both, with more than two children, an
+  infix (`<name>-delimiter`, left-associative unless marked). A self-reference is a child with
+  the choice's name, whatever kind of pattern it is. Precedence is the declaration index, keyed
+  by the alternative's name (a later alternative with the same name replaces the entry). A
+  sequence of only the self-reference is `PatternError::SelfOnlyAlternative` (v12 throws
+  "Need at least one pattern" building its prefix): from `Choice::new`, or as a parse halt
+  (`ParseResult::pattern_error`) when found through a reference. Any other sequence that starts
+  and ends with the choice (`e e`) is neither operand nor operator and is never tried, as in
+  v12. No operators: `ChoiceMode::Ordered`, the M1 loop over the atoms.
+- **Operands are the alternatives themselves, parsed in place**, by index. v12 parses clones;
+  a clone shares the id and starts with fresh state, so nothing observable changes and nothing
+  is cloned. Operators are new `Sequence`s with fresh ids; each parses in its own ancestor frame
+  (v12 makes the choice its parent), so they're on the chain the recursion guards read.
+- **The parse loop** (`pratt.rs`) is v12's `_tryToParse` phase for phase: prefixes (restarting
+  after each match), one operand, postfixes (restarting), then an infix, and round again.
+  Every successful attempt clears the choice's cut flag (`Cursor::clear_cut`); every failed one
+  checks it and, when set, stops with a committed failure that keeps the deep error and drops
+  whatever was assembled. An operand or postfix that ends the text tries the postfix and infix
+  operators with `Sequence::child_blocked_at_end_of_text`, the walk `finish_at_end` makes from
+  child 0, recording nothing; when that fires a cut, the committed operator records its error on
+  the blocked child at the end of the text. The atom recursion guard (§11) applies in both
+  modes. A halt inside the loop fails the choice even when an operand was already assembled.
+- **The precedence tree** (`precedence.rs`) assembles in a scratch tree of slots with v12's
+  node operations (`append`, `remove`, `replace_with`, root-finding) and placeholders, step for
+  step, including the right-associated equal-precedence stop when climbing, the revert of a
+  trailing infix with no right operand (data, not closures), and the prefix/postfix order (the
+  lower declaration index goes inside; ties keep the prefix inside). Only the result is written
+  to the arena, as `NodeKind::Expression` nodes named after the operator alternatives, children
+  first. Prefix and infix operators contribute their sequence node's *children*; the sequence
+  node stays in the arena, unreachable, and its children are re-parented to the expression node
+  (the only re-parenting the arena does). An operand with no operators comes back unwrapped. An
+  expression node spans its first child's start to its last child's end; v12's `normalize`
+  recomputes ranges from the concatenated values, which is the same span whenever the children
+  are contiguous (they always are, short of the nodeless-child gaps §10 discusses).
+- **Known limitation, kept:** a prefix that consumes the last token doesn't backtrack, so
+  `x = "a" x | "a"` rejects `a` (pinned in `tests/expression.rs`).
+- **Fixed relative to milestone 1:** a committed alternative that left no error (it matched
+  nothing: a cut and absent optionals) leaves the choice matching nothing, with no error, in
+  both modes, as in v12. Milestone 1 recorded the choice's own error there, an untested guard
+  with no recorded reason; inside a sequence that turned v12's match into a failure.
+- **Checked against v12** by running both (one shared spec, a TS runner and a generated Rust
+  one) on 45 grammars and 180 inputs with one instance reused per grammar: the Expression,
+  RightAssociated and PrecedenceTree test grammars, Pratt-mode cuts (leading, trailing, in
+  prefixes, postfixes and operands), reference alternatives (plain, renamed, marked, choices),
+  dropped alternatives, Pratt choices inside sequences, repeats and lookaheads: same trees,
+  errors and furthest errors. The milestone-3 comparison suites still match except for its
+  documented deviations; its left-recursion cases now parse as postfix chains, as in v12. A
+  mutation pass removed each mechanism above in turn (guards, every `clear_cut` and cut check,
+  the end-of-text probe, association, the climb stop, the revert, the order swap, reference
+  resolution, the original name, frames, the halt check); each made a test fail.
+- **Deviations from v12:**
+  - The end-of-text operator error sits at the end of the text; v12 records it at `index + 1`,
+    inside a last grapheme wider than one UTF-16 unit (`😀`). Same reason as the `Sequence`
+    case in §11; pinned in `tests/cut.rs`.
+  - A renamed clone of a choice whose alternatives refer to its old name names nothing it can
+    see, and `exec` says so up front (§11). v12 throws only when a parse reaches such a
+    reference; its 'Clone With New Name' test passes because its input never does. Pinned in
+    `tests/expression.rs` (`clone_with_new_name`).
+  - Operator parts resolve their references at home like any implicit-scope target (§11). v12
+    builds them from never-parsed alternatives, so where it throws "Couldn't find" for a
+    reference inside an operator of a target reached from elsewhere, the name resolves here.
+    This is the §11 deviation for references beneath a choice, met through an operator.
+- **Deferred:** introspection (`getTokens`, `getPatterns`, `…After`, `find`) to the
+  intellisense milestone, which will also skip an atom already being expanded higher up; the
+  `LiteralSet` mode and its tests to M5; the grammar-file cut tests (`~/` in `.cpat`, the
+  shell-shaped blow-up test) to the grammar milestone.
+
 ## Behavior fixed relative to clarity-pattern-parser v11
 
 Each is pinned by a test here and fixed in v12:
@@ -353,3 +456,6 @@ Each is pinned by a test here and fixed in v12:
 | `furthest_error` after a failed `exec` is the deepest real failure | `tests/exec.rs` |
 | A trailing escaped `\$` in a regex isn't treated as an anchor | `tests/regex.rs` |
 | A successful Regex clears the current error (v11's Regex didn't) | — |
+| Only sequences classify as operators (`b = a \| "d"` inside `a` is an atom) | `tests/expression.rs` |
+| A right-associated operator nests right past a tighter one (`a as b + c as d`) | `tests/precedence.rs` |
+| Mutually recursive choices (`a = b \| "c"`, `b = a \| "d"`) parse | `tests/expression.rs` |

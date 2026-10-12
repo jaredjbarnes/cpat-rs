@@ -228,3 +228,54 @@ test("input nested too deep is an answer, and the module keeps working", () => {
   assert.equal(Pattern.literal("a", "a").test("a"), true);
   assert.equal(expr.exec("((x))").tooDeep, undefined);
 });
+
+// `name:type@start..end[children]`, the shape clarity-pattern-parser v12
+// prints for the same grammar and input (positions are UTF-16 offsets).
+function shape(node) {
+  const children = node.children.map(shape);
+  const tail = children.length === 0 ? "" : `[${children.join(" ")}]`;
+  return `${node.name}:${node.type}@${node.startIndex}..${node.endIndex}${tail}`;
+}
+
+function arithmetic() {
+  const expr = () => Pattern.reference("expr");
+  return Pattern.choice("expr", [
+    Pattern.sequence("mul", [expr(), Pattern.literal("*", "*"), expr()]),
+    Pattern.sequence("add", [expr(), Pattern.literal("+", "+"), expr()]),
+    Pattern.rightAssociated(
+      Pattern.sequence("pow", [expr(), Pattern.literal("^", "^"), expr()])
+    ),
+    Pattern.regex("num", "[0-9]+"),
+  ]);
+}
+
+test("operators in a choice parse by precedence, as expression nodes", () => {
+  const text = "1+2*3";
+  const result = arithmetic().exec(text);
+  const root = new Tree(text, result).root;
+
+  assert.equal(
+    shape(root),
+    "add:expression@0..5[num:regex@0..1 +:literal@1..2 " +
+      "mul:expression@2..5[num:regex@2..3 *:literal@3..4 num:regex@4..5]]"
+  );
+});
+
+test("a right-associated operator nests to the right", () => {
+  const text = "2^3^4";
+  const root = new Tree(text, arithmetic().exec(text)).root;
+
+  assert.equal(
+    shape(root),
+    "pow:expression@0..5[num:regex@0..1 ^:literal@1..2 " +
+      "pow:expression@2..5[num:regex@2..3 ^:literal@3..4 num:regex@4..5]]"
+  );
+});
+
+test("a dangling operator is a failed exec with v12's errors", () => {
+  const result = arithmetic().exec("1+");
+
+  assert.equal(result.matched, false);
+  assert.deepEqual(Array.from(result.furthestError), [1, 1]);
+  assert.equal(result.furthestErrorPattern, "*");
+});

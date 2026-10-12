@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use cpat_core::{
-    Choice, Context, Cut, Literal, Node, Not, Optional, ParseError, Pattern, Reference, Regex,
-    Repeat, RepeatOptions, Sequence,
+    Choice, Context, Cursor, Cut, Literal, Node, NodeKind, Not, Optional, ParseError, Pattern,
+    Reference, Regex, Repeat, RepeatOptions, RightAssociated, Sequence,
 };
 
 pub fn lit(name: &str, token: &str) -> Pattern {
@@ -55,6 +55,68 @@ pub fn reference_to(name: &str, target: &str) -> Pattern {
 
 pub fn context(name: &str, child: Pattern, patterns: Vec<Pattern>) -> Pattern {
     Context::new(name, child, patterns).into()
+}
+
+pub fn right(child: Pattern) -> Pattern {
+    RightAssociated::new(child).into()
+}
+
+/// The `Choice` inside a pattern built as one.
+pub fn as_choice(pattern: &Pattern) -> &Choice {
+    match pattern {
+        Pattern::Choice(choice) => choice,
+        other => panic!("not a choice: {other:?}"),
+    }
+}
+
+/// A tree as one line with kinds, `name:kind@start..end[children]`, for
+/// assertions on exact shapes (the v12 comparison printed the same, with
+/// `type` for kind).
+pub fn shape(node: Node<'_, '_>) -> String {
+    let children: Vec<String> = node.children().map(shape).collect();
+    let children = if children.is_empty() {
+        String::new()
+    } else {
+        format!("[{}]", children.join(" "))
+    };
+    let kind = match node.kind() {
+        NodeKind::Literal => "literal",
+        NodeKind::Regex => "regex",
+        NodeKind::Sequence => "sequence",
+        NodeKind::InfiniteRepeat => "infinite-repeat",
+        NodeKind::FiniteRepeat => "finite-repeat",
+        NodeKind::Custom => "custom",
+        NodeKind::Expression => "expression",
+    };
+    format!(
+        "{}:{kind}@{}..{}{children}",
+        node.name(),
+        node.start(),
+        node.end()
+    )
+}
+
+/// `exec`'s tree as a `shape`, or `-`.
+pub fn exec_shape(pattern: &mut Pattern, text: &str) -> String {
+    let result = pattern.exec(text);
+    assert!(result.pattern_error.is_none(), "{:?}", result.pattern_error);
+    result
+        .tree()
+        .map_or_else(|| "-".to_string(), |tree| shape(tree.root()))
+}
+
+/// `parse` from 0 (not necessarily all of `text`): the tree as a `shape`
+/// or `-`, then the cursor's error and furthest error.
+pub fn parse_shape(pattern: &mut Pattern, text: &str) -> (String, String, String) {
+    let mut cursor = Cursor::new(text);
+    let node = pattern.parse(&mut cursor);
+    let error = error_outline(cursor.error());
+    let furthest = error_outline(cursor.furthest_error());
+    let tree = node.map_or_else(
+        || "-".to_string(),
+        |node| shape(cursor.into_tree(node).root()),
+    );
+    (tree, error, furthest)
 }
 
 /// A tree as one line, `name@start..end[children]`: the same shape the v12

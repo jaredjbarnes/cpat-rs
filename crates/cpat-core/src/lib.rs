@@ -1,7 +1,8 @@
 //! cpat-core: the clarity pattern parser in Rust.
 //!
 //! Small composable patterns (`Literal`, `Regex`, `Sequence`, `Choice`,
-//! `Repeat`, `Optional`, `Not`, `Cut`, `Reference`, `Context`) build
+//! `Repeat`, `Optional`, `Not`, `Cut`, `Reference`, `Context`,
+//! `RightAssociated`) build
 //! parsers; `exec` runs one over a text and returns a read-only tree whose
 //! values are slices of that text.
 //!
@@ -45,7 +46,7 @@ pub use pattern::Pattern;
 pub use pattern_error::PatternError;
 pub use pattern_id::{Meta, PatternId};
 pub use patterns::{
-    Choice, Context, Custom, CustomParse, Cut, Literal, Not, Optional, Reference, Regex, Repeat,
-    RepeatOptions, Sequence,
+    Choice, ChoiceMode, Context, Custom, CustomParse, Cut, Literal, Not, Optional, Reference,
+    Regex, Repeat, RepeatOptions, RightAssociated, Sequence,
 };
 pub use tree::{Node, NodeId, NodeKind, Tree};
