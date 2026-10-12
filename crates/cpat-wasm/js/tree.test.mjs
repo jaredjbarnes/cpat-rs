@@ -261,6 +261,25 @@ test("operators in a choice parse by precedence, as expression nodes", () => {
   );
 });
 
+// An operator chain makes a tree as deep as the input is long. Writing,
+// flattening and walking it all recursed once per level: natively the
+// process aborted, and in wasm exec threw instead of returning the tree.
+test("a long operator chain comes back as a tree as deep as the input", () => {
+  const n = 100_000;
+  const text = "1" + "+1".repeat(n);
+  const result = arithmetic().exec(text);
+  const root = new Tree(text, result).root;
+
+  assert.equal(result.matched, true);
+  assert.equal(root.name, "add");
+  assert.equal(root.value, text);
+  let depth = 0;
+  for (let node = root; node != null; node = node.children[0] ?? null) depth++;
+  assert.equal(depth, n + 1);
+  assert.equal(root.findAll(node => node.type === "expression").length, n);
+  assert.equal(root.find(node => node.isLeaf).value, "1");
+});
+
 test("a right-associated operator nests to the right", () => {
   const text = "2^3^4";
   const root = new Tree(text, arithmetic().exec(text)).root;

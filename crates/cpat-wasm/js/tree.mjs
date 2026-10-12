@@ -91,16 +91,31 @@ export class Node {
 
   /** First match, children before their parent. */
   find(predicate) {
-    for (const child of this.children) {
-      const found = child.find(predicate);
-      if (found != null) return found;
+    for (const node of this._postOrder()) {
+      if (predicate(node)) return node;
     }
-    return predicate(this) ? this : null;
+    return null;
   }
 
-  findAll(predicate, found = []) {
-    for (const child of this.children) child.findAll(predicate, found);
-    if (predicate(this)) found.push(this);
-    return found;
+  findAll(predicate) {
+    return [...this._postOrder()].filter(predicate);
+  }
+
+  // Children before their parent, with its own stack: an operator chain
+  // makes a tree as deep as the input is long, too deep to recurse over.
+  *_postOrder() {
+    const pending = [[this, 0]];
+    while (pending.length > 0) {
+      const top = pending[pending.length - 1];
+      const [node, done] = top;
+      if (done === node._field(6)) {
+        pending.pop();
+        yield node;
+      } else {
+        top[1] = done + 1;
+        const child = node._tree._children[node._field(5) + done];
+        pending.push([new Node(node._tree, child), 0]);
+      }
+    }
   }
 }

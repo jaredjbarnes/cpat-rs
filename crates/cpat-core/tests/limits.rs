@@ -5,7 +5,7 @@
 mod common;
 
 use common::*;
-use cpat_core::{Cursor, DEFAULT_MAX_DEPTH, Limits, Pattern, TooDeep};
+use cpat_core::{Cursor, DEFAULT_MAX_DEPTH, Limits, Node, NodeKind, Pattern, TooDeep};
 
 /// `expr = "(" expr ")" | "x"`: three composites (choice, sequence,
 /// reference) per level of parentheses.
@@ -179,4 +179,93 @@ fn a_sequence_whose_end_probe_halted_returns_no_node() {
 
     assert!(pattern.parse(&mut cursor).is_none());
     assert!(cursor.halted());
+}
+
+/// The verifier's grammar: one operator of each kind over `a`.
+/// `e = "-" e | e "!" | e "+" e | RightAssociated(e "^" e) | "a"`.
+fn operators() -> Pattern {
+    choice(
+        "e",
+        vec![
+            seq("neg", vec![lit("-", "-"), reference("e")]),
+            seq("bang", vec![reference("e"), lit("!", "!")]),
+            seq("add", vec![reference("e"), lit("+", "+"), reference("e")]),
+            right(seq(
+                "pow",
+                vec![reference("e"), lit("^", "^"), reference("e")],
+            )),
+            lit("a", "a"),
+        ],
+    )
+}
+
+/// Nodes on the longest root-to-leaf path, counted without recursing.
+fn depth(root: Node<'_, '_>) -> usize {
+    let mut deepest = 0;
+    let mut pending = vec![(root, 1)];
+    while let Some((node, at)) = pending.pop() {
+        deepest = deepest.max(at);
+        pending.extend(node.children().map(|child| (child, at + 1)));
+    }
+    deepest
+}
+
+/// The Pratt loop is iterative, so the depth limit never sees an operator
+/// chain: `a+a+…+a` parses into a tree as deep as the input is long. Writing
+/// that tree recursed once per level and aborted the process with a stack
+/// overflow (a debug build on a test thread's stack overflowed well before
+/// 100 000 operators). The tree is written, walked, flattened and printed
+/// without recursion, so every chain parses in full.
+#[test]
+fn an_operator_chain_as_deep_as_the_input_parses_without_overflowing() {
+    const N: usize = 100_000;
+    let chains = [
+        (
+            "left-associated infix",
+            format!("a{}", "+a".repeat(N)),
+            "add",
+        ),
+        (
+            "right-associated infix",
+            format!("a{}", "^a".repeat(N)),
+            "pow",
+        ),
+        ("prefix", format!("{}a", "-".repeat(N)), "neg"),
+        ("postfix", format!("a{}", "!".repeat(N)), "bang"),
+    ];
+
+    for (kind, text, operator) in chains {
+        let mut pattern = operators();
+
+        let result = pattern.exec(&text);
+
+        let tree = result.tree().unwrap_or_else(|| panic!("{kind}: no tree"));
+        let root = tree.root();
+        assert_eq!(root.name(), operator, "{kind}");
+        assert_eq!(root.value(), text, "{kind}");
+        assert_eq!(depth(root), N + 1, "{kind}: one level per operator");
+        assert_eq!(
+            root.find_all(|n| n.kind() == NodeKind::Expression).len(),
+            N,
+            "{kind}"
+        );
+        assert_eq!(
+            root.find(|n| n.is_leaf()).map(|n| n.name()),
+            Some(if kind == "prefix" { "-" } else { "a" }),
+            "{kind}"
+        );
+        assert!(format!("{root:?}").contains("children: "), "{kind}");
+    }
+}
+
+#[test]
+fn printing_a_node_shows_it_and_its_child_count_not_the_subtree() {
+    let mut pattern = operators();
+    let result = pattern.exec("a+a");
+    let root = result.tree().unwrap().root();
+
+    assert_eq!(
+        format!("{root:?}"),
+        r#"Node { kind: Expression, name: "add", range: 0..3, value: "a+a", children: 3 }"#
+    );
 }

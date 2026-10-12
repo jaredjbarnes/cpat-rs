@@ -433,28 +433,48 @@ impl PrecedenceTree {
         slot
     }
 
-    /// Writes `slot`'s subtree into the arena, children first. An operator
-    /// node spans its first child's start to its last child's end.
-    fn write(&self, slot: Slot, cursor: &mut Cursor<'_>) -> NodeId {
-        let item = &self.items[slot.0 as usize];
-        match item.kind {
-            Kind::Parsed(node) => node,
-            Kind::Operator(name) => {
-                let children: Vec<NodeId> = item
-                    .children
-                    .iter()
-                    .map(|&child| self.write(child, cursor))
-                    .collect();
-                let start = cursor.node_start(children[0]);
-                let end = cursor.node_end(children[children.len() - 1]);
-                cursor.branch(NodeKind::Expression, name, start, end, &children)
+    /// Writes `root`'s subtree into the arena, children first, and returns
+    /// the node written for `root`. An operator node spans its first
+    /// child's start to its last child's end.
+    ///
+    /// The walk keeps its own stack instead of recursing. The Pratt loop is
+    /// iterative, so the depth limit never sees an operator chain, and
+    /// `a+a+…+a` or `--…-a` builds a tree as deep as the input is long: a
+    /// recursive write overflowed the native stack (a process abort) on
+    /// long inputs that v12 parses or rejects with a catchable error.
+    fn write(&self, root: Slot, cursor: &mut Cursor<'_>) -> NodeId {
+        // Each frame is a slot and how many of its children are written.
+        // Written nodes wait on `written` until their parent takes them.
+        let mut pending = vec![(root, 0usize)];
+        let mut written: Vec<NodeId> = Vec::new();
+
+        while let Some((slot, done)) = pending.pop() {
+            let item = &self.items[slot.0 as usize];
+            match item.kind {
+                Kind::Parsed(node) => written.push(node),
+                Kind::Operator(_) if done < item.children.len() => {
+                    pending.push((slot, done + 1));
+                    pending.push((item.children[done], 0));
+                }
+                Kind::Operator(name) => {
+                    let children = written.split_off(written.len() - item.children.len());
+                    let start = cursor.node_start(children[0]);
+                    let end = cursor.node_end(children[children.len() - 1]);
+                    written.push(cursor.branch(NodeKind::Expression, name, start, end, &children));
+                }
+                // Every placeholder is filled or cut away before a commit
+                // writes anything: a completed operand fills the prefix,
+                // postfix and binary placeholders it is compiled into, and a
+                // missing one drops the operators waiting for it.
+                Kind::Placeholder => {
+                    unreachable!("a placeholder is never part of a committed tree")
+                }
             }
-            // Every placeholder is filled or cut away before a commit
-            // writes anything: a completed operand fills the prefix,
-            // postfix and binary placeholders it is compiled into, and a
-            // missing one drops the operators waiting for it.
-            Kind::Placeholder => unreachable!("a placeholder is never part of a committed tree"),
         }
+
+        written
+            .pop()
+            .expect("writing a subtree leaves exactly its root")
     }
 }
 

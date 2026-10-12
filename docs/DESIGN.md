@@ -11,6 +11,8 @@
 > Milestone 4 (the choice's Pratt mode: classification, the precedence tree, `RightAssociated`,
 > the atom recursion guard in both modes, the end-of-text operator cut) is implemented; see §8
 > for when a choice classifies and how `RightAssociated` is represented, and §12 for the rest.
+> Its fix round made every walk over a finished tree iterative, so an operator chain as long
+> as the input can't overflow the stack (§7e).
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -83,6 +85,12 @@ build error naming the pattern.
   unreachable. History stores copies (`Match`, `ParseError`), not node references.
 - **7d:** JS gets flat `Uint32Array`s with a thin `Node` view class (`js/tree.mjs`), so walking
   the tree never calls into wasm.
+- **7e:** no walk over a finished tree recurses: writing an expression tree, `find`/`find_all`,
+  the wasm flattener and the JS view's `find`/`findAll` keep their own stacks, and a node's
+  `Debug` is shallow (its fields and child count). The depth limit (§11) bounds only the
+  parser's recursion; a choice in Pratt mode loops, so an operator chain (`a+a+…+a`, `--…-a`)
+  builds a tree as deep as the input is long. A recursive walk aborted the process on such
+  input (fix round 1 of milestone 4).
 
 ## 8. The grammar *(next milestones)*
 
@@ -434,6 +442,11 @@ build error naming the pattern.
     see, and `exec` says so up front (§11). v12 throws only when a parse reaches such a
     reference; its 'Clone With New Name' test passes because its input never does. Pinned in
     `tests/expression.rs` (`clone_with_new_name`).
+  - An operator chain of any length parses (§7e). v12 builds and walks its tree recursively
+    and throws a `RangeError` once the chain outgrows the JS stack (a few thousand operators
+    when `toString` walks the result). Same trees where v12 finishes: compared on 500-operator
+    chains of each kind and on mixed chains. Pinned in `tests/limits.rs` and
+    `js/tree.test.mjs` with 100 000 operators.
   - Operator parts resolve their references at home like any implicit-scope target (§11). v12
     builds them from never-parsed alternatives, so where it throws "Couldn't find" for a
     reference inside an operator of a target reached from elsewhere, the name resolves here.

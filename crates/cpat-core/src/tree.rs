@@ -181,7 +181,9 @@ impl<'a, 't> Node<'a, 't> {
         (parent != NO_PARENT).then(|| self.tree.node(NodeId(parent)))
     }
 
-    pub fn children(&self) -> impl ExactSizeIterator<Item = Node<'a, 't>> + 'a {
+    pub fn children(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = Node<'a, 't>> + ExactSizeIterator + 'a {
         let data = self.data();
         let at = data.children_at as usize;
         let ids = &self.tree.child_ids[at..at + data.children_len as usize];
@@ -196,42 +198,62 @@ impl<'a, 't> Node<'a, 't> {
     /// The first node, depth first with children before their parent, that
     /// satisfies `predicate`. The node itself is included.
     pub fn find(&self, predicate: impl Fn(&Node<'a, 't>) -> bool) -> Option<Node<'a, 't>> {
-        self.find_in(&predicate)
+        self.post_order().find(|node| predicate(node))
     }
 
     /// Every node, in the same order as `find`, that satisfies `predicate`.
     pub fn find_all(&self, predicate: impl Fn(&Node<'a, 't>) -> bool) -> Vec<Node<'a, 't>> {
-        let mut found = Vec::new();
-        self.collect(&predicate, &mut found);
-        found
+        self.post_order().filter(|node| predicate(node)).collect()
     }
 
-    fn find_in(&self, predicate: &dyn Fn(&Node<'a, 't>) -> bool) -> Option<Node<'a, 't>> {
-        self.children()
-            .find_map(|child| child.find_in(predicate))
-            .or_else(|| predicate(self).then_some(*self))
-    }
-
-    fn collect(&self, predicate: &dyn Fn(&Node<'a, 't>) -> bool, found: &mut Vec<Node<'a, 't>>) {
-        for child in self.children() {
-            child.collect(predicate, found);
-        }
-        if predicate(self) {
-            found.push(*self);
+    /// This subtree, children before their parent. A choice in Pratt mode
+    /// builds a tree as deep as its operator chain is long, so no walk over
+    /// a tree may recurse on the native stack.
+    fn post_order(&self) -> PostOrder<'a, 't> {
+        PostOrder {
+            tree: self.tree,
+            pending: vec![(self.id, 0)],
         }
     }
 }
 
+/// A post-order walk with its own stack: each frame is a node and how many
+/// of its children have been walked.
+struct PostOrder<'a, 't> {
+    tree: &'a Tree<'t>,
+    pending: Vec<(NodeId, usize)>,
+}
+
+impl<'a, 't> Iterator for PostOrder<'a, 't> {
+    type Item = Node<'a, 't>;
+
+    fn next(&mut self) -> Option<Node<'a, 't>> {
+        loop {
+            let (id, done) = self.pending.pop()?;
+            let node = self.tree.node(id);
+            let data = node.data();
+            if done == data.children_len as usize {
+                return Some(node);
+            }
+            self.pending.push((id, done + 1));
+            let child = self.tree.child_ids[data.children_at as usize + done];
+            self.pending.push((child, 0));
+        }
+    }
+}
+
+/// Shallow: the node itself and how many children it has. Printing the
+/// subtree would recurse once per level, and an operator chain makes a tree
+/// as deep as the input is long, so `{:?}` on its root would overflow the
+/// stack. Walk `children()` to see further.
 impl std::fmt::Debug for Node<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut s = f.debug_struct("Node");
-        s.field("kind", &self.kind())
+        f.debug_struct("Node")
+            .field("kind", &self.kind())
             .field("name", &self.name())
             .field("range", &(self.start()..self.end()))
-            .field("value", &self.value());
-        if !self.is_leaf() {
-            s.field("children", &self.children().collect::<Vec<_>>());
-        }
-        s.finish()
+            .field("value", &self.value())
+            .field("children", &self.children().len())
+            .finish()
     }
 }
