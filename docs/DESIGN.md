@@ -24,8 +24,10 @@
 > path and its cost, and §15 for the rest.
 > Milestone 8 (introspection without parent pointers: tokens, patterns, what comes after a
 > child and what comes next, by path; `find`, `is_equal`, `clone_named`, `Tokenizable`, and
-> `generate_error_message`) is implemented; see §16. Its fix round counts the query depth
-> limit from the asked-about place, so a leaf deeper than 256 steps still gets its hint.
+> `generate_error_message`) is implemented; see §16. Its first fix round counts the query depth
+> limit from the asked-about place, so a leaf deeper than 256 steps still gets its hint; its
+> second refuses a path longer than any parse under the same `Limits` makes, so a long
+> caller-supplied path can't overflow the stack.
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -818,6 +820,21 @@ build error naming the pattern.
   `next_tokens` and the error message's hint there. The deepest default parse (340 levels, a
   1021-step path) walks, climbs to the root and meets a never-ending expansion on a 2 MB
   thread; a caller that raises `max_depth` gives the query the stack it gives the parse.
+  *The path is bounded too (fix round 2).* A path is a public argument, and every step adds a
+  link to the query's chain, which the climb recurses up and the drop recurses down: a
+  300 000-step path through the parentheses grammar aborted the process. A query follows a
+  path of at most `Limits::max_depth` steps and treats a longer one as leading nowhere (`at`
+  is `None`, the lists are empty). That refuses no real path: every step below the root enters
+  a composite, which takes a parse frame, or ends at a leaf, so a parse under the same limits
+  can't make a longer one (measured: the deepest default parse of four nesting grammars,
+  through references, contexts and optionals, puts its leaf 1021 steps down). `Introspection::
+  new` uses `Limits::default()`, `Introspection::with_limits` takes the parse's, and
+  `ParseResult` keeps the limits it ran under (`limits()`) so `generate_error_message` follows
+  an `exec_with` path. *Rejected:* an iterative `Drop` and an iterative climb alone would
+  remove the overflow but not the work: each `is_recursive` check scans the chain and each
+  context on the path copies the frames above it, so the work grows with the square of the
+  path's length. A count tied to the parse's own limit bounds both and is the same on every
+  machine.
   Depth doesn't bound the work: an expansion that branches (`a = !"z" a`, `a = "x"?
   ("y"? a)? a`) makes twice the places per level, and ran for minutes before the second
   bound: a query makes at most `BUDGET` (100 000) places, then answers with what it found.

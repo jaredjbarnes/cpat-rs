@@ -156,10 +156,22 @@ impl<'r> Loc<'r> {
 }
 
 impl<'r> Introspection<'r> {
-    /// The place `path` leads to from the root. The walk follows a given
-    /// path, so neither the depth limit nor the budget applies to it; the
-    /// expansion below the place it reaches gets `MAX_DEPTH` levels.
+    /// The place `path` leads to from the root, or nothing for a path
+    /// longer than `max_path`. The walk follows a given path, so neither
+    /// the depth limit nor the budget applies to it; the expansion below
+    /// the place it reaches gets `MAX_DEPTH` levels.
+    ///
+    /// The length check is what bounds the stack here (fix round 2): a
+    /// path is a public argument, and every step adds a link to the chain,
+    /// which a climb recurses up and a drop recurses down. A 300 000-step
+    /// path through `expr = "(" expr ")" | "x"` aborted the process. No
+    /// parse under the same limits makes a path longer than `max_path`
+    /// (every step below the root enters a composite, which takes a frame,
+    /// or ends at a leaf), so a real path is never refused.
     pub(super) fn walk(&self, path: &PatternPath) -> Option<Rc<Loc<'r>>> {
+        if path.steps().len() > self.max_path {
+            return None;
+        }
         let loc = path
             .steps()
             .iter()

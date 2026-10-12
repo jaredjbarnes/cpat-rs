@@ -571,6 +571,9 @@ impl<'t> Cursor<'t> {
             leaf_matches: self.leaves.to_matches(),
             history: self.history.map(|history| *history),
             text: self.text,
+            limits: Limits {
+                max_depth: self.max_depth,
+            },
         }
     }
 }

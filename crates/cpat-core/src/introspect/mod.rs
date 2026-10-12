@@ -31,6 +31,7 @@ mod select;
 use std::cell::Cell;
 use std::rc::Rc;
 
+use crate::halt::Limits;
 use crate::name::Name;
 use crate::pattern::Pattern;
 use crate::pattern_id::{Meta, PatternId};
@@ -57,6 +58,10 @@ pub struct Introspection<'r> {
     /// The depth of the place the query running now was asked about; the
     /// query expands at most `loc::MAX_DEPTH` below it.
     floor: Cell<usize>,
+    /// The longest path a query follows (`Limits::max_depth`): no parse
+    /// under the same limits makes a longer one, and a longer path is
+    /// refused rather than walked (`Loc::walk`).
+    max_path: usize,
 }
 
 /// A pattern instance at a place in the root's tree: what a query found,
@@ -87,7 +92,16 @@ impl Handle<'_> {
 }
 
 impl<'r> Introspection<'r> {
+    /// Introspection that follows paths as deep as a parse under
+    /// `Limits::default()` makes them (`exec`'s paths).
     pub fn new(root: &'r Pattern) -> Introspection<'r> {
+        Introspection::with_limits(root, Limits::default())
+    }
+
+    /// Introspection that follows paths as deep as a parse under `limits`
+    /// makes them (`exec_with`'s paths). A longer path leads nowhere. Like
+    /// the parse, a query this deep needs the stack that `limits` asks for.
+    pub fn with_limits(root: &'r Pattern, limits: Limits) -> Introspection<'r> {
         let bottom = match crate::link::readied_scope_ref(root) {
             Some(scope) => FrameRef::Scope {
                 scope,
@@ -104,6 +118,7 @@ impl<'r> Introspection<'r> {
             live: LiveScope::new(root),
             spent: Cell::new(0),
             floor: Cell::new(0),
+            max_path: limits.max_depth,
         }
     }
 

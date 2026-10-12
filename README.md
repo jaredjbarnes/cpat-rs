@@ -60,7 +60,8 @@ place by its path from a root. `tokens()`/`patterns()` say what can start a patt
 name patterns are `Handle`s (path, pattern, name), so they can be asked about in turn; references
 are followed as a parse follows them. `find` returns the first match with its path, `is_equal`
 compares structure, `clone_named` renames a clone that keeps its id, and `Regex`, `TakeUntil` and
-`Custom` take suggested tokens (`Tokenizable::set_tokens`). `generate_error_message(&pattern,
+`Custom` take suggested tokens (`Tokenizable::set_tokens`). A path is followed only as deep as a
+parse under the same `Limits` can make one (`Introspection::with_limits` for `exec_with`'s paths). `generate_error_message(&pattern,
 &result)` prints v12's message character for character (`Error at line 1, column 6. Hint: Doe`).
 
 Still to come: autocomplete, the `.cpat` grammar, decorators.

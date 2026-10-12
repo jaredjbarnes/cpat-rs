@@ -27,6 +27,9 @@ pub struct ParseResult<'t> {
     // Only from a recording parse (`Pattern::exec_recording`).
     pub(crate) history: Option<History>,
     pub(crate) text: &'t str,
+    /// The limits the parse ran under: the paths in it are as deep as they
+    /// allow, and a query about them must accept that depth.
+    pub(crate) limits: Limits,
 }
 
 impl<'t> ParseResult<'t> {
@@ -35,8 +38,13 @@ impl<'t> ParseResult<'t> {
         self.text
     }
 
+    /// The limits the parse ran under (`Limits::default()` for `exec`).
+    pub fn limits(&self) -> Limits {
+        self.limits
+    }
+
     /// The pattern can't run: nothing is parsed, only the reason is kept.
-    fn refused(text: &'t str, error: PatternError) -> Self {
+    fn refused(text: &'t str, limits: Limits, error: PatternError) -> Self {
         ParseResult {
             tree: None,
             error: None,
@@ -47,6 +55,7 @@ impl<'t> ParseResult<'t> {
             leaf_matches: Vec::new(),
             history: None,
             text,
+            limits,
         }
     }
 
@@ -113,7 +122,7 @@ pub(crate) fn exec<'t>(
     match crate::link::prepare(pattern) {
         Ok(Some(scope)) => cursor.push_scope(ScopeFrame::new(scope, pattern.meta())),
         Ok(None) => {}
-        Err(error) => return ParseResult::refused(text, error),
+        Err(error) => return ParseResult::refused(text, limits, error),
     }
 
     if text.is_empty() {

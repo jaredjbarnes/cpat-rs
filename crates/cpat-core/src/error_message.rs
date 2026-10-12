@@ -1,4 +1,5 @@
 use crate::exec::ParseResult;
+use crate::introspect::Introspection;
 use crate::pattern::Pattern;
 
 /// v12 `generateErrorMessage`, character for character:
@@ -25,7 +26,9 @@ pub fn generate_error_message(pattern: &Pattern, result: &ParseResult<'_>) -> St
         return format!("Error at line 1, column 1. Hint: {hint}");
     };
 
-    let hint = clean(pattern.next_tokens(&leaf.path)).join(",");
+    // The leaf's path is as deep as the parse's limits allowed.
+    let introspection = Introspection::with_limits(pattern, result.limits());
+    let hint = clean(introspection.next_tokens(&leaf.path)).join(",");
     let (line, column) = line_and_column(result.text(), leaf.end);
     format!("Error at line {line}, column {column}. Hint: {hint}")
 }
