@@ -382,6 +382,20 @@ fn a_failure_after_the_open_rewinds_to_the_start() {
     assert_eq!(error_outline(cursor.error()), "braces@1..1");
 }
 
+#[test]
+fn a_direct_parse_that_fails_after_the_open_leaves_the_cursor_at_the_start() {
+    // The open matched and moved the cursor; the failure must undo that.
+    // v12: cursor.index 0 for each (no close, content that doesn't match,
+    // content that doesn't reach the close).
+    for text in ["{ no close", "{a}", "{ab"] {
+        let mut pattern = braces(Some(re("d", "[0-9]+")));
+        let mut cursor = Cursor::new(text);
+
+        assert!(pattern.parse(&mut cursor).is_none(), "{text}");
+        assert_eq!(cursor.pos(), 0, "{text}");
+    }
+}
+
 // ─── clone ──────────────────────────────────────────────────────────────
 
 #[test]

@@ -17,7 +17,8 @@
 > winner, error and furthest error as the ordered loop) is implemented; see §8 for the key and
 > §13 for the rest.
 > Milestone 6 (`TakeUntil` and `Block`, with node kinds `TakeUntil`, `Block` and `BlockContent`
-> in Rust and JS) is implemented; see §14.
+> in Rust and JS) is implemented; see §14. Its fix round keeps `\r\n` one grapheme in ASCII
+> text (§5c) and pins the block's rewind after a failure past the open.
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -64,7 +65,12 @@ work commits nothing. A cut reached at the end of input still fires.
   `pos == len`. The end-of-text checks that v12 has are kept on purpose: the TS experiment showed
   they decide observable behavior (furthest error, cut). See `Sequence::finish_at_end`.
 - **5c:** grapheme boundaries come from `Boundaries`. ASCII text needs no table; anything else
-  uses one bit per byte.
+  uses one bit per byte. ASCII text containing `\r\n` takes the table too: UAX #29 (GB3) keeps
+  CRLF as one grapheme, as v12's `Intl.Segmenter` does, and the all-boundaries shortcut would
+  let `TakeUntil` stop between the two bytes, only when the rest of the text happened to be
+  ASCII (found by the M6 verifier). CR followed by LF is the only multi-byte grapheme ASCII can
+  form, so no other ASCII text needs the table. As in v12, literals `"\r"` then `"\n"` can't
+  split a CRLF either (`tests/literal.rs`).
 - **5d:** JS gets UTF-16 offsets, converted at the wasm boundary.
 
 ## 6. Regex
@@ -585,7 +591,9 @@ build error naming the pattern.
   grapheme step, the optional allowance, the adjacent base case, the exact-end check, the
   wildcard node and its condition, the content name on rename, the content start, the block's
   error, the scan's fallback and depth, both frames, and both patterns' children for searches);
-  each made a test fail.
+  each made a test fail. The fix round added the block's rewind to `first` (a direct `parse`
+  that fails after the open must leave `pos` at the start, as v12's `cursor.index`) and CRLF as
+  one grapheme in ASCII text (§5c); both now fail a test when removed.
 - **Deviations from v12:**
   - A block whose content is an absent `Optional` keeps only `open` and `close`, skipping the
     text between them, as in v12. Its value here is the slice it spans (§10), so `exec` matches

@@ -317,3 +317,48 @@ fn a_reference_finds_a_pattern_inside_the_terminator() {
         "line:sequence@0..3[body:take-until@0..2 semi:literal@2..3]"
     );
 }
+
+#[test]
+fn crlf_is_one_grapheme_in_ascii_text() {
+    // UAX #29 keeps "\r\n" together, as v12's Intl.Segmenter does, so the
+    // scan never stops between the two bytes to find the "\n" alone. v12:
+    // the whole text, 0..6.
+    let mut pattern = take_until("t", lit("lf", "\n"));
+
+    let result = pattern.exec("ab\r\ncd");
+
+    let tree = result.tree().unwrap();
+    assert_eq!((tree.root().start(), tree.root().end()), (0, 6));
+}
+
+#[test]
+fn crlf_text_is_never_probed_between_its_two_bytes() {
+    // The terminator is probed at 0 and then after the CRLF, never at 1.
+    // v12: furthest error xs at 0.
+    let mut pattern = take_until("t", re("xs", "x*"));
+    let mut cursor = Cursor::new("\r\n");
+
+    pattern.parse(&mut cursor).unwrap();
+
+    assert_eq!(cursor.pos(), 2);
+    assert_eq!(error_outline(cursor.furthest_error()), "xs@0..0");
+}
+
+#[test]
+fn crlf_in_ascii_text_behaves_as_in_non_ascii_text() {
+    // Same grammar, same CRLF: the "é" only moves the text off the ASCII
+    // fast path, which must not change where the scan stops. v12: 0..4 and
+    // 0..5 (the "\n" after "e"/"é" is never seen alone).
+    for (text, end) in [("e\r\n;", 4), ("é\r\n;", 5)] {
+        let mut pattern = take_until("t", lit("lf", "\n"));
+
+        let result = pattern.exec(text);
+
+        let tree = result.tree().unwrap();
+        assert_eq!(
+            (tree.root().start(), tree.root().end()),
+            (0, end),
+            "{text:?}"
+        );
+    }
+}

@@ -7,8 +7,12 @@ use unicode_segmentation::UnicodeSegmentation;
 /// this a boundary?" is answered once per text, at cursor creation:
 ///
 /// - ASCII text (the common case for grammars and code) has a boundary at
-///   every byte, so there is no table at all.
-/// - Anything else gets one bit per byte, `len / 8` bytes in total.
+///   every byte, so there is no table at all. The one exception is `\r\n`,
+///   which UAX #29 (rule GB3) keeps as a single grapheme, as v12's
+///   `Intl.Segmenter` does: a pattern that steps grapheme by grapheme, like
+///   TakeUntil, must not stop between the two bytes.
+/// - Anything else, CRLF text included, gets one bit per byte, `len / 8`
+///   bytes in total.
 pub(crate) enum Boundaries {
     Ascii,
     Table(Vec<u64>),
@@ -16,7 +20,7 @@ pub(crate) enum Boundaries {
 
 impl Boundaries {
     pub fn new(text: &str) -> Boundaries {
-        if text.is_ascii() {
+        if text.is_ascii() && !text.contains("\r\n") {
             return Boundaries::Ascii;
         }
 

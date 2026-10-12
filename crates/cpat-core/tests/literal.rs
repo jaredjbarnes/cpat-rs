@@ -117,3 +117,14 @@ fn a_token_ending_inside_a_grapheme_covers_the_token_and_continues_after_the_gra
     assert_eq!(cursor.pos(), 3);
     assert_eq!(cursor.into_tree(id).root().value(), "e");
 }
+
+#[test]
+fn crlf_is_one_grapheme_so_cr_then_lf_literals_do_not_split_it() {
+    // "\r" matches the first half of the CRLF grapheme and resumes after the
+    // whole of it, so "\n" has nothing left to match, as in v12.
+    let mut pattern = seq("s", vec![lit("cr", "\r"), lit("lf", "\n")]);
+    let mut after_a = seq("s", vec![lit("a", "a"), lit("cr", "\r"), lit("lf", "\n")]);
+
+    assert!(pattern.exec("\r\n").tree().is_none());
+    assert!(after_a.exec("a\r\n").tree().is_none());
+}
