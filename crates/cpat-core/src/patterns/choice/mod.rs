@@ -1,7 +1,8 @@
-//! The one choice pattern (DESIGN §8): `a | b | c`, in one of two modes
+//! The one choice pattern (DESIGN §8): `a | b | c`, in one of three modes
 //! picked by classifying its alternatives.
 
 mod classify;
+mod literal_set;
 mod ordered;
 mod pratt;
 mod precedence;
@@ -17,7 +18,7 @@ use crate::pattern_id::Meta;
 use crate::patterns::Sequence;
 use crate::tree::NodeId;
 
-use classify::Ready;
+use classify::{LiteralSets, Ready};
 
 /// `a | b | c`.
 ///
@@ -25,6 +26,10 @@ use classify::Ready;
 ///
 /// - **Ordered**: no alternative refers back to the choice. The first
 ///   alternative that matches wins, and its node is returned as it is.
+/// - **LiteralSet**: ordered, and every alternative is a literal (directly
+///   or through a reference). The same result, error and furthest error as
+///   the ordered loop, found with a first-character index: only the winner
+///   is parsed.
 /// - **Pratt**: some alternatives are operators, sequences that refer back
 ///   to the choice by name: `"-" expr` (prefix), `expr "!"` (postfix),
 ///   `expr "+" expr` (infix). Operands and operators are parsed in a loop
@@ -52,6 +57,8 @@ pub struct Choice {
     // depends on what the name resolves to, which only the scopes at parse
     // time know (DESIGN §8). Clones keep the classification.
     ready: Option<Ready>,
+    // Fixed by the constructor; read only when classifying.
+    literal_sets: LiteralSets,
 }
 
 /// How a choice parses, decided by classifying its alternatives.
@@ -59,6 +66,9 @@ pub struct Choice {
 pub enum ChoiceMode {
     /// Every alternative is an operand: the first that matches wins.
     Ordered,
+    /// Ordered, and every alternative is a literal (directly or through one
+    /// resolved reference): decided by a first-character index.
+    LiteralSet,
     /// Some alternatives are operators: operands and operators are
     /// assembled by precedence.
     Pratt,
@@ -72,6 +82,21 @@ impl Choice {
     /// Fails when there are no alternatives, or when an alternative is a
     /// sequence of nothing but a reference to the choice itself.
     pub fn new(name: &str, alternatives: Vec<Pattern>) -> Result<Choice, PatternError> {
+        Choice::build(name, alternatives, LiteralSets::Allowed)
+    }
+
+    /// Like `new`, except that a choice of literals stays `Ordered`: every
+    /// literal is tried in turn. This is the plain loop the literal-set
+    /// mode must agree with, for comparisons.
+    pub fn ordered(name: &str, alternatives: Vec<Pattern>) -> Result<Choice, PatternError> {
+        Choice::build(name, alternatives, LiteralSets::Refused)
+    }
+
+    fn build(
+        name: &str,
+        alternatives: Vec<Pattern>,
+        literal_sets: LiteralSets,
+    ) -> Result<Choice, PatternError> {
         if alternatives.is_empty() {
             return Err(PatternError::NoChildren {
                 name: name.to_string(),
@@ -85,6 +110,7 @@ impl Choice {
             self_name: meta.name,
             alternatives: alternatives.into_iter().map(Pattern::adopted).collect(),
             ready: None,
+            literal_sets,
         };
         if !classify::needs_scope(&choice.alternatives) {
             choice.classify_with(&|_| None)?;
@@ -147,8 +173,13 @@ impl Choice {
         &mut self,
         resolve: &dyn Fn(Name) -> Option<Rc<Pattern>>,
     ) -> Result<(), PatternError> {
-        let ready =
-            classify::classify(&self.alternatives, self.meta.name, self.self_name, resolve)?;
+        let ready = classify::classify(
+            &self.alternatives,
+            self.meta.name,
+            self.self_name,
+            self.literal_sets,
+            resolve,
+        )?;
         self.ready = Some(ready);
         Ok(())
     }
@@ -171,13 +202,21 @@ impl Choice {
             return None;
         }
 
-        // Either way the choice owns a cut scope: a cut inside one of its
-        // alternatives commits this choice, not one further out.
+        // The loops own a cut scope: a cut inside one of the alternatives
+        // commits this choice, not one further out. A literal set needs
+        // none: no literal can cut.
         let alternatives = &mut self.alternatives;
-        let (node, committed) = cursor.in_choice_scope(|cursor| match ready {
-            Ready::Ordered(atoms) => ordered::run(alternatives, atoms, first, cursor),
-            Ready::Pratt(pratt) => pratt.run(alternatives, cursor),
-        });
+        let (node, committed) = match ready {
+            Ready::LiteralSet(set) if literal_set_applies(cursor, first) => {
+                (set.run(alternatives, first, cursor), false)
+            }
+            Ready::LiteralSet(set) => cursor
+                .in_choice_scope(|cursor| ordered::run(alternatives, &set.atoms, first, cursor)),
+            Ready::Ordered(atoms) => {
+                cursor.in_choice_scope(|cursor| ordered::run(alternatives, atoms, first, cursor))
+            }
+            Ready::Pratt(pratt) => cursor.in_choice_scope(|cursor| pratt.run(alternatives, cursor)),
+        };
 
         if cursor.halted() {
             return None;
@@ -201,6 +240,18 @@ impl Choice {
 
         None
     }
+}
+
+/// Whether a choice in literal-set mode may use its index here, rather
+/// than the ordered loop over the same literals.
+///
+/// At the end of the text every literal fails without comparing anything,
+/// and the loop is what v12 runs there. The one other case is v12's
+/// recording parse (`exec(text, true)`), which keeps every literal's
+/// error, so only the loop can produce it: when recording lands
+/// (milestone 7), its check goes here and nowhere else.
+fn literal_set_applies(cursor: &Cursor<'_>, first: usize) -> bool {
+    first < cursor.len()
 }
 
 /// v12's recursion guard for a choice's atoms: an alternative that is

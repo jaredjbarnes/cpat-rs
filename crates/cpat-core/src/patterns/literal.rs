@@ -30,6 +30,8 @@ impl Literal {
 
     pub(crate) fn parse(&mut self, cursor: &mut Cursor<'_>) -> Option<NodeId> {
         let first = cursor.pos();
+        #[cfg(feature = "parse-log")]
+        crate::parse_log::literal(&self.token);
 
         if let Some(last) = mismatch(cursor.text(), first, &self.token) {
             cursor.record_error(first, last, self.meta);
@@ -59,7 +61,7 @@ impl Literal {
 /// `None` when `token` occurs at `first`; otherwise the inclusive byte offset
 /// the comparison reached: the first differing character, or the last
 /// character of the text when it ends before the token does.
-fn mismatch(text: &str, first: usize, token: &str) -> Option<usize> {
+pub(crate) fn mismatch(text: &str, first: usize, token: &str) -> Option<usize> {
     let rest = &text[first..];
 
     for ((offset, expected), actual) in token.char_indices().zip(rest.chars()) {

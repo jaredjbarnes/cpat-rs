@@ -23,7 +23,7 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 4)
+## What's in the box (milestone 5)
 
 `Literal`, `Regex`, `Sequence`, `Choice`, `Repeat` (unbounded or bounded, with an optional
 divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for recursive
@@ -33,13 +33,16 @@ grammars, `RightAssociated`, and `Custom` for your own patterns.
 operators: sequences that start or end with a reference to the choice itself (`expr "+" expr`,
 `"-" expr`, `expr "!"`). Then it parses by precedence, which is declaration order (earlier binds
 tighter), and builds `NodeKind::Expression` nodes named after the operators. Infix operators
-associate left unless wrapped in `RightAssociated`.
+associate left unless wrapped in `RightAssociated`. A choice of nothing but literals (directly
+or through references) is decided with a first-character index: the same result and errors as
+trying each literal in order, but only the winner is parsed (`ChoiceMode::LiteralSet`;
+`Choice::ordered` builds the plain loop).
 
 A reference that names nothing comes back from `exec` as `ParseResult::pattern_error` (or from
 `Pattern::check()`), never a panic. Input nested deeper than `Limits::max_depth` (1024
 composites by default; `exec_with` raises it) stops the parse with `ParseResult::too_deep`
 (`tooDeep` in JS) instead of overflowing the stack.
-Still to come: the `LiteralSet` mode of `Choice`, `TakeUntil`, `Block`, the `.cpat` grammar,
+Still to come: `TakeUntil`, `Block`, the `.cpat` grammar,
 decorators, intellisense.
 
 ```rust

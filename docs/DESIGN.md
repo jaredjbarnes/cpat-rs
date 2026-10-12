@@ -13,6 +13,9 @@
 > for when a choice classifies and how `RightAssociated` is represented, and §12 for the rest.
 > Its fix round made every walk over a finished tree iterative, so an operator chain as long
 > as the input can't overflow the stack (§7e).
+> Milestone 5 (the choice's `LiteralSet` mode: a first-character index that leaves the same
+> winner, error and furthest error as the ordered loop) is implemented; see §8 for the key and
+> §13 for the rest.
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -131,6 +134,18 @@ build error naming the pattern.
   *Rejected:* a flag per alternative on `Choice::new` (a second list kept in step with the
   first by position, and impossible to put on a referenced definition), and a separate
   constructor for operator choices (a second way to build the one choice).
+- **The literal-set index is keyed by the first `char`** *(decided in milestone 5)*. A choice
+  with no operators whose atoms are all literals (directly, or through one reference resolved
+  to a literal) takes `ChoiceMode::LiteralSet`. *Why `char`, and why it gives the same winner:*
+  `Literal` compares `char` by `char`, so a literal whose first `char` differs from the text's
+  fails on its first comparison, at the start index, the least `last` a failure can have. Only
+  the bucket sharing the text's first `char` can win or fail further, and its literals are
+  compared with `Literal`'s own `mismatch`, so the rule can't drift. The first bucket literal
+  that matches is the first literal in declaration order that matches, since every literal
+  outside the bucket fails. A first-byte key is equally correct (a differing first byte means a
+  differing first `char`) but would put literals that share only a UTF-8 lead byte (`é`, `è`) in
+  one bucket, to fail at the start anyway. The index is a sorted `Vec` searched by binary
+  search, built once at classification.
 - Shadowed literals, unknown names and alias cycles are build errors.
 
 ## 9. Decorators *(next milestones)*
@@ -453,8 +468,75 @@ build error naming the pattern.
     This is the §11 deviation for references beneath a choice, met through an operator.
 - **Deferred:** introspection (`getTokens`, `getPatterns`, `…After`, `find`) to the
   intellisense milestone, which will also skip an atom already being expanded higher up; the
-  `LiteralSet` mode and its tests to M5; the grammar-file cut tests (`~/` in `.cpat`, the
+  `LiteralSet` mode and its tests to M5 (done, §13); the grammar-file cut tests (`~/` in `.cpat`, the
   shell-shaped blow-up test) to the grammar milestone.
+
+## 13. The choice's LiteralSet mode *(milestone 5)*
+
+- **What it reproduces** (v12 `LiteralSet.match` and `Expression._parseLiteralChoice`): the
+  ordered loop's winner (the first literal in declaration order that matches) and the failure
+  the loop would leave as the furthest error, the FIRST failed literal with the greatest `last`
+  (the cursor replaces the furthest error only on a strictly greater `last`). Every literal
+  outside the bucket fails at the start; when no bucket literal got further, the first literal
+  tried is that failure. Only that one error is recorded, then only the winner is parsed; with
+  no winner the choice records its own error at `(first, first)`, as the loop does. Nothing
+  else a failed literal does survives the choice (it resets the cursor either way, which also
+  forgets the spot a failed `Literal` notes with `stopped_at`, §10), so the results, error,
+  furthest error, leaf match and cursor are the loop's.
+- **The winner is parsed in place, as the loop would parse it.** For a reference alternative
+  that means through the reference: it pushes its frame and names the node after itself. v12
+  parses the reference's resolved clone directly, which is named after the reference too, so
+  the result is the same. A failed literal reached through a reference is recorded under the
+  reference's instance (the target's id, the reference's name), as the loop would record it.
+- **Not recorded, and not resolved.** v12 records the furthest failure and resolves it at once.
+  The resolve is left out: on success the winner and the choice resolve anyway, and on failure
+  the choice records its own error over it, so it could never be seen.
+- **The plain loop still runs at the end of the text** (v12 does too): every literal fails there
+  without comparing anything. The check lives in one function, `literal_set_applies`, which is
+  also where milestone 7's recording parse will send a choice back to the loop (a recording
+  parse keeps every literal's error, which only the loop produces).
+- **`Choice::ordered` is the plain loop, chosen by the constructor.** It classifies like
+  `Choice::new` but never takes the literal-set mode, so tests can compare the two on the same
+  alternatives (v12 compares with a recording parse, which doesn't exist yet). The choice keeps
+  which constructor built it (a private two-variant enum read only when classifying, which for
+  a reference alternative is the first parse), so parsing never branches on it. *Rejected:* a
+  public "mode" argument: Pratt can't be forced, and `LiteralSet` can't be forced either (it
+  needs literals), so the only real choice is "allow the index or not".
+- **No cut scope.** A literal can't cut, so the literal-set path skips `in_choice_scope`.
+- **No atom recursion guard**, as in v12's fast path. A literal never pushes a frame. A
+  reference alternative does, but its instance is a literal, so a frame with its id can begin
+  at this position only from another instance of the same reference resolving the same name
+  to something that contains this choice, through a context between them redefining it. The
+  loop would skip that alternative; the index doesn't, exactly as in v12.
+- **Observing the parses.** v12's tests count `Literal.prototype.parse` calls with a jest spy.
+  The `parse-log` feature (off by default, on for this crate's own tests through a dev-dependency
+  on itself) logs every `Literal::parse` on a thread-local list, `parse_log::take_literals()`;
+  the tests assert that sequence and its length. *Why a feature:* always on, it would cost
+  every literal a push.
+- **Checked against v12** by running both (a TS script against v12's `src` and a Rust test) on
+  5 grammars (the keyword choice alone, inside a sequence, after a literal, a multi-byte and
+  emoji choice, and literals reached through references in a context) and 44 inputs, each in
+  v12's fast and plain modes and in both modes here: same trees, errors and furthest errors,
+  except the deviation below. `tests/literal_set.rs` pins v12's values for the ported tests,
+  and its differential test compares `LiteralSet` with `Choice::ordered` on 6 choices
+  (duplicates, shared prefixes, longest-first, multi-byte, emoji, a decomposed accent) over
+  every prefix and one-character mutation of every token (2 915 inputs), parsed from the
+  start, after a literal, at the end of the text, under `exec`, and inside a repeat. A mutation
+  pass removed or bent each rule above (strict `>`, the start-index fallback and its `<=`, the
+  first-winner `break`, the recorded error, the reference's name, the reference arm, the
+  non-literal atom reset, the marker); each made a test fail.
+- **Deviations from v12:**
+  - A literal whose first character shares only a UTF-16 high surrogate with the text's (`😀a`
+    against `😁`) gets one unit in, inside the emoji, in v12 (its `Literal` compares UTF-16
+    units), and that failure beats every literal that failed at the start. Here `Literal`
+    compares `char`s, a position inside a `char` doesn't exist (§5), and it fails at the start
+    like the rest, so the furthest error is the first literal's. This is milestone 1's
+    `Literal`, met through a choice; both modes agree, as they do in v12. Pinned in
+    `tests/literal_set.rs` (`deviation_a_literal_sharing_only_a_high_surrogate_…`).
+  - At `Limits::max_depth`, an ordered loop that tries a reference alternative before a
+    literal winner halts on that reference's frame; the index never parses the reference, so
+    the literal wins. The limit guards the stack (§11), and the index uses none. v12 has no
+    limit. Pinned in `tests/literal_set.rs` (`deviation_at_the_depth_limit_…`).
 
 ## Behavior fixed relative to clarity-pattern-parser v11
 

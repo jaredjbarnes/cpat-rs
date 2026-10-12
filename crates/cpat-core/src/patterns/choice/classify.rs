@@ -18,9 +18,11 @@ use std::rc::Rc;
 use crate::name::Name;
 use crate::pattern::Pattern;
 use crate::pattern_error::PatternError;
+use crate::pattern_id::Meta;
 use crate::patterns::Sequence;
 
 use super::ChoiceMode;
+use super::literal_set::{Entry, LiteralSet};
 use super::pratt::{Operator, Pratt};
 use super::precedence::{Association, Table};
 
@@ -29,6 +31,9 @@ use super::precedence::{Association, Table};
 pub(super) enum Ready {
     /// No operators: the atoms are the indices of the alternatives to try.
     Ordered(Vec<usize>),
+    /// No operators, and every atom is a literal (directly or through one
+    /// resolved reference).
+    LiteralSet(Box<LiteralSet>),
     Pratt(Box<Pratt>),
 }
 
@@ -36,6 +41,7 @@ impl Ready {
     pub(super) fn mode(&self) -> ChoiceMode {
         match self {
             Ready::Ordered(_) => ChoiceMode::Ordered,
+            Ready::LiteralSet(_) => ChoiceMode::LiteralSet,
             Ready::Pratt(_) => ChoiceMode::Pratt,
         }
     }
@@ -43,6 +49,7 @@ impl Ready {
     pub(super) fn atoms(&self) -> &[usize] {
         match self {
             Ready::Ordered(atoms) => atoms,
+            Ready::LiteralSet(set) => &set.atoms,
             Ready::Pratt(pratt) => &pratt.atoms,
         }
     }
@@ -57,14 +64,29 @@ pub(super) fn needs_scope(alternatives: &[Pattern]) -> bool {
         .any(|alternative| matches!(unmarked(alternative), Pattern::Reference(_)))
 }
 
+/// Whether a choice may take the literal-set mode. Chosen by the
+/// constructor (`Choice::new` or `Choice::ordered`) and read only when the
+/// choice classifies.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum LiteralSets {
+    Allowed,
+    Refused,
+}
+
 /// Classifies `alternatives` of the choice `choice`, whose self-references
 /// are children named `self_name`.
 pub(super) fn classify(
     alternatives: &[Pattern],
     choice: Name,
     self_name: Name,
+    literal_sets: LiteralSets,
     resolve: &dyn Fn(Name) -> Option<Rc<Pattern>>,
 ) -> Result<Ready, PatternError> {
+    // What each atom matches when it is a literal; `None` once one isn't.
+    let mut literals = match literal_sets {
+        LiteralSets::Allowed => Some(Vec::new()),
+        LiteralSets::Refused => None,
+    };
     let mut atoms = Vec::new();
     let mut prefixes = Vec::new();
     let mut postfixes = Vec::new();
@@ -82,6 +104,16 @@ pub(super) fn classify(
         // operand; reading its first and last children as operands would
         // misread `b = a | "d"` as the postfix `a "d"`.
         let Some(children) = sequence_children(resolved.as_deref().unwrap_or(inner)) else {
+            literals = match (
+                literals.take(),
+                literal_entry(alternative, resolved.as_deref()),
+            ) {
+                (Some(mut entries), Some(entry)) => {
+                    entries.push(entry);
+                    Some(entries)
+                }
+                _ => None,
+            };
             atoms.push(index);
             continue;
         };
@@ -89,6 +121,7 @@ pub(super) fn classify(
         let starts = is_self(children.first());
         let ends = is_self(children.last());
         if !starts && !ends {
+            literals = None;
             atoms.push(index);
             continue;
         }
@@ -131,11 +164,36 @@ pub(super) fn classify(
     }
 
     if prefixes.is_empty() && postfixes.is_empty() && infixes.is_empty() {
-        return Ok(Ready::Ordered(atoms));
+        return Ok(match literals {
+            Some(entries) => Ready::LiteralSet(Box::new(LiteralSet::new(atoms, entries))),
+            None => Ready::Ordered(atoms),
+        });
     }
     Ok(Ready::Pratt(Box::new(Pratt::new(
         atoms, prefixes, postfixes, infixes, table,
     ))))
+}
+
+/// What an atom matches when it is a literal: the alternative itself, or
+/// a reference whose target resolved to one (v12 `_prepareLiteralSet`
+/// sees through one reference; a marked literal is not a literal there).
+/// The failure is recorded under the pattern that would fail: for a
+/// reference, its instance, the target renamed after the reference.
+fn literal_entry(alternative: &Pattern, resolved: Option<&Pattern>) -> Option<Entry> {
+    match (alternative, resolved) {
+        (Pattern::Literal(literal), _) => Some(Entry {
+            token: literal.token().into(),
+            meta: literal.meta,
+        }),
+        (Pattern::Reference(reference), Some(Pattern::Literal(target))) => Some(Entry {
+            token: target.token().into(),
+            meta: Meta {
+                id: target.meta.id,
+                name: reference.meta.name,
+            },
+        }),
+        _ => None,
+    }
 }
 
 /// The alternative without its `RightAssociated` marker.

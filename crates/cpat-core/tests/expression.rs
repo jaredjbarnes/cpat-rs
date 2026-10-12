@@ -5,8 +5,8 @@
 //! Deferred: the introspection tests (`getTokens`, `getTokensAfter`,
 //! `getPatterns`, `getPatternsAfter`, `getNextTokens`, `getNextPatterns`,
 //! `find`, `isEqual`, "Options like", "Suggest", "continuation tokens") to
-//! the intellisense milestone (M8), and the "literal-set fast path" tests to
-//! M5 (`LiteralSet` mode).
+//! the intellisense milestone (M8). The "literal-set fast path" tests are
+//! in `tests/literal_set.rs`.
 
 mod common;
 
@@ -463,7 +463,8 @@ fn a_right_associated_binary_nests_right_with_a_tighter_operator_between() {
 fn one_alternative_successful_returns_the_alternatives_node_unwrapped() {
     let mut a = choice("a", vec![lit("a", "A")]);
 
-    assert_eq!(the_choice(&a).mode(), Some(ChoiceMode::Ordered));
+    // Only literals: the literal-set mode, as in v12 (tests/literal_set.rs).
+    assert_eq!(the_choice(&a).mode(), Some(ChoiceMode::LiteralSet));
     assert_eq!(parse_shape(&mut a, "A").0, "a:literal@0..1");
 }
 

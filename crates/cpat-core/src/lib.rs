@@ -28,6 +28,8 @@ mod halt;
 mod link;
 mod name;
 mod parse_error;
+#[cfg(feature = "parse-log")]
+pub mod parse_log;
 mod pattern;
 mod pattern_error;
 mod pattern_id;

@@ -7,3 +7,13 @@ edition = "2024"
 fancy-regex = "0.19.2"
 regex = "1.13.1"
 unicode-segmentation = "1.13.3"
+
+[features]
+# Logs every `Literal::parse` call on a thread-local list, so tests can
+# assert which literals a choice parsed (`cpat_core::parse_log`). Off in
+# real builds: it would cost every literal a push.
+parse-log = []
+
+[dev-dependencies]
+# The integration tests read the parse log.
+cpat-core = { path = ".", features = ["parse-log"] }
