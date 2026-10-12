@@ -140,3 +140,18 @@ test("repeat options default and validate", () => {
     /divider must be a Pattern/
   );
 });
+
+test("a bound too large to double still repeats", () => {
+  // wasm's usize is 32 bits: doubling 2^31 for the divider slots used to
+  // wrap to 0, and the repeat then failed every input on min.
+  for (const max of [2 ** 31, 2 ** 32 - 1]) {
+    for (const trimDivider of [false, true]) {
+      const repeat = Pattern.repeat("r", Pattern.literal("a", "a"), {
+        max,
+        divider: Pattern.literal("c", ","),
+        trimDivider,
+      });
+      assert.equal(repeat.test("a,a"), true, `max ${max}, trimDivider ${trimDivider}`);
+    }
+  }
+});

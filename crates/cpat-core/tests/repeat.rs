@@ -1017,3 +1017,250 @@ fn the_unbounded_repeat_records_a_match_and_the_bounded_one_does_not() {
     bounded_repeat.parse(&mut cursor);
     assert!(cursor.leaf_match().is_none());
 }
+
+// ─── Fix round 1: slot counts, trimming and termination ─────────────────
+// Each expectation below was checked against v12 on the same input.
+
+fn furthest(pattern: &mut Pattern, text: &str) -> Option<(String, usize, usize)> {
+    let mut cursor = Cursor::new(text);
+    pattern.parse(&mut cursor);
+    cursor
+        .furthest_error()
+        .map(|e| (e.pattern.name.to_string(), e.start, e.last))
+}
+
+fn error_of(error: Option<cpat_core::ParseError>) -> Option<(String, usize, usize)> {
+    error.map(|e| (e.pattern.name.to_string(), e.start, e.last))
+}
+
+/// Wraps a pattern and counts how often it is parsed, so a test of
+/// termination asserts a step count. Past a generous bound it panics: a
+/// runaway loop then fails the test instead of hanging it.
+#[derive(Clone)]
+struct Counted {
+    inner: Pattern,
+    calls: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl CustomParse for Counted {
+    fn parse(&mut self, _meta: Meta, cursor: &mut Cursor<'_>) -> Option<NodeId> {
+        self.calls.set(self.calls.get() + 1);
+        assert!(
+            self.calls.get() <= 1_000,
+            "the repeat keeps calling its child"
+        );
+        self.inner.parse(cursor)
+    }
+
+    fn clone_box(&self) -> Box<dyn CustomParse> {
+        Box::new(self.clone())
+    }
+}
+
+fn counted(inner: Pattern) -> (Pattern, std::rc::Rc<std::cell::Cell<usize>>) {
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+    let pattern = Custom::new(
+        "counted",
+        Box::new(Counted {
+            inner,
+            calls: calls.clone(),
+        }),
+    )
+    .into();
+    (pattern, calls)
+}
+
+#[test]
+fn an_enormous_bound_neither_overflows_nor_shrinks_the_repeat() {
+    // `2 * max` slots would overflow here (and wrap to 0 on wasm32, where a
+    // JS max of 2^31 made the repeat fail everything on min).
+    for trim_divider in [false, true] {
+        let mut repeat = rep(
+            "r",
+            digits(),
+            RepeatOptions {
+                max: Some(usize::MAX),
+                trim_divider,
+                ..divided(lit("comma", ","))
+            },
+        );
+        assert_eq!(parse(&mut repeat, "1,2").nodes.unwrap()[0].4, "1,2");
+    }
+
+    let mut undivided = rep("r", digits(), bounded(1, usize::MAX));
+    assert_eq!(parse(&mut undivided, "123").nodes.unwrap()[0].4, "123");
+}
+
+#[test]
+fn zero_width_slots_count_toward_min() {
+    // v12 counts every zero-width child slot as a match: "aa" plus three
+    // empty slots is five, which meets min 4.
+    let mut repeat = rep("r", opt("oa", lit("a", "a")), bounded(4, 5));
+    let outcome = parse(&mut repeat, "aab");
+    assert_eq!(
+        outcome.nodes.unwrap()[0],
+        n(NodeKind::FiniteRepeat, "r", 0, 2, "aa")
+    );
+    assert_eq!(outcome.pos, 2);
+    assert_eq!(furthest(&mut repeat, "aab"), Some(("a".into(), 2, 2)));
+
+    let mut divided_by_optional = rep(
+        "r",
+        opt("oa", lit("a", "a")),
+        RepeatOptions {
+            min: 4,
+            max: Some(5),
+            ..divided(opt("oc", lit("c", ",")))
+        },
+    );
+    let outcome = parse(&mut divided_by_optional, "a,ab");
+    assert_eq!(
+        outcome.nodes.unwrap()[0],
+        n(NodeKind::FiniteRepeat, "r", 0, 3, "a,a")
+    );
+    assert_eq!(outcome.pos, 3);
+    assert_eq!(
+        furthest(&mut divided_by_optional, "a,ab"),
+        Some(("c".into(), 3, 3))
+    );
+
+    // A literal divider that fails ends the walk: only three slots matched.
+    let mut divided_by_literal = rep(
+        "r",
+        opt("oa", lit("a", "a")),
+        RepeatOptions {
+            min: 4,
+            max: Some(5),
+            ..divided(lit("c", ","))
+        },
+    );
+    let outcome = parse(&mut divided_by_literal, "a,a,b");
+    assert!(outcome.nodes.is_none());
+    assert_eq!(outcome.error, Some(("r", 0, 4)));
+}
+
+#[test]
+fn idle_laps_under_an_enormous_bound_end_the_walk() {
+    // Every lap after "aa" matches nothing; the remaining child slots are
+    // counted, not walked: the child runs three times ("a", "a", the idle
+    // lap), not usize::MAX times.
+    let (child, calls) = counted(opt("oa", lit("a", "a")));
+    let mut repeat = rep("r", child, bounded(4, usize::MAX));
+    let outcome = parse(&mut repeat, "aab");
+    assert_eq!(
+        outcome.nodes.unwrap()[0],
+        n(NodeKind::FiniteRepeat, "r", 0, 2, "aa")
+    );
+    assert_eq!(outcome.pos, 2);
+    assert_eq!(calls.get(), 3);
+
+    // With a divider, the idle lap is a child and a divider that both
+    // matched nothing.
+    let (child, calls) = counted(opt("oa", lit("a", "a")));
+    let mut divided_by_optional = rep(
+        "r",
+        child,
+        RepeatOptions {
+            min: 4,
+            max: Some(usize::MAX),
+            ..divided(opt("oc", lit("c", ",")))
+        },
+    );
+    let outcome = parse(&mut divided_by_optional, "a,ab");
+    assert_eq!(outcome.nodes.unwrap()[0].4, "a,a");
+    assert_eq!(outcome.pos, 3);
+    assert_eq!(calls.get(), 3);
+}
+
+#[test]
+fn a_bounded_trim_gives_the_divider_back_before_the_min_check() {
+    // The trimmed divider's start becomes the cursor position, and so the
+    // `last` of the min failure: r@0..1, not r@0..2.
+    let mut repeat = rep(
+        "r",
+        re("d", r"\d"),
+        RepeatOptions {
+            min: 2,
+            max: Some(3),
+            divider: Some(lit("c", ",")),
+            trim_divider: true,
+        },
+    );
+
+    let outcome = parse(&mut repeat, "1,a");
+    assert!(outcome.nodes.is_none());
+    assert_eq!(outcome.error, Some(("r", 0, 1)));
+    assert_eq!(outcome.pos, 0);
+    assert_eq!(furthest(&mut repeat, "1,a"), Some(("d".into(), 2, 2)));
+}
+
+#[test]
+fn a_bounded_trim_has_no_divider_slot_after_the_last_child() {
+    // With max 2 the slots are child, divider, child: no divider is tried
+    // after "2", so no divider error is recorded at 3.
+    let mut repeat = rep(
+        "r",
+        re("d", r"\d"),
+        RepeatOptions {
+            max: Some(2),
+            divider: Some(lit("c", ",")),
+            trim_divider: true,
+            ..RepeatOptions::default()
+        },
+    );
+
+    let outcome = parse(&mut repeat, "1,2x");
+    assert_eq!(
+        outcome.nodes.unwrap()[0],
+        n(NodeKind::FiniteRepeat, "r", 0, 3, "1,2")
+    );
+    assert_eq!(outcome.pos, 3);
+    assert_eq!(furthest(&mut repeat, "1,2x"), None);
+
+    let result = repeat.exec("1,2x");
+    assert!(result.tree.is_none());
+    assert_eq!(error_of(result.furthest_error), Some(("r".into(), 3, 4)));
+}
+
+#[test]
+fn an_unbounded_repeat_without_trim_keeps_its_last_divider() {
+    let mut repeat = rep("r", re("d", r"\d"), divided(lit("c", ",")));
+
+    let outcome = parse(&mut repeat, "1,");
+    assert_eq!(
+        outcome.nodes.unwrap()[..2],
+        [
+            n(NodeKind::InfiniteRepeat, "r", 0, 2, "1,"),
+            n(NodeKind::Regex, "d", 0, 1, "1"),
+        ]
+    );
+    assert_eq!(outcome.pos, 2);
+    assert!(repeat.test("1,"));
+}
+
+#[test]
+fn an_unbounded_lap_where_neither_child_nor_divider_consumes_ends_the_loop() {
+    // Both are optional: without the "nothing moved" exit this would loop
+    // forever. The child runs once; then no node, a min failure on the
+    // repeat, and the cursor back where it started.
+    let (child, calls) = counted(opt("oa", lit("a", "a")));
+    let mut repeat = rep("r", child, divided(opt("oc", lit("c", ","))));
+
+    let outcome = parse(&mut repeat, "b");
+    assert!(outcome.nodes.is_none());
+    assert_eq!(outcome.error, Some(("r", 0, 0)));
+    assert_eq!(outcome.pos, 0);
+    assert_eq!(calls.get(), 1);
+    assert_eq!(furthest(&mut repeat, "b"), Some(("a".into(), 0, 0)));
+
+    // After real matches, the idle lap ends the loop and the matches stand.
+    calls.set(0);
+    let outcome = parse(&mut repeat, "a,ab");
+    assert_eq!(
+        outcome.nodes.unwrap()[0],
+        n(NodeKind::InfiniteRepeat, "r", 0, 3, "a,a")
+    );
+    assert_eq!(outcome.pos, 3);
+    assert_eq!(calls.get(), 3);
+    assert_eq!(furthest(&mut repeat, "a,ab"), Some(("c".into(), 3, 3)));
+}

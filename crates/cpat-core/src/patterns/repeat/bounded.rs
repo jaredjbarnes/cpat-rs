@@ -34,10 +34,17 @@ impl Bounded {
         max: usize,
         trim_divider: bool,
     ) -> Bounded {
+        // Saturating: `max` can come from user input (JS passes up to
+        // u32::MAX, and wasm's usize is 32 bits), and a wrapped count would
+        // silently shrink the repeat. Past the text length the exact count
+        // no longer matters: a consuming child runs out of text first, and
+        // an idle lap ends the walk (see `fill_slots`).
         let slots = match (&divider, trim_divider) {
             (None, _) => max,
-            (Some(_), false) => 2 * max,
-            (Some(_), true) => 2 * max - 1,
+            (Some(_), false) => max.saturating_mul(2),
+            // No divider slot after the last child: `max >= 1`, so this
+            // never underflows.
+            (Some(_), true) => max.saturating_mul(2) - 1,
         };
 
         Bounded {
@@ -109,6 +116,8 @@ impl Bounded {
     fn fill_slots(&mut self, cursor: &mut Cursor<'_>) -> (usize, bool) {
         let mut match_count = 0;
         let mut kept_cut = cursor.cut();
+        // Whether the previous slot was a child slot that matched nothing.
+        let mut child_was_idle = false;
 
         for slot in 0..self.slots {
             let is_child_slot = self.divider.is_none() || slot % 2 == 0;
@@ -131,8 +140,25 @@ impl Bounded {
             }
 
             match node {
-                None => cursor.set_pos(running),
+                None => {
+                    cursor.set_pos(running);
+                    // A lap (child, then divider if any) that consumed
+                    // nothing leaves everything as it found it, so every
+                    // remaining lap would repeat it exactly: each remaining
+                    // child slot is one more zero-width match. Count them
+                    // instead of walking them, so a huge `max` can't spin.
+                    let lap_was_idle = match &self.divider {
+                        None => true,
+                        Some(_) => !is_child_slot && child_was_idle,
+                    };
+                    if lap_was_idle {
+                        match_count = self.child_slots();
+                        break;
+                    }
+                    child_was_idle = is_child_slot;
+                }
                 Some(node) => {
+                    child_was_idle = false;
                     self.nodes.push(node);
                     self.cuts_before.push(cut_before);
                     if cursor.at_end() {
@@ -143,5 +169,14 @@ impl Bounded {
         }
 
         (match_count, kept_cut)
+    }
+
+    /// How many of the slots are child slots: with a divider they take the
+    /// even indexes, so half the slots rounded up.
+    fn child_slots(&self) -> usize {
+        match &self.divider {
+            None => self.slots,
+            Some(_) => self.slots.div_ceil(2),
+        }
     }
 }

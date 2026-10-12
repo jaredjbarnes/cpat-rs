@@ -113,6 +113,12 @@ build error naming the pattern.
   every slot. Slots run one after another and never overlap, so a slot is just an index here, and
   `{1,1000}` doesn't build a thousand patterns. Clones share ids anyway, so nothing observable
   changes. *(Introspection that names "the child in slot i" will use the index.)*
+- **A bound of any size is safe.** The slot count saturates instead of overflowing (`max` comes
+  from user input; JS passes up to `u32::MAX` and wasm's `usize` is 32 bits, where `2 * 2^31`
+  used to wrap to 0 slots). And a lap (child, then divider if any) that consumed nothing ends the
+  walk, its remaining child slots counted as the zero-width matches they would be: from an idle
+  lap every later lap is identical, so the result equals v12's, but a huge bound can't spin.
+  v12 would allocate `max` clones instead; no input it handles behaves differently.
 - **`last` of an error recorded "where the cursor stopped" at the end of the text** is the start of
   the last grapheme (`Cursor::last_index`), because v12's inclusive cursor can't move past it. It
   decides which error is furthest, so it is kept.
