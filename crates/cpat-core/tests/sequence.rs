@@ -226,3 +226,49 @@ fn a_lookahead_whose_child_matches_empty_fails_at_the_end_of_input() {
     );
     assert!(!at_end.test("a"));
 }
+
+#[test]
+fn a_lookahead_at_the_end_of_input_records_nothing_when_it_holds() {
+    // v12 tries the lookahead's child against an empty probe, so the
+    // child's failure never becomes the furthest error of the real parse.
+    let mut at_end = seq("s", vec![lit("ab", "ab"), not("n", lit("c", ","))]);
+    let result = at_end.exec("ab");
+    assert!(result.is_match());
+    assert!(result.furthest_error.is_none());
+}
+
+#[test]
+fn a_lookahead_that_fails_at_the_end_of_input_is_its_own_error_past_the_end() {
+    let mut at_end = seq(
+        "at-end",
+        vec![lit("a", "a"), not("not", opt("b?", lit("b", "b")))],
+    );
+    let mut cursor = Cursor::new("a");
+    assert!(at_end.parse(&mut cursor).is_none());
+    let error = cursor.error().unwrap();
+    assert_eq!(
+        (error.pattern.name.as_str(), error.start, error.last),
+        ("not", 1, 1)
+    );
+    assert_eq!(cursor.pos(), 0);
+}
+
+#[test]
+fn a_last_child_that_moved_without_a_node_reports_from_where_it_stopped() {
+    // `(a?)+` on "ab" consumes "a", then its next try matches nothing, so
+    // it returns no node and no error with its cursor past the "a". With
+    // nothing matched the sequence fails there, at 1, as in v12.
+    let mut sequence = seq(
+        "s",
+        vec![rep("r", opt("o", lit("a", "a")), Default::default())],
+    );
+    let mut cursor = Cursor::new("ab");
+    assert!(sequence.parse(&mut cursor).is_none());
+    let error = cursor.error().unwrap();
+    assert_eq!(
+        (error.pattern.name.as_str(), error.start, error.last),
+        ("s", 0, 1)
+    );
+    // A failed pattern leaves the cursor where it began (DESIGN §5).
+    assert_eq!(cursor.pos(), 0);
+}

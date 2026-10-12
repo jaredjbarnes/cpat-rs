@@ -33,6 +33,13 @@ impl Literal {
 
         if let Some(last) = mismatch(cursor.text(), first, &self.token) {
             cursor.record_error(first, last, self.meta);
+            // v12's Literal stays on the character that didn't match, and a
+            // repeat that fails its `min` reports from there. (With nothing
+            // left to compare, v12 can't move, and neither does this.)
+            if last < cursor.len() {
+                let stopped_at = cursor.snap_back(last);
+                cursor.stopped_at(stopped_at);
+            }
             return None;
         }
 

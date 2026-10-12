@@ -39,9 +39,20 @@ impl Sequence {
         let first = cursor.pos();
         self.nodes.clear();
 
-        if !self.parse_children(cursor, first) {
-            cursor.set_pos(first);
-            return None;
+        match self.parse_children(cursor, first) {
+            Run::Matched => {}
+            Run::ChildFailed => {
+                cursor.set_pos(first);
+                return None;
+            }
+            Run::FailedInPlace => {
+                // v12 leaves its cursor where the failure was found; only
+                // a repeat's error ever reads that spot (`last_index`).
+                let stopped_at = cursor.last_index();
+                cursor.set_pos(first);
+                cursor.stopped_at(stopped_at);
+                return None;
+            }
         }
 
         // Every child was optional and none matched: no node, and no error.
@@ -57,7 +68,7 @@ impl Sequence {
         Some(node)
     }
 
-    fn parse_children(&mut self, cursor: &mut Cursor<'_>, first: usize) -> bool {
+    fn parse_children(&mut self, cursor: &mut Cursor<'_>, first: usize) -> Run {
         let count = self.children.len();
 
         for i in 0..count {
@@ -65,26 +76,30 @@ impl Sequence {
             let node = self.children[i].parse(cursor);
 
             if cursor.has_error() {
-                return false;
+                return Run::ChildFailed;
             }
 
-            match node {
-                Some(node) => self.nodes.push(node),
-                // Zero-width success (an unmatched optional, a cut, a passing
-                // lookahead): the next child starts where this one did.
-                None => cursor.set_pos(before),
+            if let Some(node) = node {
+                self.nodes.push(node);
             }
 
             if i + 1 == count {
+                // The last child is checked where it left the cursor, as in
+                // v12: a child can return no node yet have moved (an
+                // unbounded repeat over an optional does).
                 if self.nodes.is_empty() && !self.children.iter().all(is_zero_width_ok) {
                     cursor.record_error(first, cursor.pos(), self.meta);
-                    return false;
+                    return Run::FailedInPlace;
                 }
-                return true;
+                return Run::Matched;
             }
 
-            if node.is_some() && cursor.at_end() {
-                return self.finish_at_end(cursor, first, i + 1);
+            match node {
+                Some(_) if cursor.at_end() => return self.finish_at_end(cursor, first, i + 1),
+                Some(_) => {}
+                // Zero-width success (an unmatched optional, a cut, a passing
+                // lookahead): the next child starts where this one did.
+                None => cursor.set_pos(before),
             }
         }
 
@@ -92,29 +107,44 @@ impl Sequence {
     }
 
     /// The text ended with children still to go. An optional child is simply
-    /// absent. A cut or a lookahead consumes nothing, so it still runs: a cut
-    /// that was reached commits, and `!x` holds when nothing follows. Any other
-    /// child means the input ended too early.
-    fn finish_at_end(&mut self, cursor: &mut Cursor<'_>, first: usize, from: usize) -> bool {
+    /// absent. A cut consumes nothing, so it still runs: a cut that was
+    /// reached commits. A lookahead `!x` holds unless `x` matches the empty
+    /// rest of the text. Any other child means the input ended too early.
+    fn finish_at_end(&mut self, cursor: &mut Cursor<'_>, first: usize, from: usize) -> Run {
         for child in &mut self.children[from..] {
             match child {
                 Pattern::Optional(_) => {}
-                Pattern::Cut(_) | Pattern::Not(_) => {
+                Pattern::Cut(_) => {
                     child.parse(cursor);
-                    if cursor.has_error() {
-                        return false;
+                }
+                Pattern::Not(not) => {
+                    if not.child_matches_empty() {
+                        // The lookahead's own failure, just past the end.
+                        let end = cursor.pos();
+                        cursor.record_error(end, end, not.meta);
+                        return Run::FailedInPlace;
                     }
                 }
                 _ => {
                     // `last` is the end itself: the input stopped short.
                     cursor.record_error(first, cursor.pos(), self.meta);
-                    return false;
+                    return Run::FailedInPlace;
                 }
             }
         }
 
-        true
+        Run::Matched
     }
+}
+
+/// How a sequence's children ended.
+enum Run {
+    Matched,
+    /// A child failed; v12 rewinds to the sequence's start.
+    ChildFailed,
+    /// The sequence itself gave up (the text ended early, or nothing at all
+    /// matched); v12 leaves its cursor where that was found.
+    FailedInPlace,
 }
 
 /// Children allowed to produce no node at all without failing the sequence.

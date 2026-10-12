@@ -777,6 +777,123 @@ fn unbounded_failure_with_nothing_kept_is_the_childs_error() {
 }
 
 #[test]
+fn a_composite_childs_failure_is_reported_on_the_child_itself() {
+    // With a sequence child the attribution is visible: the inner literal
+    // that failed (`b@1..1`) is not what the repeat reports. It re-records
+    // the failure on its child, the sequence, from where the repeat started.
+    let ab = || seq("s", vec![lit("a", "a"), lit("b", "b")]);
+
+    let mut plain = rep("r", ab(), RepeatOptions::default());
+    assert_eq!(parse(&mut plain, "ax").error, Some(("s", 0, 0)));
+
+    let mut with_divider = rep("r", ab(), divided(lit("comma", ",")));
+    assert_eq!(parse(&mut with_divider, "ax").error, Some(("s", 0, 0)));
+
+    let mut inside = seq(
+        "p",
+        vec![lit("q", "q"), rep("r", ab(), RepeatOptions::default())],
+    );
+    assert_eq!(parse(&mut inside, "qax").error, Some(("s", 1, 1)));
+}
+
+#[test]
+fn a_nodeless_divider_rewinds_before_the_next_child() {
+    // The divider `(","?)+` returns no node and no error after consuming
+    // ",,": the repeat moves back to where the divider began, so the next
+    // "x" is never reached and only the first one is kept.
+    let divider = || rep("dr", opt("o", lit("c", ",")), RepeatOptions::default());
+
+    let mut unbounded = rep("r", lit("x", "x"), divided(divider()));
+    assert_eq!(
+        parse(&mut unbounded, "x,,x").nodes.unwrap(),
+        vec![
+            n(NodeKind::InfiniteRepeat, "r", 0, 1, "x"),
+            n(NodeKind::Literal, "x", 0, 1, "x"),
+        ]
+    );
+    assert!(!unbounded.test("x,,x"));
+
+    let mut finite = rep(
+        "r",
+        lit("x", "x"),
+        RepeatOptions {
+            max: Some(3),
+            ..divided(divider())
+        },
+    );
+    assert_eq!(
+        parse(&mut finite, "x,,x").nodes.unwrap(),
+        vec![
+            n(NodeKind::FiniteRepeat, "r", 0, 1, "x"),
+            n(NodeKind::Literal, "x", 0, 1, "x"),
+        ]
+    );
+}
+
+#[test]
+fn a_nodeless_bounded_slot_rewinds_before_the_next_slot() {
+    // The child `(a?)+` consumes "aa" yet returns no node (its third try
+    // matched nothing). The slot rewinds to 0, where the divider fails: no
+    // node at all. Without the rewind the divider would match at 2.
+    let mut repeat = rep(
+        "r",
+        rep("cr", opt("o", lit("a", "a")), RepeatOptions::default()),
+        RepeatOptions {
+            max: Some(3),
+            ..divided(lit("c", ","))
+        },
+    );
+    let outcome = parse(&mut repeat, "aa,");
+    assert!(outcome.nodes.is_none());
+    assert_eq!(outcome.error, None);
+    assert_eq!(outcome.pos, 0);
+}
+
+#[test]
+fn a_min_failure_after_a_partial_literal_reports_where_it_stopped() {
+    // v12's Literal leaves its cursor on the character that didn't match,
+    // and the repeat's own error reports from there.
+    let mut unbounded = rep("r", lit("ab", "ab"), at_least(2));
+    assert_eq!(parse(&mut unbounded, "abac").error, Some(("r", 0, 3)));
+
+    let mut finite = rep("r", lit("ab", "ab"), bounded(1, 3));
+    assert_eq!(parse(&mut finite, "ac").error, Some(("r", 0, 1)));
+
+    let mut long_divider = rep(
+        "r",
+        lit("a", "a"),
+        RepeatOptions {
+            min: 2,
+            ..divided(lit("cc", ",,"))
+        },
+    );
+    assert_eq!(parse(&mut long_divider, "a,x").error, Some(("r", 0, 2)));
+}
+
+#[test]
+fn a_min_failure_after_a_sequence_ran_out_of_text_reports_the_end() {
+    // The second "a"+"b" runs out of text after "aa"; v12's sequence stays
+    // at the end, so the repeat's error reaches 4, not 3 where it began.
+    let mut repeat = rep(
+        "o",
+        seq(
+            "s",
+            vec![
+                rep("r", lit("a", "a"), RepeatOptions::default()),
+                lit("b", "b"),
+            ],
+        ),
+        RepeatOptions {
+            min: 2,
+            ..divided(lit("c", ","))
+        },
+    );
+    let outcome = parse(&mut repeat, "ab,aa");
+    assert_eq!(outcome.error, Some(("o", 0, 4)));
+    assert_eq!(outcome.pos, 0);
+}
+
+#[test]
 fn unbounded_min_failure_is_the_repeats_error() {
     let mut repeat = rep("r", lit("a", "a"), at_least(3));
 

@@ -124,9 +124,23 @@ build error naming the pattern.
   walk, its remaining child slots counted as the zero-width matches they would be: from an idle
   lap every later lap is identical, so the result equals v12's, but a huge bound can't spin.
   v12 would allocate `max` clones instead; no input it handles behaves differently.
-- **`last` of an error recorded "where the cursor stopped" at the end of the text** is the start of
-  the last grapheme (`Cursor::last_index`), because v12's inclusive cursor can't move past it. It
-  decides which error is furthest, so it is kept.
+- **`last` of an error recorded "where the cursor stopped"** (a repeat's own `min` failure) is
+  where v12's cursor would be, `Cursor::last_index`. At the end of the text that is the start of
+  the last grapheme, because v12's inclusive cursor can't move past it. After some failures v12's
+  cursor is not back where the failed pattern began: a `Literal` stays on the character that
+  didn't match, a `Sequence` that ran out of text stays at the end, and a `Sequence` whose last
+  child moved without a node stays there. That spot decides the repeat's error (`"ab"{2,}` on
+  `"abac"` fails at `r@0..3`, not `0..2`), and through it which error is furthest, so it is kept:
+  the failing pattern notes it with `Cursor::stopped_at`, and the next move forgets it.
+- **A failed pattern leaves `pos` where it began.** This one is intentional: in v12 `cursor.index`
+  after a failure can sit at the spots above (`(a+, "b")` on `"aa"` leaves it at 1). Nothing
+  parses from there, and every parent rewinds or fails in turn, so the only observable use of the
+  spot is the error `last` above, which matches. Callers driving `parse` directly see `pos` at
+  the failed pattern's start.
+- **`!x` at the end of the text inside a `Sequence`** is decided as v12 decides it: `x` runs on
+  a throwaway empty cursor (`Not::child_matches_empty`), so nothing it records reaches the real
+  parse. (Milestone 1 parsed `x` on the real cursor, so its failure became the furthest error:
+  `("ab", !",")` on `"ab"` reported `,@2..2` where v12 reports none.)
 - **Deviations from v12**, each pinned by a test in `tests/repeat.rs`:
   - A bounded repeat with `trim_divider` whose first child fails throws a `TypeError` in v12 (it
     pops a node that isn't there). Here there is nothing to trim, and it fails on `min` like the

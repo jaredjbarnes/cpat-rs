@@ -12,6 +12,9 @@ use crate::tree::{NodeId, NodeKind, Tree, TreeBuilder};
 pub struct Cursor<'t> {
     text: &'t str,
     pos: usize,
+    // Where clarity-pattern-parser's cursor would sit after the latest
+    // failure, when that isn't `pos`. See `last_index`.
+    stopped_at: Option<usize>,
     boundaries: Boundaries,
     error: Option<ParseError>,
     furthest_error: Option<ParseError>,
@@ -25,6 +28,7 @@ impl<'t> Cursor<'t> {
         Cursor {
             text,
             pos: 0,
+            stopped_at: None,
             boundaries: Boundaries::new(text),
             error: None,
             furthest_error: None,
@@ -57,15 +61,31 @@ impl<'t> Cursor<'t> {
     }
 
     /// The position as clarity-pattern-parser's inclusive cursor would report
-    /// it: `pos`, except at the end of the text, where that cursor can't go
-    /// past the last grapheme and sits on its start instead. Errors recorded
-    /// "where the cursor stopped" use this, so their `last` matches v12.
+    /// it. Errors recorded "where the cursor stopped" (a repeat's own `min`
+    /// failure) use this, so their `last` matches v12.
+    ///
+    /// Usually that is `pos`, except at the end of the text, where that cursor
+    /// can't go past the last grapheme and sits on its start instead. And
+    /// right after some failures v12's cursor is not back where the failed
+    /// pattern began: a `Literal` stays on the character that didn't match,
+    /// and a `Sequence` that ran out of text stays at the end. Here a failed
+    /// pattern always leaves `pos` where it began (nothing parses from those
+    /// spots), and notes v12's spot with `stopped_at`; the next move forgets it.
     pub(crate) fn last_index(&self) -> usize {
+        if let Some(stopped_at) = self.stopped_at {
+            return stopped_at;
+        }
         if self.at_end() && !self.text.is_empty() {
             self.boundaries.snap_back(self.text.len() - 1)
         } else {
             self.pos
         }
+    }
+
+    /// Notes where v12's cursor would have stopped after the failure just
+    /// recorded, for `last_index`. `pos` doesn't move.
+    pub(crate) fn stopped_at(&mut self, index: usize) {
+        self.stopped_at = Some(index);
     }
 
     /// The unparsed rest of the text. Free: it is a slice.
@@ -81,6 +101,7 @@ impl<'t> Cursor<'t> {
             "{pos} is not a grapheme boundary"
         );
         self.pos = pos.min(self.text.len());
+        self.stopped_at = None;
     }
 
     /// The first grapheme boundary at or after `i`.

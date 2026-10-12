@@ -40,4 +40,14 @@ impl Not {
 
         None
     }
+
+    /// Whether the child matches the empty rest of the text: what `!x` sees
+    /// at the very end. Probed on a throwaway empty cursor, as v12 does, so
+    /// nothing the child records or commits reaches the real parse (a
+    /// lookahead keeps none of its child's work anyway).
+    pub(crate) fn child_matches_empty(&mut self) -> bool {
+        let mut probe = Cursor::new("");
+        self.child.parse(&mut probe);
+        !probe.has_error()
+    }
 }
