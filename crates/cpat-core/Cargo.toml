@@ -1,0 +1,9 @@
+[package]
+name = "cpat-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fancy-regex = "0.19.2"
+regex = "1.13.1"
+unicode-segmentation = "1.13.3"

@@ -1,0 +1,9 @@
+[workspace]
+resolver = "3"
+members = ["crates/cpat-core", "crates/cpat-wasm"]
+
+[profile.release]
+# Smaller wasm; the parser's hot loops don't benefit from unwinding.
+panic = "abort"
+lto = true
+opt-level = 3
