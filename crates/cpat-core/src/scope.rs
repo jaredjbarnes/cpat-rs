@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::name::Name;
@@ -39,7 +39,7 @@ pub(crate) struct ScopeFrame {
 /// Identifies what a lookup found, so the static check can tell a target it
 /// has already walked from a new one. An own-context hit builds a fresh
 /// pattern each time, so it is keyed by its scope instead.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum TargetKey {
     Entry(*const Pattern),
     Owner(*const Scope),
@@ -145,14 +145,25 @@ impl ScopeFrame {
         })
     }
 
-    /// Two frames that answer every lookup alike. A repeated frame deeper in
-    /// the stack is shadowed by the one above it.
-    fn same_as(&self, other: &ScopeFrame) -> bool {
-        Rc::ptr_eq(&self.scope, &other.scope) && self.owner.name == other.owner.name
+    /// Which frame this is: frames with the same scope and owner name
+    /// answer every lookup alike.
+    pub(crate) fn identity(&self) -> (*const Scope, Name) {
+        (Rc::as_ptr(&self.scope), self.owner.name)
     }
 
-    fn identity(&self) -> (*const Scope, Name) {
-        (Rc::as_ptr(&self.scope), self.owner.name)
+    /// Every name this frame might answer: its definitions and, for a
+    /// context's scope, the context's own names.
+    fn names(&self) -> impl Iterator<Item = Name> + '_ {
+        let own = self
+            .scope
+            .owner
+            .as_ref()
+            .map(|owner| [self.owner.name, owner.original_name]);
+        self.scope
+            .patterns
+            .keys()
+            .copied()
+            .chain(own.into_iter().flatten())
     }
 }
 
@@ -162,15 +173,28 @@ pub(crate) fn lookup(frames: &[ScopeFrame], name: Name) -> Option<Found> {
     frames.iter().rev().find_map(|frame| frame.find(name))
 }
 
-/// The frames that can answer a lookup, innermost first, with shadowed
-/// repeats dropped. Two stacks with the same effective frames resolve every
-/// name the same way, which is what lets the static check stop on cycles.
-pub(crate) fn effective(frames: &[ScopeFrame]) -> Vec<(*const Scope, Name)> {
-    let mut seen: Vec<&ScopeFrame> = Vec::new();
+/// Everything `frames` resolves, as `(name, target)` sorted by name: what
+/// a lookup would find for each name any frame answers. Two stacks with the
+/// same resolution behave alike for every later lookup, whatever order their
+/// frames came in, which is what lets the static check stop on cycles
+/// without telling apart stacks that only differ in order (that would grow
+/// with the number of orderings of nested contexts).
+pub(crate) fn resolution(frames: &[ScopeFrame]) -> Vec<(Name, TargetKey)> {
+    let mut decided: HashSet<Name> = HashSet::new();
+    let mut resolved = Vec::new();
     for frame in frames.iter().rev() {
-        if !seen.iter().any(|s| s.same_as(frame)) {
-            seen.push(frame);
+        for name in frame.names() {
+            if decided.contains(&name) {
+                continue;
+            }
+            // A frame that declines a name (an invalid target) leaves it to
+            // the frames further out, exactly as `lookup` does.
+            if let Some(found) = frame.find(name) {
+                decided.insert(name);
+                resolved.push((name, found.key));
+            }
         }
     }
-    seen.into_iter().map(ScopeFrame::identity).collect()
+    resolved.sort_unstable();
+    resolved
 }

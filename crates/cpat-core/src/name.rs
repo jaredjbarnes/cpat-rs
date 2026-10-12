@@ -7,7 +7,9 @@ use std::fmt;
 /// Nodes carry a `Name` (a `u32`) instead of a string, so building a tree never
 /// copies names and comparing two names is an integer compare. `as_str` hands
 /// back the text for visitors that match on names.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+// `Ord` orders by interning order: arbitrary, but stable within a thread,
+// which is all a sorted key needs.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Name(u32);
 
 #[derive(Default)]

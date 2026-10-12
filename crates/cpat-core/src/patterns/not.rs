@@ -47,10 +47,15 @@ impl Not {
     /// lookahead keeps none of its child's work anyway). The probe keeps the
     /// real cursor's scopes and ancestors, as v12's probe keeps its parent
     /// chain; this `Not` is on that chain, started where the probe starts.
-    pub(crate) fn child_matches_empty(&mut self, cursor: &Cursor<'_>) -> bool {
+    ///
+    /// A probe that halted (too deep, an unknown name) halts the real parse;
+    /// callers check `Cursor::halted` after asking.
+    pub(crate) fn child_matches_empty(&mut self, cursor: &mut Cursor<'_>) -> bool {
         let mut probe = cursor.probe();
         let child = &mut self.child;
-        probe.framed(self.meta.id, |probe| child.parse(probe));
-        !probe.has_error()
+        probe.framed(self.meta, |probe| child.parse(probe));
+        let matches = !probe.has_error();
+        cursor.halt_from(probe, self.meta);
+        matches
     }
 }

@@ -188,3 +188,48 @@ fn the_innermost_context_wins() {
     assert!(pattern.test("in"));
     assert!(!pattern.test("out"));
 }
+
+#[test]
+fn a_renamed_context_still_answers_to_its_original_name() {
+    // v12 `clone("d")` keeps `_referencePatternName`, so the reference to
+    // "c" inside still finds the context. Nothing else in the tree is named
+    // "c" (the rename reached the child too), so only that answer works.
+    let mut renamed = context(
+        "c",
+        seq("s", vec![lit("a", "a"), opt("o", reference("c"))]),
+        vec![],
+    )
+    .renamed("d");
+
+    assert_eq!(exec_outline(&mut renamed, "a").0, "d@0..1[a@0..1]");
+    assert_eq!(
+        exec_outline(&mut renamed, "aa").0,
+        "d@0..2[a@0..1 c@1..2[a@1..2]]"
+    );
+}
+
+#[test]
+fn a_context_resolved_by_a_reference_answers_to_the_references_name() {
+    // `e` resolves the context `c` and renames it `e` (v12 `clone("e")`).
+    // Inside, a reference to "e" is answered by that context under its
+    // current name: no definition anywhere is called "e".
+    let mut root = context(
+        "root",
+        reference_to("e", "c"),
+        vec![context(
+            "c",
+            seq("s", vec![lit("a", "a"), opt("o", reference("e"))]),
+            vec![],
+        )],
+    );
+
+    assert_eq!(exec_outline(&mut root, "a").0, "e@0..1[a@0..1]");
+    assert_eq!(
+        exec_outline(&mut root, "aaa").0,
+        "e@0..3[a@0..1 e@1..3[a@1..2 e@2..3[a@2..3]]]"
+    );
+    assert_eq!(
+        exec_outline(&mut root, "b"),
+        outlined("-", "e@0..1", "a@0..0")
+    );
+}

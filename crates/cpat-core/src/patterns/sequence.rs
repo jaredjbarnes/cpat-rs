@@ -118,7 +118,11 @@ impl Sequence {
                     child.parse(cursor);
                 }
                 Pattern::Not(not) => {
-                    if not.child_matches_empty(cursor) {
+                    let matches = not.child_matches_empty(cursor);
+                    if cursor.halted() {
+                        return Run::ChildFailed;
+                    }
+                    if matches {
                         // The lookahead's own failure, just past the end.
                         let end = cursor.pos();
                         cursor.record_error(end, end, not.meta);

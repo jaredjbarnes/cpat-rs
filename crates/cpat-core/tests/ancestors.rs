@@ -120,3 +120,41 @@ fn the_stack_is_empty_after_a_failed_parse() {
 
     assert!(cursor.ancestors().is_empty());
 }
+
+#[test]
+fn a_lookahead_pushes_a_frame() {
+    let (w, seen) = witness();
+    let lookahead = not("n", w);
+    let n = lookahead.id();
+    let mut pattern = seq("s", vec![lookahead, lit("z", "z")]);
+    let s = pattern.id();
+
+    // `w` matches the "z", so `!w` fails; what matters is what it saw.
+    assert!(!pattern.test("z"));
+
+    assert_eq!(*seen.borrow(), vec![frames(&[(s, 0), (n, 0)])]);
+}
+
+#[test]
+fn the_lookaheads_frame_feeds_the_choice_guard() {
+    // Inside `!c`, the choice `c` is already parsing at 0, so the guard
+    // skips it and the reference to `c` fails there, at `n@0..0`. Without
+    // the lookahead's frame the error would come from deeper inside
+    // (`c@0..0`); v12 reports `n@0..0`.
+    let mut pattern = seq(
+        "root",
+        vec![
+            choice("c", vec![not("n", reference("c")), lit("x", "x")]),
+            lit("x2", "x"),
+        ],
+    );
+
+    assert_eq!(
+        exec_outline(&mut pattern, "xx"),
+        outlined("root@0..2[x@0..1 x2@1..2]", "-", "n@0..0")
+    );
+    assert_eq!(
+        exec_outline(&mut pattern, "y"),
+        outlined("-", "root@0..1", "x@0..0")
+    );
+}

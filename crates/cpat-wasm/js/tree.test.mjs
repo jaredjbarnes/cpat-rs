@@ -203,3 +203,28 @@ test("a reference that names nothing is reported, not thrown", () => {
   assert.match(result.patternError, /`missing`/);
   assert.throws(() => pattern.check(), /`missing`/);
 });
+
+test("input nested too deep is an answer, and the module keeps working", () => {
+  // Before the depth limit, about 2000 levels overflowed the wasm stack and
+  // every later call failed with "memory access out of bounds".
+  const parens = () =>
+    Pattern.choice("expr", [
+      Pattern.sequence("group", [
+        Pattern.literal("open", "("),
+        Pattern.reference("expr"),
+        Pattern.literal("close", ")"),
+      ]),
+      Pattern.literal("x", "x"),
+    ]);
+  const expr = parens();
+  const deep = "(".repeat(100000) + "x" + ")".repeat(100000);
+
+  const result = expr.exec(deep);
+
+  assert.equal(result.matched, false);
+  assert.equal(result.tooDeep[0], 1024);
+  assert.equal(expr.test("((x))"), true);
+  assert.equal(parens().test("(".repeat(300) + "x" + ")".repeat(300)), true);
+  assert.equal(Pattern.literal("a", "a").test("a"), true);
+  assert.equal(expr.exec("((x))").tooDeep, undefined);
+});

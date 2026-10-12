@@ -29,6 +29,9 @@ assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 optional divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for
 recursive grammars, and `Custom` for your own patterns. A reference that names nothing comes
 back from `exec` as `ParseResult::pattern_error` (or from `Pattern::check()`), never a panic.
+Input nested deeper than `Limits::max_depth` (1024 composites by default; `exec_with` raises
+it) stops the parse with `ParseResult::too_deep` (`tooDeep` in JS) instead of overflowing the
+stack.
 Still to come: `Expression` (the Pratt mode of `Choice`), `TakeUntil`, `Block`, the `.cpat`
 grammar, decorators, intellisense.
 

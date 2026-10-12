@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use crate::ancestors::{Ancestors, Frame};
 use crate::graphemes::Boundaries;
+use crate::halt::{Halt, Limits, TooDeep};
 use crate::name::Name;
 use crate::parse_error::{Match, ParseError};
 use crate::pattern::Pattern;
@@ -29,12 +30,17 @@ pub struct Cursor<'t> {
     choice_scopes: Vec<bool>,
     ancestors: Ancestors,
     scopes: Vec<ScopeFrame>,
-    pattern_error: Option<PatternError>,
+    max_depth: usize,
+    halt: Option<Halt>,
     tree: TreeBuilder,
 }
 
 impl<'t> Cursor<'t> {
     pub fn new(text: &'t str) -> Cursor<'t> {
+        Cursor::with_limits(text, Limits::default())
+    }
+
+    pub fn with_limits(text: &'t str, limits: Limits) -> Cursor<'t> {
         Cursor {
             text,
             pos: 0,
@@ -46,7 +52,8 @@ impl<'t> Cursor<'t> {
             choice_scopes: Vec::new(),
             ancestors: Ancestors::default(),
             scopes: Vec::new(),
-            pattern_error: None,
+            max_depth: limits.max_depth,
+            halt: None,
             tree: TreeBuilder::default(),
         }
     }
@@ -56,7 +63,12 @@ impl<'t> Cursor<'t> {
     /// the scopes, so references inside still resolve, and the ancestors, so
     /// recursion guards see the same chain v12's parent pointers would.
     pub(crate) fn probe(&self) -> Cursor<'static> {
-        let mut probe = Cursor::new("");
+        let mut probe = Cursor::with_limits(
+            "",
+            Limits {
+                max_depth: self.max_depth,
+            },
+        );
         probe.ancestors = self.ancestors.clone();
         probe.scopes = self.scopes.clone();
         probe
@@ -157,6 +169,10 @@ impl<'t> Cursor<'t> {
     }
 
     pub fn record_error(&mut self, start: usize, last: usize, pattern: Meta) {
+        // A halted parse keeps the error it halted on (see `halt`).
+        if self.halt.is_some() {
+            return;
+        }
         let error = ParseError {
             start,
             last,
@@ -184,8 +200,13 @@ impl<'t> Cursor<'t> {
         }
     }
 
+    /// Clears the current error: the failure was expected (an optional
+    /// child, a lookahead, an alternative that lost). Not after a halt:
+    /// the error stays, so every parent fails in turn.
     pub fn resolve_error(&mut self) {
-        self.error = None;
+        if self.halt.is_none() {
+            self.error = None;
+        }
     }
 
     pub fn record_match(&mut self, pattern: Meta, start: usize, end: usize) {
@@ -198,14 +219,50 @@ impl<'t> Cursor<'t> {
         }
     }
 
-    /// A grammar mistake met while parsing (an unknown reference name, when
-    /// `parse` is driven directly). `exec` checks for these before it parses.
-    pub fn pattern_error(&self) -> Option<&PatternError> {
-        self.pattern_error.as_ref()
+    // ─── Halting ────────────────────────────────────────────────────────
+
+    /// The parse can't go on at all (see `Halt`). Every pattern checks this
+    /// on entry and fails, and errors stop changing, so the parse unwinds
+    /// straight out instead of trying alternatives.
+    pub fn halted(&self) -> bool {
+        self.halt.is_some()
     }
 
-    pub(crate) fn record_pattern_error(&mut self, error: PatternError) {
-        self.pattern_error.get_or_insert(error);
+    /// A grammar mistake met while parsing: an unknown reference name, when
+    /// `parse` is driven directly. `exec` checks for these before it parses.
+    pub fn pattern_error(&self) -> Option<&PatternError> {
+        match &self.halt {
+            Some(Halt::Pattern(error)) => Some(error),
+            _ => None,
+        }
+    }
+
+    /// The input nested deeper than the cursor's `max_depth`.
+    pub fn too_deep(&self) -> Option<TooDeep> {
+        match self.halt {
+            Some(Halt::TooDeep(too_deep)) => Some(too_deep),
+            _ => None,
+        }
+    }
+
+    /// Records `pattern`'s failure at `pos` as the last error, then halts.
+    pub(crate) fn halt(&mut self, pos: usize, pattern: Meta, halt: Halt) {
+        self.record_error(pos, pos, pattern);
+        self.halt.get_or_insert(halt);
+    }
+
+    /// Carries a probe's halt over: a lookahead's child that halted halts
+    /// the real parse too, at the lookahead's position.
+    pub(crate) fn halt_from(&mut self, probe: Cursor<'_>, pattern: Meta) {
+        let halt = match probe.halt {
+            Some(Halt::TooDeep(too_deep)) => Halt::TooDeep(TooDeep {
+                pos: self.pos,
+                ..too_deep
+            }),
+            Some(halt) => halt,
+            None => return,
+        };
+        self.halt(self.pos, pattern, halt);
     }
 
     // ─── Ancestors (DESIGN §2) ──────────────────────────────────────────
@@ -215,11 +272,25 @@ impl<'t> Cursor<'t> {
         self.ancestors.frames()
     }
 
-    /// Runs `f` inside an ancestor frame for the composite `id`, starting
-    /// here. Always popped: parsing fails only by returning.
+    /// Runs `f` inside an ancestor frame for the composite `meta`, starting
+    /// here. Always popped: parsing fails only by returning. A frame past
+    /// `max_depth` halts the parse instead (see `Limits`): the stack is the
+    /// one resource a parse can't get back once it overflows.
     #[inline]
-    pub(crate) fn framed<R>(&mut self, id: PatternId, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.ancestors.push(id, self.pos);
+    pub(crate) fn framed(
+        &mut self,
+        meta: Meta,
+        f: impl FnOnce(&mut Self) -> Option<NodeId>,
+    ) -> Option<NodeId> {
+        if self.ancestors.len() >= self.max_depth {
+            let too_deep = TooDeep {
+                max_depth: self.max_depth,
+                pos: self.pos,
+            };
+            self.halt(self.pos, meta, Halt::TooDeep(too_deep));
+            return None;
+        }
+        self.ancestors.push(meta.id, self.pos);
         let result = f(self);
         self.ancestors.pop();
         result
@@ -314,13 +385,20 @@ impl<'t> Cursor<'t> {
         self.tree.finish(self.text, root)
     }
 
+    /// Ends the parse. A halted parse has no tree, whatever `root` says.
     pub(crate) fn finish(self, root: Option<NodeId>) -> crate::ParseResult<'t> {
+        let (pattern_error, too_deep, root) = match self.halt {
+            None => (None, None, root),
+            Some(Halt::Pattern(error)) => (Some(error), None, None),
+            Some(Halt::TooDeep(too_deep)) => (None, Some(too_deep), None),
+        };
         crate::ParseResult {
             tree: root.map(|root| self.tree.finish(self.text, root)),
             error: self.error,
             furthest_error: self.furthest_error,
             leaf_match: self.leaf_match,
-            pattern_error: self.pattern_error,
+            pattern_error,
+            too_deep,
         }
     }
 }

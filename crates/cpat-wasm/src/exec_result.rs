@@ -25,6 +25,7 @@ pub struct ExecResult {
     furthest_error: Option<Vec<u32>>,
     error_names: Vec<String>,
     pattern_error: Option<String>,
+    too_deep: Option<Vec<u32>>,
 }
 
 #[wasm_bindgen]
@@ -73,6 +74,14 @@ impl ExecResult {
         self.pattern_error.clone()
     }
 
+    /// `[maxDepth, position]` (UTF-16) when the input nested deeper than
+    /// the parser allows and the parse stopped there, or `undefined`. Deep
+    /// input is an answer, not a stack overflow: the module keeps working.
+    #[wasm_bindgen(getter, js_name = tooDeep)]
+    pub fn too_deep(&self) -> Option<Vec<u32>> {
+        self.too_deep.clone()
+    }
+
     #[wasm_bindgen(getter, js_name = furthestErrorPattern)]
     pub fn furthest_error_pattern(&self) -> Option<String> {
         self.furthest_error
@@ -110,6 +119,13 @@ impl ExecResult {
             furthest_error: result.furthest_error.as_ref().map(error_of),
             error_names: vec![name_of(result.error), name_of(result.furthest_error)],
             pattern_error: result.pattern_error.as_ref().map(ToString::to_string),
+            // Saturating: a depth past u32 can't be asked for from JS anyway.
+            too_deep: result.too_deep.map(|too_deep| {
+                vec![
+                    u32::try_from(too_deep.max_depth).unwrap_or(u32::MAX),
+                    offsets.of(too_deep.pos),
+                ]
+            }),
         }
     }
 }

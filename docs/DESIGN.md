@@ -5,7 +5,8 @@
 > Optional, Not, Cut, Custom, wasm layer) is implemented. Milestone 2 (`Repeat`, unbounded and
 > bounded, with dividers, `trim_divider` and cut restoration) is implemented; see §10.
 > Milestone 3 (`Reference`, `Context`, the ancestor stack, recursion guards, the implicit scope)
-> is implemented; see §11.
+> is implemented; see §11, including its fix round (a depth limit, a check that can't blow
+> up, and parse-time halts).
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -215,9 +216,41 @@ build error naming the pattern.
   reaches the name?* §3 settles unknown names as build errors; a grammar that works on one input
   and breaks on the next is a trap; and v12 is not consistently lazy either (its choice resolves
   its references when it builds, and after one throw a second exec quietly stops throwing). So
-  cpat-rs reports it up front, on every exec, even for empty text. Driving `parse` directly skips
-  the check: an unresolvable reference then records an ordinary error at `(pos, pos)` and puts the
-  reason on `Cursor::pattern_error()`. Never a panic.
+  cpat-rs reports it up front, on every exec, even for empty text.
+- **The check can't blow up.** It is iterative between references (a reference queues its
+  target instead of recursing), so a chain of thousands of references costs heap, not stack. It
+  skips a target already walked under the same *resolution*: what every name in scope resolves
+  to (`scope::resolution`), not the order of the frames. The first version keyed on the ordered
+  frame stack, which grows with the orderings of nested contexts: 7 contexts that all refer to
+  one another overflowed the stack, which v12 handles at 12 (`tests/reference.rs`
+  `check_handles_many_mutually_referring_contexts`). Distinct resolutions can still grow
+  exponentially in pathological grammars, so the check walks at most 10 000 states
+  (`CHECK_BUDGET`) and then passes, leaving the rest to the parse. Resolution ids are cached
+  per frame stack, so a reference costs one hash of a pair.
+- **A parse that meets an unknown name halts** (`Halt::Pattern`): v12's throw, as data. This is
+  reached when `parse` is driven directly (no check runs) or past the check's budget. The
+  reference records its error at `(pos, pos)`, `Cursor::pattern_error()` gives the reason, and
+  `exec` returns it with no tree. Halting rather than failing matters: as a plain failure, a
+  later alternative could match and hide the broken grammar (`choice(ref missing, "t")` on
+  `"t"`).
+- **Depth is bounded: input can't overflow the stack.** Through references the parse depth
+  follows the input, so `expr = "(" expr ")" | "x"` on 10 000 levels aborted the process
+  natively (Rust can't catch a stack overflow) and, in wasm, left the module broken for every
+  later call ("memory access out of bounds"). Every composite frame counts against
+  `Limits::max_depth`, checked where the frame is pushed (`Cursor::framed`); past it the parse
+  halts (`Halt::TooDeep`) and `exec` returns `ParseResult::too_deep` with no tree (`tooDeep`
+  in JS). The default, `DEFAULT_MAX_DEPTH = 1024`, was measured: about 540–600 bytes of stack per
+  frame in a debug build and under 400 in release, so 1024 frames fit a 2 MB test thread and
+  the 1 MB wasm stack with room for custom code, while still allowing about 340 levels of the
+  grammar above or 200 of a JSON-style array grammar (serde_json stops at 128).
+  `Pattern::exec_with(text, Limits { max_depth })` and `Cursor::with_limits` raise it, for
+  callers whose thread has the stack. *Rejected:* growing the stack on demand (`stacker`) does
+  not work on wasm32, and a byte budget measured from stack addresses would make the same input
+  pass natively and fail in wasm. A frame count gives the same answer everywhere.
+- **How a halt unwinds.** Once halted, `Pattern::parse` fails every pattern on entry, and
+  `record_error`/`resolve_error` stop changing the error, so every parent fails in turn without
+  trying alternatives (a fallback alternative must not turn "too deep" into a match). A
+  lookahead's probe that halts carries the halt to the real cursor (`Cursor::halt_from`).
 - **The implicit scope is for `exec`/`test` only.** A direct `parse` sees context scopes, not the
   root's tree: a pattern has no parents to find its root from (§2). v12's `parse` on a nested
   pattern still searches up to the root. Wrap the pattern in a `Context` to parse it directly.
@@ -238,12 +271,27 @@ build error naming the pattern.
   order; lookaheads at the end) and 62 inputs, each with a fresh pattern and again reusing one
   instance for every input: same trees, errors and furthest errors. `a = a "b" | "b"` is
   compared with the reference renamed in v12, because there a sequence starting with a child
-  named like the choice becomes a postfix operator (the Pratt mode, a later milestone).
+  named like the choice becomes a postfix operator (the Pratt mode, a later milestone). The fix
+  round added v12-checked tests for four behaviors that no test pinned before (each found by a
+  mutant that survived): the implicit scope searches children before their parent, a context
+  answers to its original and its current name, a clone of a resolved reference keeps its
+  master, and a lookahead pushes the frame the choice guard reads.
 - **Deviations from v12:**
   - Unknown names are reported up front by `exec` (above).
   - `exec` on a pattern taken out of its tree (v12's 'Exec' test execs a reference found inside
     `value`): Rust patterns have no parents, so the reference names nothing and says so; in v12
     it resolves through its old parents.
+  - Input nested past `Limits::max_depth` halts with `too_deep`; v12 recurses until the JS
+    engine throws `RangeError` (about 3000 levels of `expr`). The limit is lower than v12's
+    reach on purpose (above).
+  - A parse that reaches an unknown name halts with `pattern_error` instead of throwing.
+  - A `Sequence` that runs out of text records its error's `last` at the end of the text. v12
+    records `cursor.index + 1`, one UTF-16 unit past the start of the last grapheme, which is
+    inside the grapheme when it is wider than one unit (`("é", "x")` on decomposed `"é"`: v12
+    `root@0..1`, here the end of the text; the same for a lookahead blocked at the end). Positions
+    here are always grapheme boundaries (§5c), and the `+ 1` is v12 assuming one-unit
+    characters. On ASCII the two agree. Pinned in `tests/sequence.rs`. (Found in this
+    milestone's fix round, but it dates from milestone 1.)
   - v12's `Expression` hides its alternatives from `findPattern` until its first parse (its
     `children` are empty until it builds), so a reference parsed before a sibling choice can't see
     inside it. The implicit scope here always sees every alternative.

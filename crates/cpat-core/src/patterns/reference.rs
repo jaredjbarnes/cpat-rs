@@ -2,6 +2,7 @@ use std::fmt;
 use std::rc::Rc;
 
 use crate::cursor::Cursor;
+use crate::halt::Halt;
 use crate::name::Name;
 use crate::pattern::Pattern;
 use crate::pattern_error::PatternError;
@@ -88,10 +89,11 @@ impl Reference {
         let first = cursor.pos();
 
         let Some(instance) = self.resolve(cursor) else {
-            // Only reachable by driving `parse` directly: `exec` checks every
-            // name before it parses. Failure as data, never a panic.
-            cursor.record_error(first, first, self.meta);
-            cursor.record_pattern_error(self.unknown());
+            // Reachable when `parse` is driven directly, or when `exec`'s
+            // up-front check gave up on a huge grammar (see `link`). v12
+            // throws here; this halts the parse with the reason as data.
+            let unknown = self.unknown();
+            cursor.halt(first, self.meta, Halt::Pattern(unknown));
             return None;
         };
 

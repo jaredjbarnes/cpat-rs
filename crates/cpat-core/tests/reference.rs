@@ -512,3 +512,131 @@ fn references_and_their_clones_keep_their_identity() {
     assert_eq!(Pattern::from(clone).id(), original.id());
     assert_eq!(original.renamed("s").id(), original.id());
 }
+
+#[test]
+fn the_implicit_scope_searches_a_patterns_children_before_the_pattern() {
+    // A sequence named "t" holds a literal named "t". v12's search reaches
+    // the literal first, so `r` matches "x", not "xy".
+    let mut pattern = seq(
+        "root",
+        vec![
+            seq("t", vec![lit("t", "x"), lit("y", "y")]),
+            reference_to("r", "t"),
+        ],
+    );
+
+    assert_eq!(
+        exec_outline(&mut pattern, "xyx").0,
+        "root@0..3[t@0..2[t@0..1 y@1..2] r@2..3]"
+    );
+    assert_eq!(
+        exec_outline(&mut pattern, "xyxy"),
+        outlined("-", "root@3..4", "root@3..4")
+    );
+}
+
+#[test]
+fn a_clone_of_a_resolved_reference_keeps_its_master() {
+    // v12 `clone` copies the resolved pattern into `_cachedPattern`. Taken
+    // out of its tree, the clone has nothing to search, yet still parses
+    // the literal it resolved to.
+    let mut s = seq("s", vec![lit("t", "a"), opt("o", reference("t"))]);
+    assert!(s.test("aa"));
+    let Pattern::Sequence(sequence) = &s else {
+        unreachable!()
+    };
+    let Pattern::Optional(optional) = &sequence.children()[1] else {
+        unreachable!()
+    };
+    let mut clone = optional.child().clone();
+
+    assert_eq!(exec_outline(&mut clone, "a").0, "t@0..1");
+    assert_eq!(
+        exec_outline(&mut clone, "b"),
+        outlined("-", "t@0..1", "t@0..0")
+    );
+}
+
+#[test]
+fn an_unknown_name_met_while_parsing_halts_the_parse() {
+    // v12 throws as soon as the parse reaches the name, so no later
+    // alternative gets a turn. Driving `parse` directly skips `exec`'s
+    // check; the halt is that throw as data. Without it, "t" would match.
+    let mut pattern = choice("c", vec![reference("missing"), lit("t", "t")]);
+    let mut cursor = Cursor::new("t");
+
+    assert!(pattern.parse(&mut cursor).is_none());
+
+    assert!(cursor.halted());
+    assert_eq!(cursor.pattern_error(), Some(&unknown("missing", "missing")));
+}
+
+/// `k` contexts that all refer to one another: v12's lazy lookup handles
+/// them; a check that told apart every order of nested contexts would
+/// grow with k! (and overflowed the stack at k = 7).
+fn mutual_contexts(k: usize) -> Pattern {
+    let names: Vec<String> = (0..k).map(|i| format!("c{i}")).collect();
+    let contexts = (0..k)
+        .map(|i| {
+            let mut alternatives: Vec<Pattern> = (0..k)
+                .filter(|&j| j != i)
+                .map(|j| {
+                    seq(
+                        &format!("s{i}_{j}"),
+                        vec![lit("l", &format!("<{j}")), reference(&names[j])],
+                    )
+                })
+                .collect();
+            alternatives.push(lit("end", "."));
+            context(&names[i], choice(&format!("ch{i}"), alternatives), vec![])
+        })
+        .collect();
+    context("root", reference("c0"), contexts)
+}
+
+#[test]
+fn check_handles_many_mutually_referring_contexts() {
+    // The same answers as v12 (`true true false`, from its run of this
+    // grammar at k = 7 and k = 12).
+    let mut root = mutual_contexts(7);
+
+    assert_eq!(root.check(), Ok(()));
+    assert!(root.test("<1<2."));
+    assert!(root.test("<1<2<3<1<4."));
+    assert!(!root.test("<9"));
+}
+
+#[test]
+fn check_walks_long_reference_chains_without_recursing() {
+    // `a0 -> a1 -> … -> a4999 -> missing`: finding `missing` means
+    // following five thousand references. A check that recursed per
+    // reference would overflow a test thread's stack before getting there.
+    let chain = (0..5000)
+        .map(|i| {
+            let next = if i == 4999 {
+                "missing".to_string()
+            } else {
+                format!("a{}", i + 1)
+            };
+            seq(&format!("a{i}"), vec![lit("x", "x"), reference(&next)])
+        })
+        .collect();
+    let root = context("root", reference("a0"), chain);
+
+    assert_eq!(root.check(), Err(unknown("missing", "missing")));
+}
+
+#[test]
+fn check_reports_the_first_unknown_name_in_parse_order() {
+    // Two references, each to a pattern that names something unknown. The
+    // one the parse would reach first is the one reported.
+    let first = seq("first", vec![lit("a", "a"), reference("nope1")]);
+    let second = seq("second", vec![lit("b", "b"), reference("nope2")]);
+    let root = context(
+        "root",
+        seq("s", vec![reference("first"), reference("second")]),
+        vec![first, second],
+    );
+
+    assert_eq!(root.check(), Err(unknown("nope1", "nope1")));
+}

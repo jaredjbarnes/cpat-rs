@@ -1,4 +1,5 @@
 use crate::cursor::Cursor;
+use crate::halt::{Limits, TooDeep};
 use crate::parse_error::{Match, ParseError};
 use crate::pattern::Pattern;
 use crate::pattern_error::PatternError;
@@ -17,20 +18,34 @@ pub struct ParseResult<'t> {
     /// The pattern itself can't run (a reference names nothing). Nothing was
     /// parsed, so the other fields are empty.
     pub pattern_error: Option<PatternError>,
+    /// The input nested deeper than `Limits::max_depth`, and the parse
+    /// stopped there. No tree; the errors are those recorded up to that point.
+    pub too_deep: Option<TooDeep>,
 }
 
-pub(crate) fn exec<'t>(pattern: &mut Pattern, text: &'t str) -> ParseResult<'t> {
-    let mut cursor = Cursor::new(text);
+impl ParseResult<'_> {
+    /// The pattern can't run: nothing is parsed, only the reason is kept.
+    fn refused(error: PatternError) -> Self {
+        ParseResult {
+            tree: None,
+            error: None,
+            furthest_error: None,
+            leaf_match: None,
+            pattern_error: Some(error),
+            too_deep: None,
+        }
+    }
+}
+
+pub(crate) fn exec<'t>(pattern: &mut Pattern, text: &'t str, limits: Limits) -> ParseResult<'t> {
+    let mut cursor = Cursor::with_limits(text, limits);
 
     // Checked before the empty-text shortcut: a broken pattern is reported
     // whatever the input. (v12 returns before it looks.)
     match crate::link::prepare(pattern) {
         Ok(Some(scope)) => cursor.push_scope(ScopeFrame::new(scope, pattern.meta())),
         Ok(None) => {}
-        Err(error) => {
-            cursor.record_pattern_error(error);
-            return cursor.finish(None);
-        }
+        Err(error) => return ParseResult::refused(error),
     }
 
     if text.is_empty() {

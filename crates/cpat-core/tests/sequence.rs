@@ -272,3 +272,21 @@ fn a_last_child_that_moved_without_a_node_reports_from_where_it_stopped() {
     // A failed pattern leaves the cursor where it began (DESIGN §5).
     assert_eq!(cursor.pos(), 0);
 }
+
+#[test]
+fn running_out_of_text_reports_the_end_even_after_a_wide_grapheme() {
+    // Deviation (DESIGN §11): v12 records `cursor.index + 1` here, one UTF-16
+    // unit past the start of the last grapheme, which lands inside "e" +
+    // combining acute (v12: `root@0..1`). Positions here stay on grapheme
+    // boundaries, so the error ends at the end of the text. On ASCII the
+    // two agree ("ab" gives `root@0..2` in both).
+    let mut pattern = seq("root", vec![lit("e", "e\u{301}"), lit("e2", "x")]);
+
+    let result = pattern.exec("e\u{301}");
+
+    assert!(result.tree.is_none());
+    assert_eq!(error_outline(result.furthest_error), "root@0..3");
+
+    let mut ascii = seq("root", vec![lit("e", "ab"), lit("e2", "x")]);
+    assert_eq!(error_outline(ascii.exec("ab").furthest_error), "root@0..2");
+}

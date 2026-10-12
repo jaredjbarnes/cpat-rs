@@ -46,6 +46,11 @@ impl Ancestors {
         self.frames.pop();
     }
 
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        self.frames.len()
+    }
+
     pub(crate) fn frames(&self) -> &[Frame] {
         &self.frames
     }

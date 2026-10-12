@@ -1,6 +1,7 @@
 use crate::ParseResult;
 use crate::children::{self, Children};
 use crate::cursor::Cursor;
+use crate::halt::Limits;
 use crate::name::Name;
 use crate::pattern_error::PatternError;
 use crate::pattern_id::{Meta, PatternId};
@@ -40,20 +41,26 @@ impl Pattern {
     ///
     /// Composites run inside an ancestor frame (DESIGN §2), pushed here so
     /// no composite can forget it; leaves have no children to tell.
+    ///
+    /// A halted cursor (an unknown name, input nested too deep) fails every
+    /// pattern on entry, so the parse unwinds without trying anything else.
     #[inline]
     pub fn parse(&mut self, cursor: &mut Cursor<'_>) -> Option<NodeId> {
+        if cursor.halted() {
+            return None;
+        }
         match self {
             Pattern::Literal(p) => p.parse(cursor),
             Pattern::Regex(p) => p.parse(cursor),
             Pattern::Cut(p) => p.parse(cursor),
             Pattern::Custom(p) => p.parse(cursor),
-            Pattern::Sequence(p) => cursor.framed(p.meta.id, |c| p.parse(c)),
-            Pattern::Choice(p) => cursor.framed(p.meta.id, |c| p.parse(c)),
-            Pattern::Repeat(p) => cursor.framed(p.meta.id, |c| p.parse(c)),
-            Pattern::Optional(p) => cursor.framed(p.meta.id, |c| p.parse(c)),
-            Pattern::Not(p) => cursor.framed(p.meta.id, |c| p.parse(c)),
-            Pattern::Reference(p) => cursor.framed(p.meta.id, |c| p.parse(c)),
-            Pattern::Context(p) => cursor.framed(p.meta.id, |c| p.parse(c)),
+            Pattern::Sequence(p) => cursor.framed(p.meta, |c| p.parse(c)),
+            Pattern::Choice(p) => cursor.framed(p.meta, |c| p.parse(c)),
+            Pattern::Repeat(p) => cursor.framed(p.meta, |c| p.parse(c)),
+            Pattern::Optional(p) => cursor.framed(p.meta, |c| p.parse(c)),
+            Pattern::Not(p) => cursor.framed(p.meta, |c| p.parse(c)),
+            Pattern::Reference(p) => cursor.framed(p.meta, |c| p.parse(c)),
+            Pattern::Context(p) => cursor.framed(p.meta, |c| p.parse(c)),
         }
     }
 
@@ -62,8 +69,16 @@ impl Pattern {
     /// Before the first parse, references are readied: names are looked up in
     /// enclosing contexts, then in this pattern's own tree. A name found in
     /// neither comes back as `ParseResult::pattern_error` with no parse run.
+    ///
+    /// Input nested deeper than `Limits::default().max_depth` stops the parse
+    /// with `ParseResult::too_deep` set; see `exec_with`.
     pub fn exec<'t>(&mut self, text: &'t str) -> ParseResult<'t> {
-        crate::exec::exec(self, text)
+        crate::exec::exec(self, text, Limits::default())
+    }
+
+    /// `exec` with explicit limits.
+    pub fn exec_with<'t>(&mut self, text: &'t str, limits: Limits) -> ParseResult<'t> {
+        crate::exec::exec(self, text, limits)
     }
 
     pub fn test(&mut self, text: &str) -> bool {
