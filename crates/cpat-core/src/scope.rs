@@ -14,8 +14,19 @@ use crate::patterns::Context;
 /// recursion level gets its own instance.
 #[derive(Debug)]
 pub(crate) struct Scope {
-    patterns: HashMap<Name, Rc<Pattern>>,
+    patterns: HashMap<Name, Entry>,
     owner: Option<Owner>,
+}
+
+/// One definition. `home` is where an implicit-scope target was found in
+/// the root's tree: the contexts around it, outermost first. A target with
+/// a home resolves its own references there, not where the reference that
+/// found it sits (see `Found::home`). A context's definitions have none:
+/// they are not in any tree, so they resolve wherever they are used.
+#[derive(Debug)]
+struct Entry {
+    master: Rc<Pattern>,
+    home: Option<Rc<[ScopeFrame]>>,
 }
 
 /// A context answers to its own name with itself (v12
@@ -48,6 +59,18 @@ pub(crate) enum TargetKey {
 pub(crate) struct Found {
     pub(crate) master: Rc<Pattern>,
     pub(crate) key: TargetKey,
+    /// The whole scope stack the master parses under, when it has a home:
+    /// the frames up to the one that answered (the implicit scope), then
+    /// the contexts around the definition. `None`: it parses under the
+    /// reference's own stack.
+    ///
+    /// Why: v12's implicit scope hands out the LIVE pattern in the root's
+    /// tree, and cloning it keeps whatever its references already resolved
+    /// to there. So once the definition has parsed, a reference from
+    /// anywhere else sees the names of the definition's own contexts
+    /// (`tests/reference.rs`,
+    /// `an_implicit_target_resolves_names_where_it_is_defined`).
+    pub(crate) home: Option<Rc<[ScopeFrame]>>,
 }
 
 impl Scope {
@@ -60,7 +83,13 @@ impl Scope {
     ) -> Scope {
         let patterns = patterns
             .into_iter()
-            .map(|pattern| (pattern.meta().name, Rc::new(pattern)))
+            .map(|pattern| {
+                let entry = Entry {
+                    master: Rc::new(pattern),
+                    home: None,
+                };
+                (entry.master.meta().name, entry)
+            })
             .collect();
         Scope {
             patterns,
@@ -78,7 +107,7 @@ impl Scope {
     /// name answers every later search the same way.
     pub(crate) fn implicit(root: &Pattern) -> Scope {
         let mut patterns = HashMap::new();
-        collect_first_matches(root, &mut patterns);
+        collect_first_matches(root, &mut Vec::new(), &mut patterns);
         Scope {
             patterns,
             owner: None,
@@ -86,20 +115,38 @@ impl Scope {
     }
 
     pub(crate) fn patterns(&self) -> impl Iterator<Item = (Name, &Pattern)> {
-        self.patterns.iter().map(|(name, p)| (*name, p.as_ref()))
+        self.patterns
+            .iter()
+            .map(|(name, entry)| (*name, entry.master.as_ref()))
     }
 }
 
-fn collect_first_matches(pattern: &Pattern, into: &mut HashMap<Name, Rc<Pattern>>) {
+/// `contexts` are the contexts around `pattern` in the root's tree, which
+/// become each entry's home.
+fn collect_first_matches(
+    pattern: &Pattern,
+    contexts: &mut Vec<ScopeFrame>,
+    into: &mut HashMap<Name, Entry>,
+) {
     if !matches!(pattern, Pattern::Reference(_)) {
+        let context = match pattern {
+            Pattern::Context(context) => Some(context.frame()),
+            _ => None,
+        };
+        let entered = context.map(|frame| contexts.push(frame)).is_some();
         for child in pattern.child_patterns() {
-            collect_first_matches(child, into);
+            collect_first_matches(child, contexts, into);
+        }
+        if entered {
+            contexts.pop();
         }
     }
 
     if is_valid_target(pattern) {
-        into.entry(pattern.meta().name)
-            .or_insert_with(|| Rc::new(pattern.clone()));
+        into.entry(pattern.meta().name).or_insert_with(|| Entry {
+            master: Rc::new(pattern.clone()),
+            home: Some(contexts.as_slice().into()),
+        });
     }
 }
 
@@ -120,7 +167,9 @@ impl ScopeFrame {
     }
 
     /// What this frame answers for `name`. `None` means "look further out":
-    /// the name is absent, or what it names isn't a valid target.
+    /// the name is absent, or what it names isn't a valid target. The
+    /// `home` here holds only the definition's contexts; `lookup` adds the
+    /// frames below.
     fn find(&self, name: Name) -> Option<Found> {
         if let Some(owner) = &self.scope.owner
             && (name == self.owner.name || name == owner.original_name)
@@ -132,16 +181,21 @@ impl ScopeFrame {
             }
             let context =
                 Context::from_scope(self.owner, owner.child.clone(), Rc::clone(&self.scope));
+            // No home: v12 clones the live context, but a context's
+            // clone clones its child twice and the second copy drops what
+            // its references resolved, so they resolve where they are used.
             return Some(Found {
                 master: Rc::new(context.into()),
                 key: TargetKey::Owner(Rc::as_ptr(&self.scope)),
+                home: None,
             });
         }
 
-        let master = self.scope.patterns.get(&name)?;
-        is_valid_target(master).then(|| Found {
-            master: Rc::clone(master),
-            key: TargetKey::Entry(Rc::as_ptr(master)),
+        let entry = self.scope.patterns.get(&name)?;
+        is_valid_target(&entry.master).then(|| Found {
+            master: Rc::clone(&entry.master),
+            key: TargetKey::Entry(Rc::as_ptr(&entry.master)),
+            home: entry.home.clone(),
         })
     }
 
@@ -167,10 +221,35 @@ impl ScopeFrame {
     }
 }
 
+/// Whether a target's `home` still applies under the `visible` frames: it
+/// was found in the same implicit scope (the bottom frame) as the one in
+/// force now. A reference whose master and home were found in another root
+/// (it was cloned out of that tree, or the root was renamed) has left that
+/// home; its target resolves where it now sits, as v12 resolves whatever
+/// its cached pattern had not resolved yet.
+pub(crate) fn home_applies(home: &[ScopeFrame], visible: &[ScopeFrame]) -> bool {
+    match (home.first(), visible.first()) {
+        (Some(home), Some(here)) => Rc::ptr_eq(&home.scope, &here.scope),
+        _ => false,
+    }
+}
+
 /// Looks `name` up from the innermost frame out, as v12 walks its parent
 /// chain for contexts and then searches the root.
 pub(crate) fn lookup(frames: &[ScopeFrame], name: Name) -> Option<Found> {
-    frames.iter().rev().find_map(|frame| frame.find(name))
+    let (at, mut found) = frames
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(at, frame)| frame.find(name).map(|found| (at, found)))?;
+    found.home = found.home.map(|contexts| {
+        frames[..=at]
+            .iter()
+            .chain(contexts.iter())
+            .cloned()
+            .collect()
+    });
+    Some(found)
 }
 
 /// Everything `frames` resolves, as `(name, target)` sorted by name: what

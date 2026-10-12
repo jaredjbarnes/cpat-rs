@@ -16,14 +16,13 @@ use crate::scope::{self, Scope, ScopeFrame, TargetKey};
 /// is cached on the root tree's first reference and reused while the root
 /// is the same pattern.
 pub(crate) fn prepare(root: &mut Pattern) -> Result<Option<Rc<Scope>>, PatternError> {
-    let key = (root.id(), root.meta().name);
-
     let Some(first) = first_reference(root) else {
         return Ok(None);
     };
-    if let Some(link) = first.root_link().filter(|link| link.root == key) {
-        return Ok(Some(Rc::clone(&link.scope)));
+    if let Some(scope) = readied_scope(root, first) {
+        return Ok(Some(scope));
     }
+    let key = (root.id(), root.meta().name);
 
     let scope = Rc::new(Scope::implicit(root));
     check_with(root, &scope, CHECK_BUDGET)?;
@@ -39,8 +38,25 @@ pub(crate) fn prepare(root: &mut Pattern) -> Result<Option<Rc<Scope>>, PatternEr
 
 /// Whether every reference reachable from `root` resolves. See
 /// `Pattern::check`.
+///
+/// Uses the scope `exec` readied for `root` when there is one: references
+/// that already resolved there keep their targets' homes in that scope
+/// (`scope::home_applies`), so a new one would send them elsewhere.
 pub(crate) fn check(root: &Pattern) -> Result<(), PatternError> {
-    check_with(root, &Rc::new(Scope::implicit(root)), CHECK_BUDGET)
+    let scope = first_reference(root)
+        .and_then(|first| readied_scope(root, first))
+        .unwrap_or_else(|| Rc::new(Scope::implicit(root)));
+    check_with(root, &scope, CHECK_BUDGET)
+}
+
+/// The scope cached on `root`'s first reference, if it was readied for
+/// this very root.
+fn readied_scope(root: &Pattern, first: &Reference) -> Option<Rc<Scope>> {
+    let key = (root.id(), root.meta().name);
+    first
+        .root_link()
+        .filter(|link| link.root == key)
+        .map(|link| Rc::clone(&link.scope))
 }
 
 fn check_with(root: &Pattern, scope: &Rc<Scope>, budget: usize) -> Result<(), PatternError> {
@@ -117,20 +133,23 @@ impl Checker {
 
     /// Notes the resolution of `frames`, now the innermost stack.
     fn enter(&mut self, frames: &[ScopeFrame]) {
-        let stack: Vec<_> = frames.iter().map(ScopeFrame::identity).collect();
-        let id = match self.stacks.get(&stack) {
-            Some(&id) => id,
-            None => {
-                let next = self.resolutions.len() as u32;
-                let id = *self
-                    .resolutions
-                    .entry(scope::resolution(frames))
-                    .or_insert(next);
-                self.stacks.insert(stack, id);
-                id
-            }
-        };
+        let id = self.resolution_of(frames);
         self.current.push(id);
+    }
+
+    /// The id of what `frames` resolves.
+    fn resolution_of(&mut self, frames: &[ScopeFrame]) -> u32 {
+        let stack: Vec<_> = frames.iter().map(ScopeFrame::identity).collect();
+        if let Some(&id) = self.stacks.get(&stack) {
+            return id;
+        }
+        let next = self.resolutions.len() as u32;
+        let id = *self
+            .resolutions
+            .entry(scope::resolution(frames))
+            .or_insert(next);
+        self.stacks.insert(stack, id);
+        id
     }
 
     fn walk(
@@ -155,22 +174,36 @@ impl Checker {
     }
 
     fn follow(&mut self, reference: &Reference, frames: &[ScopeFrame]) -> Result<(), PatternError> {
-        let (master, key) = match reference.master() {
-            Some(master) => (Rc::clone(master), TargetKey::Entry(Rc::as_ptr(master))),
+        let (master, key, home) = match reference.master() {
+            Some(master) => (
+                Rc::clone(master),
+                TargetKey::Entry(Rc::as_ptr(master)),
+                reference.home().cloned(),
+            ),
             None => {
                 let found =
                     scope::lookup(frames, reference.target()).ok_or_else(|| reference.unknown())?;
-                (found.master, found.key)
+                (found.master, found.key, found.home)
             }
         };
 
-        let resolution = *self.current.last().expect("entered at the state's start");
+        // A target with a home parses under its home's scopes, wherever the
+        // reference sits (`scope::Found::home`), so walk it under those.
+        let (frames, resolution) = match home {
+            Some(home) if scope::home_applies(&home, frames) => {
+                (home.to_vec(), self.resolution_of(&home))
+            }
+            _ => (
+                frames.to_vec(),
+                *self.current.last().expect("entered at the state's start"),
+            ),
+        };
         if self.seen.insert((key, resolution)) {
             // Walk what the parse would run: the master under the
             // reference's name (a renamed context answers to that name).
             self.pending.push(State {
                 pattern: master.renamed_to(reference.meta.name),
-                frames: frames.to_vec(),
+                frames,
             });
         }
         Ok(())

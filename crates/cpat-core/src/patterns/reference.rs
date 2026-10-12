@@ -7,7 +7,7 @@ use crate::name::Name;
 use crate::pattern::Pattern;
 use crate::pattern_error::PatternError;
 use crate::pattern_id::{Meta, PatternId};
-use crate::scope::Scope;
+use crate::scope::{Scope, ScopeFrame};
 use crate::tree::NodeId;
 
 /// A pattern named elsewhere: how grammars recurse.
@@ -24,6 +24,9 @@ pub struct Reference {
     // v12 `_cachedPattern`: once found, clones reuse the master instead of
     // searching again. Masters are immutable behind the `Rc`.
     master: Option<Rc<Pattern>>,
+    // The scope stack the master parses under, when it came from the
+    // implicit scope (see `scope::Found::home`). Kept with the master.
+    home: Option<Rc<[ScopeFrame]>>,
     // v12 `_pattern`: this level's own instance.
     instance: Option<Box<Pattern>>,
     // The implicit root scope `exec` built and checked, cached here because
@@ -52,6 +55,7 @@ impl Reference {
             meta: Meta::new(name),
             target: Name::new(target),
             master: None,
+            home: None,
             instance: None,
             root_link: None,
         }
@@ -68,6 +72,10 @@ impl Reference {
 
     pub(crate) fn master(&self) -> Option<&Rc<Pattern>> {
         self.master.as_ref()
+    }
+
+    pub(crate) fn home(&self) -> Option<&Rc<[ScopeFrame]>> {
+        self.home.as_ref()
     }
 
     pub(crate) fn root_link(&self) -> Option<&RootLink> {
@@ -88,14 +96,15 @@ impl Reference {
     pub(crate) fn parse(&mut self, cursor: &mut Cursor<'_>) -> Option<NodeId> {
         let first = cursor.pos();
 
-        let Some(instance) = self.resolve(cursor) else {
+        if !self.resolve(cursor) {
             // Reachable when `parse` is driven directly, or when `exec`'s
             // up-front check gave up on a huge grammar (see `link`). v12
             // throws here; this halts the parse with the reason as data.
             let unknown = self.unknown();
             cursor.halt(first, self.meta, Halt::Pattern(unknown));
             return None;
-        };
+        }
+        let instance = self.instance.as_deref_mut().expect("resolved above");
 
         // v12 `_isBeyondRecursiveAllowance`: the target may already be
         // parsing at this very spot once (that is how `a = a "b" | "b"`
@@ -105,19 +114,29 @@ impl Reference {
             return None;
         }
 
-        instance.parse(cursor)
+        match &self.home {
+            Some(home) if cursor.home_applies(home) => {
+                cursor.within_scopes(home, |cursor| instance.parse(cursor))
+            }
+            _ => instance.parse(cursor),
+        }
     }
 
-    fn resolve(&mut self, cursor: &Cursor<'_>) -> Option<&mut Pattern> {
+    /// Makes this level's instance if there is none yet. `false`: the
+    /// target names nothing here.
+    fn resolve(&mut self, cursor: &Cursor<'_>) -> bool {
         if self.instance.is_none() {
-            let master = match &self.master {
-                Some(master) => Rc::clone(master),
-                None => cursor.lookup(self.target)?,
-            };
+            if self.master.is_none() {
+                let Some(found) = cursor.lookup(self.target) else {
+                    return false;
+                };
+                self.master = Some(found.master);
+                self.home = found.home;
+            }
+            let master = self.master.as_ref().expect("found above");
             self.instance = Some(Box::new(master.renamed_to(self.meta.name)));
-            self.master = Some(master);
         }
-        self.instance.as_deref_mut()
+        true
     }
 }
 
@@ -130,6 +149,7 @@ impl Clone for Reference {
             meta: self.meta,
             target: self.target,
             master: self.master.clone(),
+            home: self.home.clone(),
             instance: None,
             root_link: None,
         }

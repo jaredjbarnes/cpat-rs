@@ -640,3 +640,190 @@ fn check_reports_the_first_unknown_name_in_parse_order() {
 
     assert_eq!(root.check(), Err(unknown("nope1", "nope1")));
 }
+
+// ─── Where an implicit-scope target resolves its own names ──────────────
+//
+// v12's implicit scope (`findPattern(root)`) returns the LIVE pattern in the
+// root's tree, and cloning it keeps what its references resolved to there.
+// So once the definition has parsed, a reference from anywhere sees the
+// names of the contexts around the definition. cpat-rs gives an implicit
+// target that home always (`scope::Found::home`). Every expectation below
+// was produced by v12 on the same pattern and input.
+
+/// `t` refers to `u`, defined only in the context `k` around `t`; `rt`
+/// reaches `t` from outside `k`.
+fn defined_in_a_context(t: Pattern) -> Pattern {
+    seq(
+        "root",
+        vec![
+            context("k", seq("w", vec![t]), vec![lit("u", "K")]),
+            lit("sep", ";"),
+            reference_to("rt", "t"),
+        ],
+    )
+}
+
+fn t_refers_to_u() -> Pattern {
+    seq("t", vec![reference("u")])
+}
+
+#[test]
+fn an_implicit_target_resolves_names_where_it_is_defined() {
+    // Resolved from where `rt` sits, `u` names nothing: this used to be
+    // `UnknownReference` on every input.
+    let mut pattern = defined_in_a_context(t_refers_to_u());
+
+    assert_eq!(
+        exec_outline(&mut pattern, "K;K"),
+        outlined(
+            "root@0..3[k@0..1[t@0..1[u@0..1]] sep@1..2 rt@2..3[u@2..3]]",
+            "-",
+            "-"
+        )
+    );
+    assert_eq!(
+        exec_outline(&mut pattern, "K;X"),
+        outlined("-", "root@0..3", "u@2..2")
+    );
+    assert_eq!(pattern.check(), Ok(()));
+}
+
+#[test]
+fn an_implicit_target_prefers_its_own_context_over_the_references() {
+    // The outer context `R` defines `u` too, and `rt` sits inside it. `t`
+    // still means `k`'s `u`.
+    let mut pattern = context(
+        "R",
+        defined_in_a_context(t_refers_to_u()),
+        vec![lit("u", "Z")],
+    );
+
+    assert_eq!(
+        exec_outline(&mut pattern, "K;K"),
+        outlined(
+            "root@0..3[k@0..1[t@0..1[u@0..1]] sep@1..2 rt@2..3[u@2..3]]",
+            "-",
+            "-"
+        )
+    );
+    assert_eq!(
+        exec_outline(&mut pattern, "K;Z"),
+        outlined("-", "root@0..3", "u@2..2")
+    );
+}
+
+#[test]
+fn an_implicit_choice_target_resolves_where_it_is_defined() {
+    let t = choice("t", vec![reference("u"), lit("q", "q")]);
+    let mut pattern = context("R", defined_in_a_context(t), vec![lit("u", "Z")]);
+
+    assert_eq!(
+        exec_outline(&mut pattern, "K;K"),
+        outlined("root@0..3[k@0..1[u@0..1] sep@1..2 u@2..3]", "-", "-")
+    );
+    assert_eq!(
+        exec_outline(&mut pattern, "K;Z"),
+        outlined("-", "root@0..3", "u@2..2")
+    );
+}
+
+#[test]
+fn an_implicit_target_recurses_at_home() {
+    // `e = "(" e ")" | u` inside `k`, reached from outside by `re`: every
+    // level, however deep, resolves `u` in `k`.
+    let e = choice(
+        "e",
+        vec![
+            seq("p", vec![lit("l", "("), reference("e"), lit("r", ")")]),
+            reference("u"),
+        ],
+    );
+    let mut pattern = seq(
+        "root",
+        vec![
+            context("k", seq("w", vec![e]), vec![lit("u", "K")]),
+            lit("sep", ";"),
+            reference_to("re", "e"),
+        ],
+    );
+
+    assert_eq!(
+        exec_outline(&mut pattern, "K;K"),
+        outlined("root@0..3[k@0..1[u@0..1] sep@1..2 u@2..3]", "-", "l@2..2")
+    );
+    assert_eq!(
+        exec_outline(&mut pattern, "(K);((K))"),
+        outlined(
+            "root@0..9[k@0..3[p@0..3[l@0..1 u@1..2 r@2..3]] sep@3..4 \
+             p@4..9[l@4..5 p@5..8[l@5..6 u@6..7 r@7..8] r@8..9]]",
+            "-",
+            "l@6..6"
+        )
+    );
+    assert_eq!(
+        exec_outline(&mut pattern, "K;((X))"),
+        outlined("-", "root@0..7", "l@4..4")
+    );
+}
+
+#[test]
+fn a_top_level_implicit_target_ignores_a_context_around_the_reference() {
+    // `t` sits in no context, so it resolves `u` in the root's tree ("K"),
+    // even though `rt` sits in a context where `u` is "Z".
+    let mut pattern = seq(
+        "root",
+        vec![
+            t_refers_to_u(),
+            lit("u", "K"),
+            lit("sep", ";"),
+            context("C", reference_to("rt", "t"), vec![lit("u", "Z")]),
+        ],
+    );
+
+    assert_eq!(
+        exec_outline(&mut pattern, "KK;K"),
+        outlined(
+            "root@0..4[t@0..1[u@0..1] u@1..2 sep@2..3 C@3..4[u@3..4]]",
+            "-",
+            "-"
+        )
+    );
+    assert_eq!(
+        exec_outline(&mut pattern, "KK;Z"),
+        outlined("-", "root@0..4", "u@3..3")
+    );
+}
+
+#[test]
+fn deviation_a_reference_parsed_before_the_definition_still_resolves_at_home() {
+    // DEVIATION (DESIGN §11). Here `rt` parses before `t` ever has. v12
+    // then clones a `t` whose `u` is still unresolved, so `u` resolves
+    // from `rt`'s place: the outer `R` ("Z" matches) or, without `R`,
+    // nothing at all (v12 throws "Couldn't find 'u'"). Which one v12 does
+    // depends on what earlier parses reached; cpat-rs always resolves at
+    // home, so "K" matches in both.
+    let inner = || {
+        seq(
+            "root",
+            vec![
+                reference_to("rt", "t"),
+                lit("sep", ";"),
+                context("k", seq("w", vec![t_refers_to_u()]), vec![lit("u", "K")]),
+            ],
+        )
+    };
+    let mut alone = inner();
+    let mut wrapped = context("R", inner(), vec![lit("u", "Z")]);
+
+    let expected = outlined(
+        "root@0..3[rt@0..1[u@0..1] sep@1..2 k@2..3[t@2..3[u@2..3]]]",
+        "-",
+        "-",
+    );
+    assert_eq!(exec_outline(&mut alone, "K;K"), expected);
+    assert_eq!(exec_outline(&mut wrapped, "K;K"), expected);
+    assert_eq!(
+        exec_outline(&mut wrapped, "Z;K"),
+        outlined("-", "root@0..3", "u@0..0")
+    );
+}

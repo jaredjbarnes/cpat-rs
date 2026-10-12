@@ -1,14 +1,11 @@
-use std::rc::Rc;
-
 use crate::ancestors::{Ancestors, Frame};
 use crate::graphemes::Boundaries;
 use crate::halt::{Halt, Limits, TooDeep};
 use crate::name::Name;
 use crate::parse_error::{Match, ParseError};
-use crate::pattern::Pattern;
 use crate::pattern_error::PatternError;
 use crate::pattern_id::{Meta, PatternId};
-use crate::scope::{self, ScopeFrame};
+use crate::scope::{self, Found, ScopeFrame};
 use crate::tree::{NodeId, NodeKind, Tree, TreeBuilder};
 
 /// The state of one parse: position, errors, cut scopes, the ancestor and
@@ -30,6 +27,10 @@ pub struct Cursor<'t> {
     choice_scopes: Vec<bool>,
     ancestors: Ancestors,
     scopes: Vec<ScopeFrame>,
+    // Lookups see `scopes[scope_floor..]`: a target parsing at its home
+    // (`within_scopes`) must not see the frames of the place it was
+    // reached from.
+    scope_floor: usize,
     max_depth: usize,
     halt: Option<Halt>,
     tree: TreeBuilder,
@@ -52,6 +53,7 @@ impl<'t> Cursor<'t> {
             choice_scopes: Vec::new(),
             ancestors: Ancestors::default(),
             scopes: Vec::new(),
+            scope_floor: 0,
             max_depth: limits.max_depth,
             halt: None,
             tree: TreeBuilder::default(),
@@ -71,6 +73,7 @@ impl<'t> Cursor<'t> {
         );
         probe.ancestors = self.ancestors.clone();
         probe.scopes = self.scopes.clone();
+        probe.scope_floor = self.scope_floor;
         probe
     }
 
@@ -311,9 +314,30 @@ impl<'t> Cursor<'t> {
         self.scopes.pop();
     }
 
-    /// The master `name` resolves to here, innermost scope first.
-    pub(crate) fn lookup(&self, name: Name) -> Option<Rc<Pattern>> {
-        scope::lookup(&self.scopes, name).map(|found| found.master)
+    /// What `name` resolves to here, innermost scope first.
+    pub(crate) fn lookup(&self, name: Name) -> Option<Found> {
+        scope::lookup(&self.scopes[self.scope_floor..], name)
+    }
+
+    /// Whether a target's `home` still applies here (`scope::home_applies`).
+    pub(crate) fn home_applies(&self, home: &[ScopeFrame]) -> bool {
+        scope::home_applies(home, &self.scopes[self.scope_floor..])
+    }
+
+    /// Runs `f` with `frames` as the whole scope stack, then restores the
+    /// stack. Pushes onto the same stack under a raised floor rather than
+    /// swapping in a new one, so it doesn't allocate once warm.
+    pub(crate) fn within_scopes<R>(
+        &mut self,
+        frames: &[ScopeFrame],
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let floor = std::mem::replace(&mut self.scope_floor, self.scopes.len());
+        self.scopes.extend(frames.iter().cloned());
+        let result = f(self);
+        self.scopes.truncate(self.scope_floor);
+        self.scope_floor = floor;
+        result
     }
 
     // ─── Nodes ──────────────────────────────────────────────────────────
@@ -410,5 +434,39 @@ impl<'t> crate::ParseResult<'t> {
 
     pub fn tree(&self) -> Option<&Tree<'t>> {
         self.tree.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::patterns::{Context, Literal};
+
+    fn defines_u() -> ScopeFrame {
+        let u = Literal::new("u", "u").unwrap().into();
+        let child = Literal::new("c", "c").unwrap().into();
+        Context::new("k", child, vec![u]).frame()
+    }
+
+    #[test]
+    fn a_target_at_home_sees_only_its_home_frames() {
+        // The frames of the place a target was reached from must not leak
+        // into its home: lookups stop at the floor, and so do the probes
+        // a lookahead makes there.
+        let u = Name::new("u");
+        let mut cursor = Cursor::new("x");
+        cursor.push_scope(defines_u());
+
+        let seen = cursor.within_scopes(&[], |cursor| {
+            (
+                cursor.lookup(u).is_some(),
+                cursor.probe().lookup(u).is_some(),
+            )
+        });
+        let home = cursor.within_scopes(&[defines_u()], |cursor| cursor.lookup(u).is_some());
+
+        assert_eq!(seen, (false, false));
+        assert!(home);
+        assert!(cursor.lookup(u).is_some(), "the stack is restored");
     }
 }
