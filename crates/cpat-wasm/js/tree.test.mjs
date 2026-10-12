@@ -298,3 +298,46 @@ test("a dangling operator is a failed exec with v12's errors", () => {
   assert.deepEqual(Array.from(result.furthestError), [1, 1]);
   assert.equal(result.furthestErrorPattern, "*");
 });
+
+test("a nested block and a take-until come back with their kinds", () => {
+  const block = Pattern.block(
+    "block",
+    Pattern.literal("open", "{"),
+    Pattern.reference("block"),
+    Pattern.literal("close", "}")
+  );
+  const text = "{{🔴}}";
+  const wildcard = Pattern.block("emoji", Pattern.literal("open", "{"), null, Pattern.literal("close", "}"));
+  const nested = Pattern.block("block", Pattern.literal("open", "{"), wildcard, Pattern.literal("close", "}"));
+  const root = new Tree(text, nested.exec(text)).root;
+
+  assert.equal(root.type, "block");
+  assert.deepEqual(
+    root.children.map(c => [c.type, c.name, c.value]),
+    [
+      ["literal", "open", "{"],
+      ["block", "emoji", "{🔴}"],
+      ["literal", "close", "}"],
+    ]
+  );
+  const inner = root.children[1].children[1];
+  assert.deepEqual([inner.type, inner.name, inner.startIndex, inner.endIndex], ["block-content", "emoji-content", 2, 4]);
+
+  const recursive = new Tree("{{}}", block.exec("{{}}")).root;
+  assert.deepEqual(recursive.children.map(c => c.value), ["{", "{}", "}"]);
+
+  const tag = Pattern.sequence("tag", [
+    Pattern.literal("lt", "<"),
+    Pattern.takeUntil("name", Pattern.literal("gt", ">")),
+    Pattern.literal("gt", ">"),
+  ]);
+  const name = new Tree("<abc>", tag.exec("<abc>")).root.children[1];
+  assert.deepEqual([name.type, name.value], ["take-until", "abc"]);
+});
+
+test("a block's delimiters must be literals", () => {
+  assert.throws(
+    () => Pattern.block("b", Pattern.regex("open", "\\{"), null, Pattern.literal("close", "}")),
+    /open delimiter `open` must be a literal/
+  );
+});

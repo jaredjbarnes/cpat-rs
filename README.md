@@ -23,11 +23,11 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 5)
+## What's in the box (milestone 6)
 
 `Literal`, `Regex`, `Sequence`, `Choice`, `Repeat` (unbounded or bounded, with an optional
 divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for recursive
-grammars, `RightAssociated`, and `Custom` for your own patterns.
+grammars, `RightAssociated`, `TakeUntil`, `Block`, and `Custom` for your own patterns.
 
 `Choice` is ordered (the first alternative that matches wins) unless some alternatives are
 operators: sequences that start or end with a reference to the choice itself (`expr "+" expr`,
@@ -42,11 +42,16 @@ A reference that names nothing comes back from `exec` as `ParseResult::pattern_e
 `Pattern::check()`), never a panic. Input nested deeper than `Limits::max_depth` (1024
 composites by default; `exec_with` raises it) stops the parse with `ParseResult::too_deep`
 (`tooDeep` in JS) instead of overflowing the stack.
-Still to come: `TakeUntil`, `Block`, the `.cpat` grammar,
-decorators, intellisense.
+
+`TakeUntil` takes text, a grapheme at a time, up to where its terminator matches (or to the end).
+`Block` matches literal delimiters by counting them (`{ { } }` is one block), then parses its
+content only between them; with no content pattern, the inner text becomes a `block-content`
+node named `<name>-content`. A block whose content refers to the block itself nests.
+
+Still to come: the `.cpat` grammar, decorators, intellisense.
 
 ```rust
-use cpat_core::{Choice, Literal, Pattern, Reference, Regex, Sequence};
+use cpat_core::{Block, Choice, Literal, Pattern, Reference, Regex, Sequence};
 
 // expr = "(" expr ")" | "x"
 let mut expr: Pattern = Choice::new("expr", vec![
@@ -70,6 +75,16 @@ let mut arithmetic: Pattern = Choice::new("expr", vec![
 
 let result = arithmetic.exec("1+2*3");
 assert_eq!(result.tree().unwrap().root().name(), "add");
+
+// block = "{" block "}", where "{}" is the base case: adjacent delimiters always match
+let mut block: Pattern = Block::new(
+    "block",
+    Literal::new("open", "{")?,
+    Some(Reference::new("block").into()),
+    Literal::new("close", "}")?,
+).into();
+
+assert!(block.test("{{{}}}"));
 ```
 
 ## Working on it

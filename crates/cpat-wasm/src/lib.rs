@@ -9,8 +9,8 @@ mod repeat_options;
 mod utf16;
 
 use cpat_core::{
-    Choice, Context, Cut, Literal, Not, Optional, Pattern, Reference, Regex, Repeat, RepeatOptions,
-    RightAssociated, Sequence,
+    Block, Choice, Context, Cut, Literal, Not, Optional, Pattern, Reference, Regex, Repeat,
+    RepeatOptions, RightAssociated, Sequence, TakeUntil,
 };
 use wasm_bindgen::prelude::*;
 
@@ -31,6 +31,18 @@ fn js_error(error: impl std::fmt::Display) -> JsError {
 
 fn unwrap(children: Vec<JsPattern>) -> Vec<Pattern> {
     children.into_iter().map(|child| child.inner).collect()
+}
+
+/// A block's delimiter. Rust's `Block::new` takes `Literal`s, so the types
+/// decide it there; JS hands over any pattern, so it is checked here.
+fn delimiter(block: &str, role: &str, pattern: JsPattern) -> Result<Literal, JsError> {
+    match pattern.inner {
+        Pattern::Literal(literal) => Ok(literal),
+        other => Err(JsError::new(&format!(
+            "block `{block}`: the {role} delimiter `{}` must be a literal (Pattern.literal), since the block finds its matching close by searching for the tokens",
+            other.name()
+        ))),
+    }
 }
 
 #[wasm_bindgen(js_class = Pattern)]
@@ -106,6 +118,27 @@ impl JsPattern {
     /// `patterns` in scope for its references. Takes over all of them.
     pub fn context(name: &str, child: JsPattern, patterns: Vec<JsPattern>) -> JsPattern {
         Context::new(name, child.inner, unwrap(patterns)).into()
+    }
+
+    /// `Pattern.takeUntil(name, terminator)`: the text up to where
+    /// `terminator` matches, or to the end. Taking nothing is a failure.
+    #[wasm_bindgen(js_name = takeUntil)]
+    pub fn take_until(name: &str, terminator: JsPattern) -> JsPattern {
+        TakeUntil::new(name, terminator.inner).into()
+    }
+
+    /// `Pattern.block(name, open, content, close)`: `open`, then `content`
+    /// (or, when it is `null`, any text) up to the `close` that balances
+    /// it. `open` and `close` must be literals; the scan counts their tokens.
+    pub fn block(
+        name: &str,
+        open: JsPattern,
+        content: Option<JsPattern>,
+        close: JsPattern,
+    ) -> Result<JsPattern, JsError> {
+        let open = delimiter(name, "open", open)?;
+        let close = delimiter(name, "close", close)?;
+        Ok(Block::new(name, open, content.map(|content| content.inner), close).into())
     }
 
     #[wasm_bindgen(getter)]

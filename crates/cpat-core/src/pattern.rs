@@ -6,8 +6,8 @@ use crate::name::Name;
 use crate::pattern_error::PatternError;
 use crate::pattern_id::{Meta, PatternId};
 use crate::patterns::{
-    Choice, Context, Custom, Cut, Literal, Not, Optional, Reference, Regex, Repeat,
-    RightAssociated, Sequence,
+    Block, Choice, Context, Custom, Cut, Literal, Not, Optional, Reference, Regex, Repeat,
+    RightAssociated, Sequence, TakeUntil,
 };
 use crate::tree::NodeId;
 
@@ -33,6 +33,8 @@ pub enum Pattern {
     Reference(Reference),
     Context(Context),
     RightAssociated(RightAssociated),
+    TakeUntil(TakeUntil),
+    Block(Block),
     Custom(Custom),
 }
 
@@ -66,6 +68,8 @@ impl Pattern {
             Pattern::Not(p) => cursor.framed(p.meta, |c| p.parse(c)),
             Pattern::Reference(p) => cursor.framed(p.meta, |c| p.parse(c)),
             Pattern::Context(p) => cursor.framed(p.meta, |c| p.parse(c)),
+            Pattern::TakeUntil(p) => cursor.framed(p.meta, |c| p.parse(c)),
+            Pattern::Block(p) => cursor.framed(p.meta, |c| p.parse(c)),
         }
     }
 
@@ -131,8 +135,11 @@ impl Pattern {
             return;
         }
         self.meta_mut().name = name;
-        if let Pattern::Context(context) = self {
-            context.child.rename(name);
+        match self {
+            Pattern::Context(context) => context.child.rename(name),
+            // Its wildcard content node is named after it.
+            Pattern::Block(block) => block.renamed_content(),
+            _ => {}
         }
     }
 
@@ -158,14 +165,18 @@ impl Pattern {
             | Pattern::Regex(_)
             | Pattern::Cut(_)
             | Pattern::Custom(_)
-            | Pattern::Reference(_) => Children::Few([None, None]),
+            | Pattern::Reference(_) => Children::Few([None, None, None]),
             Pattern::Sequence(p) => Children::Many(p.children.iter()),
             Pattern::Choice(p) => Children::Many(p.alternatives.iter()),
-            Pattern::Repeat(p) => Children::Few([Some(p.child()), p.divider()]),
-            Pattern::Optional(p) => Children::Few([Some(&*p.child), None]),
-            Pattern::Not(p) => Children::Few([Some(&*p.child), None]),
-            Pattern::Context(p) => Children::Few([Some(&*p.child), None]),
-            Pattern::RightAssociated(p) => Children::Few([Some(&*p.child), None]),
+            Pattern::Repeat(p) => Children::Few([Some(p.child()), p.divider(), None]),
+            Pattern::Optional(p) => Children::Few([Some(&*p.child), None, None]),
+            Pattern::Not(p) => Children::Few([Some(&*p.child), None, None]),
+            Pattern::Context(p) => Children::Few([Some(&*p.child), None, None]),
+            Pattern::RightAssociated(p) => Children::Few([Some(&*p.child), None, None]),
+            Pattern::TakeUntil(p) => Children::Few([Some(&*p.terminator), None, None]),
+            Pattern::Block(p) => {
+                Children::Few([Some(&*p.open), p.content.as_deref(), Some(&*p.close)])
+            }
         }
     }
 
@@ -175,17 +186,23 @@ impl Pattern {
             | Pattern::Regex(_)
             | Pattern::Cut(_)
             | Pattern::Custom(_)
-            | Pattern::Reference(_) => Children::Few([None, None]),
+            | Pattern::Reference(_) => Children::Few([None, None, None]),
             Pattern::Sequence(p) => Children::Many(p.children.iter_mut()),
             Pattern::Choice(p) => Children::Many(p.alternatives.iter_mut()),
             Pattern::Repeat(p) => {
                 let (child, divider) = p.parts_mut();
-                Children::Few([Some(child), divider])
+                Children::Few([Some(child), divider, None])
             }
-            Pattern::Optional(p) => Children::Few([Some(&mut *p.child), None]),
-            Pattern::Not(p) => Children::Few([Some(&mut *p.child), None]),
-            Pattern::Context(p) => Children::Few([Some(&mut *p.child), None]),
-            Pattern::RightAssociated(p) => Children::Few([Some(&mut *p.child), None]),
+            Pattern::Optional(p) => Children::Few([Some(&mut *p.child), None, None]),
+            Pattern::Not(p) => Children::Few([Some(&mut *p.child), None, None]),
+            Pattern::Context(p) => Children::Few([Some(&mut *p.child), None, None]),
+            Pattern::RightAssociated(p) => Children::Few([Some(&mut *p.child), None, None]),
+            Pattern::TakeUntil(p) => Children::Few([Some(&mut *p.terminator), None, None]),
+            Pattern::Block(p) => Children::Few([
+                Some(&mut *p.open),
+                p.content.as_deref_mut(),
+                Some(&mut *p.close),
+            ]),
         }
     }
 
@@ -202,6 +219,8 @@ impl Pattern {
             Pattern::Reference(p) => &p.meta,
             Pattern::Context(p) => &p.meta,
             Pattern::RightAssociated(p) => &p.meta,
+            Pattern::TakeUntil(p) => &p.meta,
+            Pattern::Block(p) => &p.meta,
             Pattern::Custom(p) => &p.meta,
         }
     }
@@ -219,6 +238,8 @@ impl Pattern {
             Pattern::Reference(p) => &mut p.meta,
             Pattern::Context(p) => &mut p.meta,
             Pattern::RightAssociated(p) => &mut p.meta,
+            Pattern::TakeUntil(p) => &mut p.meta,
+            Pattern::Block(p) => &mut p.meta,
             Pattern::Custom(p) => &mut p.meta,
         }
     }
@@ -246,5 +267,7 @@ into_pattern!(
     Reference,
     Context,
     RightAssociated,
+    TakeUntil,
+    Block,
     Custom
 );

@@ -5,7 +5,7 @@ use crate::pattern::Pattern;
 /// must cost nothing for patterns that have none.
 pub(crate) enum Children<I: Iterator> {
     Many(I),
-    Few([Option<I::Item>; 2]),
+    Few([Option<I::Item>; 3]),
 }
 
 impl<I: Iterator> Iterator for Children<I> {

@@ -12,6 +12,13 @@ pub enum NodeKind {
     Custom,
     /// An operator applied to its operands, built by a choice in Pratt mode.
     Expression,
+    /// The text a `TakeUntil` took.
+    TakeUntil,
+    /// A `Block`: its open delimiter, its content if any, its close.
+    Block,
+    /// The text between a wildcard block's delimiters (a `Block` with no
+    /// content pattern).
+    BlockContent,
 }
 
 /// Index of a node in its tree.

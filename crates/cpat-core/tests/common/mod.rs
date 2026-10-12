@@ -1,8 +1,12 @@
 #![allow(dead_code)]
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use cpat_core::{
-    Choice, Context, Cursor, Cut, Literal, Node, NodeKind, Not, Optional, ParseError, Pattern,
-    Reference, Regex, Repeat, RepeatOptions, RightAssociated, Sequence,
+    Block, Choice, Context, Cursor, Custom, CustomParse, Cut, Literal, Meta, Node, NodeId,
+    NodeKind, Not, Optional, ParseError, Pattern, PatternId, Reference, Regex, Repeat,
+    RepeatOptions, RightAssociated, Sequence, TakeUntil,
 };
 
 pub fn lit(name: &str, token: &str) -> Pattern {
@@ -57,6 +61,22 @@ pub fn context(name: &str, child: Pattern, patterns: Vec<Pattern>) -> Pattern {
     Context::new(name, child, patterns).into()
 }
 
+pub fn take_until(name: &str, terminator: Pattern) -> Pattern {
+    TakeUntil::new(name, terminator).into()
+}
+
+/// A block with literal delimiters `open` and `close` (named `open` and
+/// `close`, as in v12's tests).
+pub fn block(name: &str, open: &str, content: Option<Pattern>, close: &str) -> Pattern {
+    Block::new(
+        name,
+        Literal::new("open", open).unwrap(),
+        content,
+        Literal::new("close", close).unwrap(),
+    )
+    .into()
+}
+
 pub fn right(child: Pattern) -> Pattern {
     RightAssociated::new(child).into()
 }
@@ -87,6 +107,9 @@ pub fn shape(node: Node<'_, '_>) -> String {
         NodeKind::FiniteRepeat => "finite-repeat",
         NodeKind::Custom => "custom",
         NodeKind::Expression => "expression",
+        NodeKind::TakeUntil => "take-until",
+        NodeKind::Block => "block",
+        NodeKind::BlockContent => "block-content",
     };
     format!(
         "{}:{kind}@{}..{}{children}",
@@ -161,4 +184,30 @@ pub fn exec_outline(pattern: &mut Pattern, text: &str) -> (String, String, Strin
 
 pub fn outlined(tree: &str, error: &str, furthest: &str) -> (String, String, String) {
     (tree.to_string(), error.to_string(), furthest.to_string())
+}
+
+/// What a `frame_spy` saw: the ancestor frames, `(id, start)`, at each call.
+pub type SeenFrames = Rc<RefCell<Vec<Vec<(PatternId, usize)>>>>;
+
+/// A custom pattern that notes the ancestor frames around it, then
+/// succeeds with no node and no error.
+pub fn frame_spy() -> (Pattern, SeenFrames) {
+    #[derive(Clone)]
+    struct Spy(SeenFrames);
+
+    impl CustomParse for Spy {
+        fn parse(&mut self, _meta: Meta, cursor: &mut Cursor<'_>) -> Option<NodeId> {
+            let frames = cursor.ancestors().iter().map(|f| (f.id, f.start)).collect();
+            self.0.borrow_mut().push(frames);
+            None
+        }
+
+        fn clone_box(&self) -> Box<dyn CustomParse> {
+            Box::new(self.clone())
+        }
+    }
+
+    let seen = SeenFrames::default();
+    let spy = Custom::new("spy", Box::new(Spy(Rc::clone(&seen))));
+    (spy.into(), seen)
 }

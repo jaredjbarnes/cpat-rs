@@ -16,6 +16,8 @@
 > Milestone 5 (the choice's `LiteralSet` mode: a first-character index that leaves the same
 > winner, error and furthest error as the ordered loop) is implemented; see §8 for the key and
 > §13 for the rest.
+> Milestone 6 (`TakeUntil` and `Block`, with node kinds `TakeUntil`, `Block` and `BlockContent`
+> in Rust and JS) is implemented; see §14.
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -537,6 +539,67 @@ build error naming the pattern.
     literal winner halts on that reference's frame; the index never parses the reference, so
     the literal wins. The limit guards the stack (§11), and the index uses none. v12 has no
     limit. Pinned in `tests/literal_set.rs` (`deviation_at_the_depth_limit_…`).
+
+## 14. TakeUntil and Block *(milestone 6)*
+
+- **`TakeUntil` is v12's loop on half-open positions.** At each grapheme it probes the
+  terminator inside its own frame (v12 makes it the terminator's parent), then puts back the cut
+  it saw before the probe, resolves the error and rewinds: a probe is never kept, so nothing it
+  commits survives (Cut.test.ts's TakeUntil case is pinned in `tests/cut.rs`). It stops at the
+  first grapheme where the terminator returns a node (a terminator that succeeds without one, an
+  absent optional or a passing `!x`, never stops it, as in v12), or at the end of the text; it
+  never probes at the end, as v12's `hasNext` never does. Taking nothing is an error at
+  `(first, first)`. The node is a `TakeUntil` leaf whose value is the slice it spans, so it
+  always covers whole graphemes. A probe that halts (an unknown name, too deep) ends the scan
+  with a failure: scanning on would fail every later probe on entry, and the half-taken text
+  must not come back as a match. `set_tokens`/`tokens` hold intellisense suggestions; a clone
+  keeps them.
+- **`Block` takes `Literal` delimiters, so the types enforce what v12's signature asks for.**
+  They are kept as `Pattern`s inside (with their tokens copied out for the scan) so a grammar
+  search sees `open`, content and `close` as v12's `children`; `Children::Few` grew to three
+  slots for it. JS hands over any pattern, so `Pattern.block` checks there and throws naming the
+  delimiter. Phases as v12: parse `open`; scan for the balancing close with `str::find` (opens
+  before each close raise the depth; when the closes run out, the last close seen is taken);
+  parse the content from the open's end; parse `close` where the scan found it. Adjacent
+  delimiters are always valid (the base case of a recursive block). Content that returns no node
+  fails the block unless it is an `Optional` (decided once at construction, as v12 checks the
+  pattern's type), and content must end exactly at the close; it parses on the whole text, so a
+  pattern that runs past the close fails. Every failure rewinds and records the block's error at
+  `(first, first)` (v12 records at the cursor after rewinding, which is the same spot). The
+  block doesn't restore the cut after failed content, as in v12: a cut there commits the choice
+  around the block. A wildcard block (no content pattern) with text between the delimiters gets
+  a `BlockContent` leaf named `<name>-content`; the name is interned once and kept in step by
+  `Pattern::rename`. v12's `cursor.hasError` check after the content is left out: a failed
+  pattern always returns no node, and the only content allowed none is an `Optional`, which never
+  leaves an error, so the node alone decides (a mutant removing the check survived).
+- **Checked against v12** by running both (a TS script against v12's `src` and a scratch Rust
+  binary) on 30 patterns and 78 inputs each, through `exec` with a fresh and a shared instance
+  and through `parse` from 0: take-until with literal, choice, sequence-with-cut, regex, `!x` and
+  optional terminators, inside sequences and repeats, over combining marks and emoji; blocks with
+  no content, regex, sequence, optional, `!x`, overrunning and cut content, nested, recursive
+  through a reference, with multi-character and emoji delimiters, in sequences, repeats and
+  choices. Same trees, errors and furthest errors except the deviations below and the known
+  ones: a `Sequence` that runs out of text inside a wide last grapheme (§11), and a direct
+  `parse` of a pattern whose references only `exec`'s implicit scope can resolve (§11). A
+  mutation pass removed each mechanism (the cut restore, the halt check, the leaf match, the
+  grapheme step, the optional allowance, the adjacent base case, the exact-end check, the
+  wildcard node and its condition, the content name on rename, the content start, the block's
+  error, the scan's fallback and depth, both frames, and both patterns' children for searches);
+  each made a test fail.
+- **Deviations from v12:**
+  - A block whose content is an absent `Optional` keeps only `open` and `close`, skipping the
+    text between them, as in v12. Its value here is the slice it spans (§10), so `exec` matches
+    `{1}` when the content is an optional `[a-z]+`, where v12 compares the joined children
+    (`{}`) with the text and fails. Pinned in `tests/block.rs`.
+  - An open token that ends inside a grapheme (`e` against `e` + combining accent): the content
+    starts at the next boundary, where the open literal left the cursor. v12's `moveTo` goes back
+    to the grapheme's start, so its content overlaps the open and its `exec` fails. Positions
+    inside a grapheme don't exist here (§5c). Pinned in `tests/block.rs`.
+- **Deferred to M8 (intellisense):** `getTokens`/`getTokensAfter`/`getPatterns`/`…After`/`find`
+  for both, and `isEqual` (Block.test.ts 'autocomplete introspection' and 'equality',
+  TakeUntil.test.ts's introspection and equality tests). `Block::record_match` is called as in
+  v12 but can't be observed yet: its close always ends where it does, and the leaf match keeps
+  the first match with the greatest end. Milestone 7's recording parse will see it.
 
 ## Behavior fixed relative to clarity-pattern-parser v11
 

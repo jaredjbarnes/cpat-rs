@@ -199,6 +199,22 @@ fn a_cut_inside_a_lookahead_never_commits() {
     assert!(choice.test("xy"));
 }
 
+#[test]
+fn take_until_a_cut_inside_a_failed_terminator_probe_does_not_commit() {
+    // Cut.test.ts:
+    //   scan = ?->| ("x" ~/ "y")
+    //   committed = scan + "!"
+    //   choice = committed | "axq"
+    // Probing for `xy` at the `x` fires the cut and fails at `q`; the probe
+    // is discarded and the scan runs on to the end of the text, where `!`
+    // fails. Only if the probe's cut was thrown away can `axq` match.
+    let scan = take_until("scan", seq("xy", vec![lit("x", "x"), cut(), lit("y", "y")]));
+    let committed = seq("committed", vec![scan, lit("bang", "!")]);
+    let mut choice = choice("choice", vec![committed, lit("axq", "axq")]);
+
+    assert!(choice.test("axq"));
+}
+
 // ─── Only kept work commits: repeats ────────────────────────────────────
 // Ported from Cut.test.ts "Cut — only kept work commits". The grammar there
 // is built here with the direct API: `x*` is `Optional(Repeat(x))`, `x+` is

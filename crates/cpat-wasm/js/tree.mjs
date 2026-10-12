@@ -14,6 +14,9 @@ const KIND = [
   "infinite-repeat",
   "finite-repeat",
   "expression",
+  "take-until",
+  "block",
+  "block-content",
 ];
 const NO_PARENT = 0xffffffff;
 
