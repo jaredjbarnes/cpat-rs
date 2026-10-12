@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::cursor::Cursor;
 use crate::pattern_error::PatternError;
 use crate::pattern_id::Meta;
@@ -22,8 +24,8 @@ pub struct Regex {
 /// lookaround and backreferences, which `regex` doesn't support.
 #[derive(Clone, Debug)]
 enum Matcher {
-    Fast(regex::Regex),
-    Fancy(fancy_regex::Regex),
+    Fast(Rc<regex::Regex>),
+    Fancy(Rc<fancy_regex::Regex>),
 }
 
 impl Matcher {
@@ -34,11 +36,11 @@ impl Matcher {
         let anchored = |dialect| format!("^(?:{})", js_to_rust(source, dialect));
 
         if let Ok(fast) = regex::Regex::new(&anchored(Dialect::Fast)) {
-            return Ok(Matcher::Fast(fast));
+            return Ok(Matcher::Fast(Rc::new(fast)));
         }
 
         fancy_regex::Regex::new(&anchored(Dialect::Fancy))
-            .map(Matcher::Fancy)
+            .map(|fancy| Matcher::Fancy(Rc::new(fancy)))
             .map_err(|error| PatternError::InvalidRegex {
                 name: name.to_string(),
                 source: source.to_string(),

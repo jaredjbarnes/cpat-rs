@@ -98,7 +98,9 @@ which inserts a cut), `a | b`, `(p)+`, `(p)*`, `(p, divider trim){m,n}`, `!p`, `
 `?->| p`, `["{"] p ["}"]` and `["{"] ... ["}"]`, groups, aliases and exports. Mistakes are a
 `GrammarError` with v12's message: a syntax error with its line, column and hint, a removed `<|>`,
 a name no rule defines, rules that only rename each other in a loop, and a literal an earlier,
-shorter one hides (`"=" | "=="`). The hand-written cpat grammar itself is `cpat_grammar()`.
+shorter one hides (`"=" | "=="`). Text nested deeper than 10 levels of parentheses, or more
+than 256 operators deep, is refused too (`GrammarError::NestedTooDeep`), where v12 overflows or
+runs out of memory. The hand-written cpat grammar itself is `cpat_grammar()`.
 
 ```rust
 use cpat_core::{Grammar, GrammarOptions};

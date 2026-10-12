@@ -30,6 +30,10 @@ pub(super) struct Builder<'a, 't> {
     pub(super) anonymous: AnonymousNames,
     /// The statement being built, for error messages.
     pub(super) current_rule: String,
+    /// The grammar's text, for the line and column of an error.
+    pub(super) text: &'t str,
+    /// How many patterns are being built inside one another right now.
+    pub(super) depth: usize,
 }
 
 /// A name used before (or without) a definition, and where.
@@ -51,11 +55,11 @@ pub(super) struct ChoiceSite<'a, 't> {
 
 /// The patterns of the grammar whose tree is `root`, each wrapped in a
 /// context named after its rule with every rule in scope.
-pub(super) fn build(root: Node<'_, '_>) -> Result<Patterns, GrammarError> {
+pub(super) fn build<'t>(text: &'t str, root: Node<'_, 't>) -> Result<Patterns, GrammarError> {
     let Some(statements) = root.find(|node| node.name() == "statements") else {
         return Ok(Patterns::default());
     };
-    let mut builder = Builder::new(statements);
+    let mut builder = Builder::new(text, statements);
     builder.reject_unsupported(statements)?;
     builder.build_statements(statements)?;
     builder.reject_unknown_names()?;
@@ -66,7 +70,7 @@ pub(super) fn build(root: Node<'_, '_>) -> Result<Patterns, GrammarError> {
 
 impl<'a, 't> Builder<'a, 't> {
     /// A builder that knows no rules yet.
-    pub(super) fn empty() -> Builder<'a, 't> {
+    pub(super) fn empty(text: &'t str) -> Builder<'a, 't> {
         Builder {
             rules: Patterns::default(),
             rule_names: HashSet::new(),
@@ -75,10 +79,12 @@ impl<'a, 't> Builder<'a, 't> {
             choices: Vec::new(),
             anonymous: AnonymousNames::default(),
             current_rule: String::new(),
+            text,
+            depth: 0,
         }
     }
 
-    fn new(statements: Node<'a, 't>) -> Builder<'a, 't> {
+    fn new(text: &'t str, statements: Node<'a, 't>) -> Builder<'a, 't> {
         let rule_names = statements
             .children()
             .filter(|statement| statement.name() == "patternAssignment")
@@ -86,7 +92,7 @@ impl<'a, 't> Builder<'a, 't> {
             .collect();
         Builder {
             rule_names,
-            ..Builder::empty()
+            ..Builder::empty(text)
         }
     }
 

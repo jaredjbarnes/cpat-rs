@@ -35,7 +35,11 @@
 > Milestone 10 (the grammar core: the cpat grammar written by hand, `Grammar::parse_string` and
 > the builder for every rule, without imports, params or decorators) is implemented; see §8 and
 > §18. It also spells an ASCII `\b` for the backtracking regex engine (§6) and builds a context
-> found by its own name only when a lookup needs the pattern (§18).
+> found by its own name only when a lookup needs the pattern (§18). Its fix round bounds how
+> deeply a grammar's text may nest (10 levels of parentheses, 256 patterns built inside one
+> another) so a deep text is a `GrammarError` rather than a stack overflow or an exponential
+> build, shares each compiled regex between a pattern's clones, and builds every grammar from
+> an unparsed copy of the cpat grammar (§18).
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -1072,7 +1076,35 @@ build error naming the pattern.
   The cut tests' error counts are 6, 9, 12, … with the cut and at least doubling without it; v12
   counts 5, 8, 11, … calls to `recordErrorAt`, and records the summary error through
   `recordSummaryErrorAt`, which is the one more here (`errors()` lists both).
+- **How deeply a grammar may nest** (fix round 1, `grammar/depth.rs`, `tests/grammar_depth.rs`).
+  Grammar text is input, and two shapes of it ran away:
+  - *Parentheses double the build.* `patternExpr` tries `( p , divider )+` before `( p )`, as in
+    v12, so every `(` parses its inside twice, and each reference reached keeps its own clone of
+    what it names (§1, §3): every level of parentheses doubled the clones. 14 levels took 6 GB,
+    100 never finished; v12 is the same shape (16 levels, 4.6 GB). Reordering the alternatives
+    would change what `(a)+` means, merging them would change the trees (which must stay v12's),
+    and sharing instances between references is §1's settled question. So the cpat grammar reads
+    a grammar's text under `Limits { max_depth: 38 }`: 8 composites for a statement and 3 per
+    level of `( … )`, `[…] … […]` or `?->|`, which is 10 levels of parentheses (about 40 MB at
+    most). Past that the parse halts at once (§11) and the build fails with
+    `GrammarError::NestedTooDeep` at the line and column where the level too many begins. The
+    deepest text in the fixture corpus needs 13 of the 38.
+  - *Operator runs overflow the builder.* Prefix and postfix operators (`!!!…`, `…???`,
+    `… right right`) are a loop in the Pratt choice, not nesting in the parse, so the text is
+    fine, but the builder recurses once per operator: 8000 `!` overflowed the 8 MB main stack, a
+    process abort. The builder now refuses a pattern built inside 256 others with the same
+    error at the node's position; 256 levels is a small part of a 1 MB wasm stack in a debug
+    build.
+  - Two smaller fixes found on the way. Each regex is compiled once and shared (`Rc`) by every
+    clone of its pattern: a clone of a `regex::Regex` starts its own match cache, and those
+    caches were seven-eighths of a clone's memory. And `parse_string` parses with a never-parsed
+    copy of the thread's cpat grammar (cheap now, since the regexes are shared), so the clones
+    one build makes are freed with it instead of living as long as the thread.
 - **Deviations from v12:**
+  - Nesting deeper than the limits above is `GrammarError::NestedTooDeep` ("[Invalid Grammar]
+    the grammar nests too deeply at line L, column C; give the inner expression a rule of its
+    own."). v12 has no such error: it builds 11 to about 15 levels of parentheses (with memory
+    doubling per level) and 256 `!` in a row, and throws a `RangeError` for 8000.
   - A repeat's divider and quantifier are its own children. v12 searches the repeat's whole
     subtree (`node.find`), so a repeat whose item is itself a repeat took the item's divider and
     quantifier: `x = (("a", ",")+, ";"){2}` built a `,`-divided one-or-more and refused

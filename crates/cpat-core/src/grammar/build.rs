@@ -8,9 +8,10 @@ use crate::tree::Node;
 
 use super::anonymous::is_anonymous;
 use super::builder::{Builder, ChoiceSite, group_inner};
+use super::depth::MAX_BUILD_DEPTH;
 use super::error::GrammarError;
 use super::escapes::decode_escapes;
-use super::syntax::{Syntax, flattened, is_skipped};
+use super::syntax::{Syntax, flattened, is_skipped, line_and_column};
 
 impl<'a, 't> Builder<'a, 't> {
     /// The pattern `node` describes, called `name`. A part of a bigger
@@ -21,6 +22,17 @@ impl<'a, 't> Builder<'a, 't> {
         name: &str,
         node: Node<'a, 't>,
     ) -> Result<Pattern, GrammarError> {
+        if self.depth >= MAX_BUILD_DEPTH {
+            let (line, column) = line_and_column(self.text, node.start());
+            return Err(GrammarError::NestedTooDeep { line, column });
+        }
+        self.depth += 1;
+        let pattern = self.build_syntax(name, node);
+        self.depth -= 1;
+        pattern
+    }
+
+    fn build_syntax(&mut self, name: &str, node: Node<'a, 't>) -> Result<Pattern, GrammarError> {
         match Syntax::of(&node) {
             Syntax::Literal => {
                 let token = string_value(node.value());
@@ -163,7 +175,7 @@ mod tests {
     fn build(mut pattern: Pattern, text: &str) -> Result<Pattern, GrammarError> {
         let result = pattern.exec(text);
         let root = result.tree().expect("the pattern matches").root();
-        Builder::empty().build_pattern("x", root)
+        Builder::empty(text).build_pattern("x", root)
     }
 
     #[test]

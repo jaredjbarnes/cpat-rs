@@ -37,6 +37,12 @@ pub enum GrammarError {
     UnbuildableNode { name: String },
     /// `()` with nothing inside.
     EmptyPatternGroup,
+    /// The text nests deeper than a build allows (`grammar/depth.rs`): too
+    /// many levels of parentheses, or too long a run of `!`, `?` or
+    /// `right`. Line and column are where the level too many begins, 1-based,
+    /// the column in UTF-16 units. v12 has no such limit: it overflows the JS
+    /// stack (a `RangeError`) or runs out of memory instead.
+    NestedTooDeep { line: usize, column: usize },
     /// The grammar imports another, and no way to load it was given.
     NoImportResolver,
     /// The grammar uses a feature the builder doesn't support yet.
@@ -92,6 +98,11 @@ impl fmt::Display for GrammarError {
             ),
             GrammarError::UnbuildableNode { name } => write!(f, "Couldn't build node: {name}."),
             GrammarError::EmptyPatternGroup => write!(f, "Empty pattern group."),
+            GrammarError::NestedTooDeep { line, column } => write!(
+                f,
+                "[Invalid Grammar] the grammar nests too deeply at line {line}, column \
+                 {column}; give the inner expression a rule of its own."
+            ),
             GrammarError::NoImportResolver => write!(f, "No import resolver supplied."),
             GrammarError::Unsupported { feature } => write!(
                 f,

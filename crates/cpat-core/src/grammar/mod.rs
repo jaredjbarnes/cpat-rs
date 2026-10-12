@@ -9,6 +9,7 @@ mod build;
 mod builder;
 mod checks;
 mod cpat;
+mod depth;
 mod error;
 mod escapes;
 mod json;
@@ -16,12 +17,12 @@ mod patterns;
 mod repeat;
 mod syntax;
 
-use std::cell::RefCell;
-
 use crate::error_message::generate_error_message;
 use crate::exec::ParseResult;
 use crate::pattern::Pattern;
 use crate::tree::Node;
+
+use depth::GRAMMAR_TEXT_LIMITS;
 
 pub use cpat::cpat_grammar;
 pub use error::GrammarError;
@@ -46,38 +47,41 @@ impl Grammar {
     /// and a literal an earlier, shorter one hides.
     pub fn parse_string(text: &str, options: GrammarOptions) -> Result<Patterns, GrammarError> {
         let GrammarOptions {} = options;
-        with_cpat_grammar(|grammar| {
-            let result = grammar.exec(text);
-            let Some(tree) = result.tree() else {
-                return Err(syntax_error(grammar, text));
-            };
-            let root = tree.root();
-            reject_removed_syntax(text, root)?;
-            builder::build(root)
-        })
+        let mut grammar = fresh_cpat_grammar();
+        let result = grammar.exec_with(text, GRAMMAR_TEXT_LIMITS);
+        if let Some(too_deep) = result.too_deep {
+            let (line, column) = syntax::line_and_column(text, too_deep.pos);
+            return Err(GrammarError::NestedTooDeep { line, column });
+        }
+        let Some(tree) = result.tree() else {
+            return Err(syntax_error(&mut grammar, text));
+        };
+        let root = tree.root();
+        reject_removed_syntax(text, root)?;
+        builder::build(text, root)
     }
 }
 
 thread_local! {
-    // Built once per thread: compiling its regexes on every call would cost
-    // more than most grammars take to build. Parsing is single-threaded by
-    // design, so a thread-local is the whole story (as for `Name`).
-    static CPAT: RefCell<Pattern> = RefCell::new(cpat_grammar());
+    // Compiled once per thread: compiling its regexes on every call would
+    // cost more than most grammars take to build. Parsing is single-threaded
+    // by design, so a thread-local is the whole story (as for `Name`).
+    static CPAT: Pattern = cpat_grammar();
 }
 
-/// Runs `f` with the cpat grammar: the thread's copy, or a fresh one when
-/// that is already in use further up the stack.
-fn with_cpat_grammar<R>(f: impl FnOnce(&mut Pattern) -> R) -> R {
-    CPAT.with(|cell| match cell.try_borrow_mut() {
-        Ok(mut grammar) => f(&mut grammar),
-        Err(_) => f(&mut cpat_grammar()),
-    })
+/// A copy of the cpat grammar that has never parsed. Cheap: the compiled
+/// regexes are shared, and references clone their targets only when they
+/// first parse. Never the thread's own copy: each reference a parse reaches
+/// keeps a clone of what it names, so a grammar that had read a deeply
+/// nested text would hold on to all of them for the life of the thread.
+fn fresh_cpat_grammar() -> Pattern {
+    CPAT.with(Pattern::clone)
 }
 
 /// v12's syntax error: the cpat grammar's error message for `text`, from a
 /// recording parse as v12 makes it.
 fn syntax_error(grammar: &mut Pattern, text: &str) -> GrammarError {
-    let result: ParseResult<'_> = grammar.exec_recording(text);
+    let result: ParseResult<'_> = grammar.exec_recording_with(text, GRAMMAR_TEXT_LIMITS);
     GrammarError::Syntax {
         message: generate_error_message(grammar, &result),
     }
