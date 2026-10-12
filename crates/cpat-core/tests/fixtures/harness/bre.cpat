@@ -1,0 +1,134 @@
+# POSIX Basic Regular Expressions, with GNU extensions.
+#
+# Defining property: most metacharacters are LITERAL unless preceded
+# by `\`. Group is `\(...\)`, alternation is `\|`, one-or-more is
+# `\+`, zero-or-one is `\?`, bounded quantifier is `\{n,m\}`. `*`,
+# `.`, `^`, `$`, and `[...]` work the same as in ERE/PCRE.
+#
+# Char classes (`[...]`) are tokenised as one opaque match — the
+# visitor parses the body using the shared char-class helper rather
+# than expressing it in the grammar. The internal rules of `[...]`
+# (POSIX classes, ranges, leading-`]` literal) are stateful in a way
+# that's awkward to express declaratively; one regex literal + a
+# focused visitor is cleaner.
+#
+# Rule names are stable — the visitor dispatches on them — so don't
+# rename without updating `src/shell/regex/visitors/bre.ts`.
+
+# ─── Top level ─────────────────────────────────────────────
+bre = breAlternation
+
+# ─── Alternation ───────────────────────────────────────────
+# `\|` separates sequences. Empty alternatives are allowed (matches
+# real BRE behaviour) by making breSequence's atom list optional.
+breAlternation = breSequence + (breAltTail)*
+breAltTail     = breAltSep + breSequence
+breAltSep      = /\\\|/
+
+# ─── Sequence ──────────────────────────────────────────────
+# One sequence is zero or more atom-with-quantifier slots. The `*`
+# (zero-or-more) is what lets `\|\|` parse as three empty
+# alternatives, matching real BRE.
+breSequence = (breAtomQ)*
+
+# ─── Atom + optional quantifier suffix ─────────────────────
+# Anchors aren't quantifier-eligible in real BRE (a quantifier after
+# `^` is a syntax error / undefined); we accept the quantifier
+# grammatically and let the visitor decide whether to attach it. In
+# practice no quantifier sneaks past `^`/`$` because the visitor
+# treats anchors as atoms and ignores any following quantifier slot.
+breAtomQ = breAtom + breQuantSuffix?
+
+# Order matters — most-specific first. Group (`\(`) must beat the
+# generic backslash-escape rule, brackets must be tried before the
+# bare literal-char fallback.
+breAtom = breGroup
+        | breCharClass
+        | breAnchorStart
+        | breAnchorEnd
+        | breDot
+        | breEscapedAtom
+        | breLiteralChar
+
+# ─── Group ─────────────────────────────────────────────────
+breGroup      = breGroupOpen + breAlternation + breGroupClose
+breGroupOpen  = /\\\(/
+breGroupClose = /\\\)/
+
+# ─── Char class — opaque token, visitor parses the body ────
+# Regex anatomy:
+#   \[                                  opening bracket
+#   \^?                                 optional negation
+#   \]?                                 optional literal `]` at position 0 (POSIX rule)
+#   (?:\[:[a-z]+:\]|\\.|[^\]])*         body: POSIX class OR `\X` OR non-`]`
+#   \]                                  closing bracket
+# The POSIX-class alternative `\[:name:\]` is listed FIRST so the
+# inner `]` of `[:alpha:]` doesn't terminate the outer class — without
+# this special case, `[[:alpha:]]` would match only `[[:alpha:]` and
+# leave the trailing `]` dangling.
+breCharClass = /\[\^?\]?(?:\[:[a-z]+:\]|\\.|[^\]])*\]/
+
+# ─── Anchors ───────────────────────────────────────────────
+breAnchorStart = "^"
+breAnchorEnd   = "$"
+
+# ─── Dot ───────────────────────────────────────────────────
+breDot = "."
+
+# ─── Backslash-led atoms ───────────────────────────────────
+# Listed most-specific first. The visitor dispatches on the matched
+# leaf node's name so it knows which kind of escape this is.
+breEscapedAtom = breBackref
+               | breWordBoundaryAlias
+               | breWordBoundary
+               | breNonWordBoundary
+               | breClassDigit
+               | breClassWord
+               | breClassSpace
+               | breClassNotDigit
+               | breClassNotWord
+               | breClassNotSpace
+               | breControlEscape
+               | breHexEscape
+               | breUnicodeEscape
+               | breLiteralEscape
+
+breBackref           = /\\[1-9]/
+breWordBoundaryAlias = /\\[<>]/
+breWordBoundary      = /\\b/
+breNonWordBoundary   = /\\B/
+breClassDigit        = /\\d/
+breClassNotDigit     = /\\D/
+breClassWord         = /\\w/
+breClassNotWord      = /\\W/
+breClassSpace        = /\\s/
+breClassNotSpace     = /\\S/
+breControlEscape     = /\\[ntrfv0]/
+breHexEscape         = /\\x[0-9a-fA-F][0-9a-fA-F]/
+breUnicodeEscape     = /\\u[0-9a-fA-F]{4}/
+# Catch-all: `\X` for any non-special X. The exclusion list mirrors
+# the rules above plus the structural escapes (`\(`, `\)`, `\|`,
+# `\+`, `\?`, `\{`, `\}`) which must not be swallowed here — they're
+# matched at a higher level by breGroup / breAltSep / breQuant*.
+breLiteralEscape = /\\[^()|+?{}<>bBdDwWsSntrfv0xu1-9]/
+
+# ─── Literal char ──────────────────────────────────────────
+# Anything that's not a metacharacter consumed elsewhere. In BRE the
+# unescaped metacharacters reduce to `.`, `*`, `^`, `$`, `[`, `\` —
+# everything else is a literal. We exclude `\` so the escape rules
+# above can claim it.
+breLiteralChar = /[^.\\\[\^$*]/
+
+# ─── Quantifier suffix ─────────────────────────────────────
+# Order matters — `\{n,m\}` and `\{n\}` must be tried before bare
+# `\+`/`\?` so the brace form isn't mis-tokenised mid-stream.
+breQuantSuffix = breBraceQuant
+               | breStarQ
+               | breBackslashPlusQ
+               | breBackslashQuestionQ
+
+breStarQ              = "*"
+breBackslashPlusQ     = /\\\+\??/
+breBackslashQuestionQ = /\\\?\??/
+# `\{n\}` or `\{n,m\}` or `\{n,\}`. Trailing `?` for non-greedy.
+breBraceQuant         = /\\\{[0-9]+(?:,[0-9]*)?\\\}\??/

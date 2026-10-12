@@ -137,8 +137,8 @@ impl Reference {
                 let Some(found) = cursor.lookup(self.target) else {
                     return false;
                 };
-                self.master = Some(found.master);
-                self.home = found.home;
+                self.home = found.home.clone();
+                self.master = Some(found.master());
             }
             let master = self.master.as_ref().expect("found above");
             self.instance = Some(Box::new(master.renamed_to(self.meta.name)));

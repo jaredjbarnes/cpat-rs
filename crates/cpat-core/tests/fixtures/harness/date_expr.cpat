@@ -1,0 +1,145 @@
+# date_expr — GNU-coreutils-style "date input formats" grammar.
+#
+# A date expression is a whitespace-separated SEQUENCE of items. Each
+# item either sets ABSOLUTE fields (a calendar date, a time of day, a
+# timezone, an epoch stamp) or accumulates a RELATIVE offset (`+3 days`,
+# `2 weeks ago`) or a weekday adjust (`next monday`). The visitor folds
+# the whole sequence into one `DateItems` accumulator; `fold.ts` then
+# resolves it against `now`.
+#
+# This mirrors how `src/calc/grammar.cpat` and `src/jq/grammar.cpat` are
+# structured: regex/string leaves, `+` sequence, `|` ordered choice, `?`
+# optional, `(item, sep)+` repetition. There is NO operator precedence
+# here — a date expression is a flat list, so we use a flat repetition
+# (`items`) instead of calc's expression-promotion.
+#
+# PEG ordered choice: `item`'s alternatives are listed MOST-SPECIFIC
+# first so a longer form commits before a shorter prefix can match
+# (e.g. an ISO datetime before a bare calendar date; a timezone-bearing
+# time before a bare time).
+#
+# Timezones: `Z`/`UT`/`GMT`/`UTC`, the common US abbrevs, numeric
+# `±HH[:]MM` offsets, AND full IANA `Area/Location` names (e.g.
+# `America/New_York`, or GNU's `TZ="…"` prefix) — the latter resolved to
+# a DST-correct offset at the instant via `Intl` in the folder.
+
+# ─── Whitespace (also swallows a leading comma, e.g. "May 16, 2026") ──
+ws = /(?:[ \t\n\r]+|,[ \t\n\r]*)+/
+
+# ─── Primitive numeric leaves ───────────────────────────────────────
+sign      = /[+-]/
+year4     = /\d{4}/
+mon2      = /\d{1,2}/
+day2      = /\d{1,2}/
+intNum    = /\d+/
+fracSec   = /\.\d+/
+
+# ─── Month names (long + 3-letter abbrev, case-insensitive) ─────────
+# cpat regex leaves don't accept a trailing `/i` flag, so case-folding
+# uses inline `(?i:...)` groups throughout this grammar.
+monthName =
+  /(?i:january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sep|october|oct|november|nov|december|dec)\b/
+
+# ─── Day-of-week names (long + abbrev, case-insensitive) ────────────
+# Trailing `s` allowed for the `next 2 fridays` plural form.
+dowName =
+  /(?i:sunday|sun|monday|mon|tuesday|tue|wednesday|wed|thursday|thu|friday|fri|saturday|sat)s?\b/
+
+# ─── Timezone tokens ────────────────────────────────────────────────
+# Named zones map to fixed offsets in the visitor. Numeric offsets
+# (`Z`, `+05:00`, `-0800`) are parsed structurally.
+tzNamed   = /(?i:UTC|GMT|UT|EST|EDT|CST|CDT|MST|MDT|PST|PDT)\b/
+tzZulu    = /[Zz]/
+tzNumeric = /[+-]\d{2}:?\d{2}/
+# IANA `Area/Location` name (requires a `/`, so it never steals a bare
+# word). Validated + resolved to a DST-correct offset via Intl in the
+# folder; an unknown name fails the parse. Allows 3-part names
+# (`America/Argentina/Buenos_Aires`) and `+`/`-` (`Etc/GMT+5`).
+tzIana    = /[A-Za-z]+(?:\/[A-Za-z0-9_+-]+)+/
+# Named zones / numeric offsets are distinct shapes; tzIana (has a `/`)
+# is the catch-all, tried last.
+tzOffset  = tzZulu | tzNumeric | tzNamed | tzIana
+# GNU's `TZ="America/New_York"` prefix form (quoted or bare). Matched as
+# one token; the visitor strips `TZ=` and any quotes.
+tzAssign  = /(?i:TZ)=(?:"[^"]+"|\S+)/
+
+# ─── Epoch: @SECONDS (optionally fractional) ────────────────────────
+epochItem = /@\d+(?:\.\d+)?/
+
+# ─── Time of day: HH:MM[:SS[.fff]] [am|pm] [tz] ─────────────────────
+hour2     = /\d{1,2}/
+min2      = /\d{2}/
+sec2      = /\d{2}/
+ampm      = /(?i:am|pm|a\.m\.|p\.m\.)\b/
+clockSecs = ":" + sec2 + fracSec?
+timeCore  = hour2 + ":" + min2 + clockSecs?
+timeOfDay = timeCore + (ws? + ampm)? + (ws? + tzOffset)?
+
+# ─── ISO 8601 combined date+time ────────────────────────────────────
+isoDate     = year4 + "-" + mon2 + "-" + day2
+# Date/time separator is `T`, `t`, or a single space. A trailing zone
+# may be glued (`...00Z`) or space-separated (`... UTC`), so allow `ws?`.
+isoDateTime = isoDate + /[Tt ]/ + timeCore + (ws? + tzOffset)?
+
+# ─── Calendar dates (several spellings) ─────────────────────────────
+# YYYY-MM-DD and YYYY/MM/DD (4-digit year leads).
+dashYMD  = year4 + "-" + mon2 + "-" + day2
+slashYMD = year4 + "/" + mon2 + "/" + day2
+# MM/DD/YYYY (US, year trails).
+slashMDY = mon2 + "/" + day2 + "/" + year4
+# DD-Mon-YYYY (e.g. 16-May-2026).
+dMonY    = day2 + "-" + monthName + "-" + year4
+# "Month D[ ,] [YYYY]" and "D Month [YYYY]" — year optional.
+monthDY  = monthName + ws + day2 + (ws + year4)?
+dMonthY  = day2 + ws + monthName + (ws + year4)?
+
+calendarDate = isoDateTime | dashYMD | slashYMD | slashMDY | dMonY | monthDY | dMonthY
+
+# ─── Day-of-week with optional this/next/last + optional count ──────
+thisKw = /(?i:this)\b/
+nextKw = /(?i:next)\b/
+lastKw = /(?i:last)\b/
+dowKindKw = thisKw | nextKw | lastKw
+# `next 2 fridays` — a count between the kind and the day name.
+dowItem = (dowKindKw + ws)? + (intNum + ws)? + dowName
+
+# ─── Relative units ─────────────────────────────────────────────────
+# Singular/plural handled in the visitor by stem matching.
+unitWord =
+  /(?i:years?|yrs?|months?|fortnights?|weeks?|days?|hours?|hrs?|minutes?|mins?|seconds?|secs?)\b/
+agoKw = /(?i:ago)\b/
+# `[+-]?[N] UNIT [ago]` — the count is optional (`+ day` ≡ `+1 day`).
+relUnitItem = (sign + ws?)? + (intNum + ws)? + unitWord + (ws + agoKw)?
+# `next/last/this WEEK` etc. — kind + unit, no count.
+relKindItem = dowKindKw + ws + unitWord
+
+# ─── Bare keywords ──────────────────────────────────────────────────
+nowKw       = /(?i:now)\b/
+todayKw     = /(?i:today)\b/
+tomorrowKw  = /(?i:tomorrow)\b/
+yesterdayKw = /(?i:yesterday)\b/
+noonKw      = /(?i:noon)\b/
+midnightKw  = /(?i:midnight)\b/
+keywordItem = nowKw | todayKw | tomorrowKw | yesterdayKw | noonKw | midnightKw
+
+# ─── One item (ordered: most-specific / longest-prefix first) ───────
+# epoch → calendar (incl. ISO datetime) → time-of-day → relative
+# (kind+unit, then count+unit) → day-of-week → bare keywords.
+# `relKindItem` precedes `dowItem` so `next week` is a relative item,
+# not a (failed) weekday; `dowItem` precedes nothing that would steal
+# `next monday`. Keywords last — they're the shortest, most ambiguous.
+item =
+    tzAssign
+  | epochItem
+  | calendarDate
+  | timeOfDay
+  | relKindItem
+  | relUnitItem
+  | dowItem
+  | keywordItem
+
+# ─── Item sequence ──────────────────────────────────────────────────
+items = (item, ws)+
+
+# ─── Top level ──────────────────────────────────────────────────────
+dateExpr = ws? + items + ws?

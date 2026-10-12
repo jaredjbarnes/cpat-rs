@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use cpat_core::{Cursor, NodeKind, PatternError, Regex, Tokenizable};
+use cpat_core::{Cursor, NodeKind, Pattern, PatternError, Regex, Tokenizable};
 
 #[test]
 fn empty_source_is_rejected() {
@@ -148,4 +148,30 @@ fn tokens_can_be_set() {
     let mut regex = Regex::new("a", "A").unwrap();
     regex.set_tokens(vec!["A".into()]);
     assert_eq!(regex.tokens(), ["A"]);
+}
+
+#[test]
+fn word_boundaries_stay_ascii_in_the_backtracking_engine() {
+    // jq's grammar writes keywords as `(?!(?:if|…)\b)[a-zA-Z_]…`. A
+    // lookahead needs `fancy-regex`, which refused the linear engine's
+    // spelling of an ASCII `\b`, so the grammar didn't build. Expected
+    // values are JS's (`u` flag): `é` is not a word character there.
+    let identifier = Regex::new("identifier", r"(?!if\b)[a-z]+").unwrap();
+    assert!(identifier.is_fancy());
+    let mut identifier: Pattern = identifier.into();
+    assert!(identifier.test("iffy"));
+    assert!(!identifier.test("if"));
+
+    let mut boundary = re("boundary", r"(?=a)a\b");
+    assert_eq!(parse_value(&mut boundary, "aé"), Some("a".to_string()));
+    let mut no_boundary = re("no-boundary", r"(?=a)a\B");
+    assert_eq!(parse_value(&mut no_boundary, "ab"), Some("a".to_string()));
+    assert_eq!(parse_value(&mut no_boundary, "aé"), None);
+}
+
+/// The value `pattern` matches at the start of `text`, if any.
+fn parse_value(pattern: &mut Pattern, text: &str) -> Option<String> {
+    let mut cursor = Cursor::new(text);
+    let node = pattern.parse(&mut cursor)?;
+    Some(text[cursor.node_start(node)..cursor.node_end(node)].to_string())
 }

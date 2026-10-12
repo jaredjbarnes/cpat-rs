@@ -1,0 +1,87 @@
+# POSIX Extended Regular Expressions.
+#
+# Modern unescaped convention — `(`, `)` group; `|` alternates; `+`,
+# `?` quantify; `{n,m}` bounded. Backslash now ESCAPES specials to
+# literal meaning (`\(` literal paren, `\|` literal pipe, `\+`
+# literal plus). Backreferences `\1`-`\9` are POSIX-2008+.
+#
+# GNU extensions accepted: `\b`/`\B`, `\<`/`\>`, `\d`/`\w`/`\s` etc.
+# POSIX character classes `[[:alpha:]]` work the same as in BRE.
+
+ere = ereAlternation
+
+ereAlternation = ereSequence + (ereAltTail)*
+ereAltTail     = ereAltSep + ereSequence
+ereAltSep      = "|"
+
+ereSequence = (ereAtomQ)*
+
+ereAtomQ = ereAtom + ereQuantSuffix?
+
+ereAtom = ereGroup
+        | ereCharClass
+        | ereAnchorStart
+        | ereAnchorEnd
+        | ereDot
+        | ereEscapedAtom
+        | ereLiteralChar
+
+ereGroup      = ereGroupOpen + ereAlternation + ereGroupClose
+ereGroupOpen  = "("
+ereGroupClose = ")"
+
+# Same char-class regex shape as BRE. POSIX-class alternative listed
+# first so `[[:alpha:]]` matches through both `]`s.
+ereCharClass = /\[\^?\]?(?:\[:[a-z]+:\]|\\.|[^\]])*\]/
+
+ereAnchorStart = "^"
+ereAnchorEnd   = "$"
+ereDot         = "."
+
+ereEscapedAtom = ereBackref
+               | ereWordBoundaryAlias
+               | ereWordBoundary
+               | ereNonWordBoundary
+               | ereClassDigit
+               | ereClassWord
+               | ereClassSpace
+               | ereClassNotDigit
+               | ereClassNotWord
+               | ereClassNotSpace
+               | ereControlEscape
+               | ereHexEscape
+               | ereUnicodeEscape
+               | ereLiteralEscape
+
+ereBackref           = /\\[1-9]/
+ereWordBoundaryAlias = /\\[<>]/
+ereWordBoundary      = /\\b/
+ereNonWordBoundary   = /\\B/
+ereClassDigit        = /\\d/
+ereClassNotDigit     = /\\D/
+ereClassWord         = /\\w/
+ereClassNotWord      = /\\W/
+ereClassSpace        = /\\s/
+ereClassNotSpace     = /\\S/
+ereControlEscape     = /\\[ntrfv0]/
+ereHexEscape         = /\\x[0-9a-fA-F][0-9a-fA-F]/
+ereUnicodeEscape     = /\\u[0-9a-fA-F]{4}/
+# Catch-all `\X` for any X not already handled. Used by the model to
+# escape ERE metacharacters back to literals (e.g. `\(` to get a
+# literal paren).
+ereLiteralEscape = /\\[^bBdDwWsSntrfv0xu1-9]/
+
+# Literal char: anything that isn't an unescaped metacharacter or `\`.
+ereLiteralChar = /[^.\\\[\^$()|+*?{}]/
+
+# Order matters: try `{n,m}` first (longer match) before the bare
+# operators.
+ereQuantSuffix = ereBraceQuant
+               | ereStarQ
+               | erePlusQ
+               | ereQuestionQ
+
+ereStarQ      = /\*\??/
+erePlusQ      = /\+\??/
+ereQuestionQ  = /\?\??/
+ereBraceQuant = /\{[0-9]+(?:,[0-9]*)?\}\??/

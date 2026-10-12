@@ -1,7 +1,7 @@
 use crate::cursor::Cursor;
 use crate::pattern_error::PatternError;
 use crate::pattern_id::Meta;
-use crate::regex_translate::{ends_with_anchor, js_to_rust};
+use crate::regex_translate::{Dialect, ends_with_anchor, js_to_rust};
 use crate::tree::{NodeId, NodeKind};
 
 /// Matches a regular expression at the cursor.
@@ -31,13 +31,13 @@ impl Matcher {
         // Anchored at the start of the slice it runs on. The slice starts at
         // the cursor, so `\b` and lookbehind see the cursor as the start of
         // the input, exactly as the JS library's substring does.
-        let anchored = format!("^(?:{})", js_to_rust(source));
+        let anchored = |dialect| format!("^(?:{})", js_to_rust(source, dialect));
 
-        if let Ok(fast) = regex::Regex::new(&anchored) {
+        if let Ok(fast) = regex::Regex::new(&anchored(Dialect::Fast)) {
             return Ok(Matcher::Fast(fast));
         }
 
-        fancy_regex::Regex::new(&anchored)
+        fancy_regex::Regex::new(&anchored(Dialect::Fancy))
             .map(Matcher::Fancy)
             .map_err(|error| PatternError::InvalidRegex {
                 name: name.to_string(),

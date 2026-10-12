@@ -1,0 +1,63 @@
+# Glob pattern grammar — the structured form of a shell glob, including
+# extended globbing (`shopt -s extglob`). The Glob matcher parses a
+# pattern with this grammar and walks the resulting AST into a RegExp.
+#
+# Only patterns that contain an extglob opener route through here; plain
+# `*` / `?` / `[…]` globs keep their original fast string scan. So this
+# grammar always parses at least one extglob group, but it also has to
+# understand every ordinary glob metachar that can sit alongside one.
+#
+# The five extglob operators each take a `|`-separated list and may nest:
+#   ?(list) *(list) +(list) @(list) !(list)
+# Nesting is handled by ordinary grammar recursion (`itemIn` → `extGroup`)
+# rather than a Block delimiter — a raw depth-scan would miscount escaped
+# parens, whereas the `escaped` rule (tried before any literal) consumes
+# `\(` / `\)` / `\|` as literals so they never affect group structure.
+
+# ─── Leaf metacharacters ────────────────────────────────────────────
+# `escaped` is first in every item list so `\X` is always a literal.
+escaped     = /\\./
+doubleStar  = "**"
+star        = "*"
+question    = "?"
+
+# Character class `[…]` / `[!…]` as one escape-aware regex: a leading `]`
+# (or `!]`) is part of the class (`[]]`, `[!]]`), `\]` stays inside, and
+# the class ends at the first unescaped `]`.
+charClass   = /\[!?\]?(?:\\.|[^\]])*\]/
+
+# `extOpen` is a negative-lookahead sentinel (operator char glued to `(`):
+# a literal run stops before it so the operator starts a group instead.
+extOpen     = /[?*+@!]\(/
+extOp       = /[?*+@!]/
+open        = "("
+close       = ")"
+
+# ─── Literal runs ───────────────────────────────────────────────────
+# A literal char is anything not handled above. Two variants: top-level
+# treats `(` `)` `|` as ordinary chars; inside a group `(`/`)` bound
+# (nested) groups and `|` divides alternatives, so all three are excluded
+# there. Every char is guarded by `!extOpen` so a run never swallows the
+# operator char of a following extglob group.
+litTopChar  = /[^*?\[\\]/
+litInChar   = /[^*?\[\\|()]/
+litTopUnit  = !extOpen + litTopChar
+litInUnit   = !extOpen + litInChar
+litTopRun   = (litTopUnit)+
+litInRun    = (litInUnit)+
+
+# ─── Items ──────────────────────────────────────────────────────────
+# extGroup is tried first so an `op(` commits to a group before the
+# operator char is read as a literal.
+itemTop = extGroup | escaped | charClass | doubleStar | star | question | litTopRun
+itemIn  = extGroup | escaped | charClass | doubleStar | star | question | litInRun
+
+# ─── Extglob group ──────────────────────────────────────────────────
+# `extGroup` recurses through `itemIn`, so nested groups Just Work without
+# a delimiter scan. An empty alternative (`@(a|)`) is allowed.
+extAlt   = (itemIn)*
+extAlts  = (extAlt, "|")+
+extGroup = extOp + open + extAlts + close
+
+# ─── Top level ──────────────────────────────────────────────────────
+globPattern = (itemTop)+

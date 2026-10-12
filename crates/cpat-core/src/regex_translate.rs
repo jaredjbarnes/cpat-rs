@@ -5,13 +5,14 @@
 /// differences would silently change what matches:
 ///
 /// - `\d`, `\w`, `\b` are ASCII in JS but Unicode in Rust → spelled out in ASCII.
+///   `\b` and `\B` are spelled per engine (`Dialect`).
 /// - Inside a class, JS treats `[`, `&`, `~` as literals; Rust treats `[` as a
 ///   nested class and `&&` / `~~` as set operators → escaped.
 /// - JS `[^]` (anything) and `[]` (nothing) have no Rust spelling → rewritten.
 /// - `\b` inside a class is a backspace in JS → `\x08`.
 /// - `\0` is NUL in JS; Rust has no octal escapes → `\x00`.
 /// - `\/` is how `.cpat` escapes its delimiter → `/`.
-pub(crate) fn js_to_rust(source: &str) -> String {
+pub(crate) fn js_to_rust(source: &str, dialect: Dialect) -> String {
     let mut out = String::with_capacity(source.len() + 8);
     let mut chars = source.chars().peekable();
     let mut in_class = false;
@@ -23,7 +24,7 @@ pub(crate) fn js_to_rust(source: &str) -> String {
                     out.push('\\');
                     break;
                 };
-                out.push_str(&translate_escape(escaped, in_class));
+                out.push_str(&translate_escape(escaped, in_class, dialect));
             }
             '[' if !in_class => {
                 if chars.peek() == Some(&'^') {
@@ -58,10 +59,35 @@ pub(crate) fn js_to_rust(source: &str) -> String {
     out
 }
 
-fn translate_escape(escaped: char, in_class: bool) -> String {
-    const DIGIT: &str = "0-9";
-    const WORD: &str = "0-9A-Za-z_";
+/// Which engine the translation is for. They differ only in how an ASCII
+/// word boundary is written: `regex` switches Unicode off for it
+/// (`(?-u:\b)`), which `fancy-regex` refuses ("Changing Unicode mode
+/// inline is not supported"), so for it the boundary is spelled with
+/// lookaround over the ASCII word class, which is what JS's `\b` means.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Dialect {
+    Fast,
+    Fancy,
+}
 
+const DIGIT: &str = "0-9";
+const WORD: &str = "0-9A-Za-z_";
+
+/// `\b` (`boundary`) or `\B` for `dialect`.
+fn word_boundary(boundary: bool, dialect: Dialect) -> String {
+    match (dialect, boundary) {
+        (Dialect::Fast, true) => "(?-u:\\b)".to_string(),
+        (Dialect::Fast, false) => "(?-u:\\B)".to_string(),
+        (Dialect::Fancy, true) => {
+            format!("(?:(?<=[{WORD}])(?![{WORD}])|(?<![{WORD}])(?=[{WORD}]))")
+        }
+        (Dialect::Fancy, false) => {
+            format!("(?:(?<=[{WORD}])(?=[{WORD}])|(?<![{WORD}])(?![{WORD}]))")
+        }
+    }
+}
+
+fn translate_escape(escaped: char, in_class: bool, dialect: Dialect) -> String {
     match (escaped, in_class) {
         ('d', false) => format!("[{DIGIT}]"),
         ('d', true) => DIGIT.to_string(),
@@ -70,8 +96,8 @@ fn translate_escape(escaped: char, in_class: bool) -> String {
         // Negated classes nest inside an enclosing class in Rust syntax.
         ('D', _) => format!("[^{DIGIT}]"),
         ('W', _) => format!("[^{WORD}]"),
-        ('b', false) => "(?-u:\\b)".to_string(),
-        ('B', false) => "(?-u:\\B)".to_string(),
+        ('b', false) => word_boundary(true, dialect),
+        ('B', false) => word_boundary(false, dialect),
         ('b', true) => "\\x08".to_string(),
         ('0', _) => "\\x00".to_string(),
         ('/', _) => "/".to_string(),
@@ -91,6 +117,19 @@ pub(crate) fn ends_with_anchor(source: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn js_to_rust(source: &str) -> String {
+        super::js_to_rust(source, Dialect::Fast)
+    }
+
+    #[test]
+    fn spells_ascii_word_boundaries_with_lookaround_for_the_fancy_engine() {
+        assert_eq!(
+            super::js_to_rust(r"\bx\B", Dialect::Fancy),
+            "(?:(?<=[0-9A-Za-z_])(?![0-9A-Za-z_])|(?<![0-9A-Za-z_])(?=[0-9A-Za-z_]))x\
+             (?:(?<=[0-9A-Za-z_])(?=[0-9A-Za-z_])|(?<![0-9A-Za-z_])(?![0-9A-Za-z_]))"
+        );
+    }
 
     #[test]
     fn spells_ascii_classes_out() {

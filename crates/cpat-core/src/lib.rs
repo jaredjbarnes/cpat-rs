@@ -25,6 +25,7 @@ mod cursor;
 mod equality;
 mod error_message;
 mod exec;
+mod grammar;
 mod graphemes;
 mod halt;
 mod history;
@@ -50,6 +51,7 @@ pub use ancestors::Frame;
 pub use cursor::Cursor;
 pub use error_message::generate_error_message;
 pub use exec::ParseResult;
+pub use grammar::{Grammar, GrammarError, GrammarOptions, Patterns, cpat_grammar};
 pub use halt::{DEFAULT_MAX_DEPTH, Limits, TooDeep};
 pub use history::HistoryRecord;
 pub use intellisense::{

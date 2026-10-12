@@ -1,0 +1,412 @@
+# Whitespace/trivia between tokens — also consumes JavaScript-style comments
+# (`// line` and `/* block */`), so comments are legal anywhere whitespace is.
+# `ws` includes newlines; `lws` is same-line trivia (used where a newline is
+# significant, e.g. after `return`).
+ws = /(?:\s|\/\/[^\n]*|\/\*[\s\S]*?\*\/)*/
+lws = /(?:[ \t]|\/\/[^\n]*|\/\*[\s\S]*?\*\/)*/
+name = /(?!(while|for|if|else|else if|return|function|break|continue|this|class|constructor|private|new|var|const|let|try|catch|finally|throw|import|export|await|async|typeof)(?![a-zA-Z0-9_$]))[a-zA-Z_$][a-zA-Z0-9_$]*/
+
+# Keywords. Each carries a trailing word-boundary (`(?![A-Za-z0-9_$])`) so it
+# only matches as a WHOLE word — otherwise a keyword token would eat the prefix
+# of an identifier (`new` in `newVal`, `this` in `thisThing`, `function` in
+# `functionName`), mis-parsing it. (The `name` rule has the mirror guard for its
+# own keyword exclusion.)
+if = /if(?![A-Za-z0-9_$])/
+else = /else(?![A-Za-z0-9_$])/
+elseIf = /else if(?![A-Za-z0-9_$])/
+while = /while(?![A-Za-z0-9_$])/
+for = /for(?![A-Za-z0-9_$])/
+const = /const(?![A-Za-z0-9_$])/
+let = /let(?![A-Za-z0-9_$])/
+func = /function(?![A-Za-z0-9_$])/
+return = /return(?![A-Za-z0-9_$])/
+break = /break(?![A-Za-z0-9_$])/
+continue = /continue(?![A-Za-z0-9_$])/
+this = /this(?![A-Za-z0-9_$])/
+new = /new(?![A-Za-z0-9_$])/
+typeof = /typeof(?![A-Za-z0-9_$])/
+try = /try(?![A-Za-z0-9_$])/
+catch = /catch(?![A-Za-z0-9_$])/
+finally = /finally(?![A-Za-z0-9_$])/
+throw = /throw(?![A-Za-z0-9_$])/
+# Module system. `import`/`export` are RESERVED (they carry the same
+# word-boundary guard as every other keyword AND appear in `name`'s exclusion
+# list above, so `importedValue` is still an identifier while a bare `import` is
+# not). `from`/`as` stay CONTEXTUAL — exactly as in JS, they remain legal
+# identifiers and only read as keywords in the import positions below.
+import = /import(?![A-Za-z0-9_$])/
+export = /export(?![A-Za-z0-9_$])/
+from = /from(?![A-Za-z0-9_$])/
+as = /as(?![A-Za-z0-9_$])/
+
+# Syntax Chars
+openBracket = "{"
+closeBracket = "}"
+openSqBracket = "[" 
+closeSqBracket = "]"
+openParen = "("
+closeParen = ")"
+colon = ":"
+semiColon = ";"
+comma = /\s*,\s*/
+dot = "."
+ellipsis = "..."
+# Namespace-import wildcard (`import * as ns from …`). A separate token from the
+# `mul` operator so the import rules never depend on arithmetic precedence.
+star = "*"
+
+# Operators 
+gt = ">"
+lt = "<"
+gte = ">="
+lte = "<="
+# The arithmetic operators must NOT match when followed by `=`, or `out += x`
+# parses as `out + (= x)` and stalls on the `=`. `additiveExpr` is tried before
+# `assignmentExpr` in the `expr` alternation, so without this lookahead EVERY
+# compound assignment (`+=`, `-=`, `*=`, `/=`) is a syntax error — the tokens were
+# declared and reachable, but the bare operator always won the race. Same class of
+# fix as `===` vs `==`.
+add = /\+(?!=)/
+sub = /-(?!=)/
+mul = /\*(?!=)/
+div = /\/(?!=)/
+exp = "**"
+mod = "%"
+# The 3-char forms MUST precede the 2-char ones in `equalityOperators` below, or
+# `==` matches the first two characters of `===` and the parser stalls on the
+# leftover `=` — which is exactly the error `1 === 1` used to produce.
+seq = "==="
+sne = "!=="
+eq = "=="
+ne = "!="
+not = "!"
+assign = "="
+incr = "++"
+decr = "--"
+incrAssign = "+="
+decrAssign = "-="
+mulAssign = "*="
+divAssign = "/="
+and = "&&"
+or = "||"
+qm = "?"
+
+assignmentOperators = assign | incrAssign | decrAssign | mulAssign | divAssign
+
+# Types
+
+# Number
+number = /(?:Infinity|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)/
+positive = add
+negative = sub
+sign = positive | negative
+
+# String
+doubleQuoteStringLiteral = /"(?:\\.|[^"\\])*"/
+singleQuoteStringLiteral = /'(?:\\.|[^'\\])*'/
+# Template literal — a backtick string with `${ expr }` interpolation, modeled
+# on jq's interpolated string. `templateChunk` is a literal run (an escape
+# `\X`, a `$` NOT opening `${`, or any char that isn't a backtick/backslash),
+# and `templateInterpolation` recurses into `expr` between `${` and `}`. The
+# self-reference sits in the MIDDLE (never at the start/end), so the Expression
+# classifier treats the whole literal as an atom — same shape as a group.
+templateChunk = /(?:\\[\s\S]|\$(?!\{)|[^`$\\])+/
+templateInterpStart = /\$\{/
+templateInterpolation = templateInterpStart + ws? + expr + ws? + closeBracket
+templatePart = templateInterpolation | templateChunk
+templateParts = (templatePart)+
+templateLiteral = "`" + templateParts? + "`"
+string = doubleQuoteStringLiteral | singleQuoteStringLiteral | templateLiteral
+
+# Regex literal `/pattern/flags`. Lives in `value` (an ATOM), so cpat's
+# Expression classifier only tries it where an operand is expected — a `/` in
+# operator position stays division (`a / b`). The `(?![*/])` guard after the
+# opening slash means `//…` (line comment) and `/*…` (block comment) are NEVER
+# read as a regex (they're consumed by `ws`), and empty `//` isn't a regex. The
+# body is one-or-more of: an escape `\X`, a char class `[...]` (so a `/` inside
+# `[...]` doesn't close the literal), or any char that isn't `/`, `\`, or a
+# newline. Flags are the JS-expressible set; `buildSayaRegExp` validates them.
+regexLiteral = /\/(?![*\/])(?:\\[\s\S]|\[(?:\\[\s\S]|[^\]\\\n])*\]|[^\/\\\n])+\/[gimsuy]*/
+
+# Boolean (word-boundary so `trueFlag`/`falsey` are identifiers, not literals)
+true = /true(?![A-Za-z0-9_$])/
+false = /false(?![A-Za-z0-9_$])/
+boolean = true | false
+
+# Null (word-boundary so `nullable`/`nullCheck` are identifiers, not the literal)
+null = /null(?![A-Za-z0-9_$])/
+
+# Object Literal
+propertyName = name
+# A key may be a bare identifier OR a string literal (`{ "a-b": 1 }`). Both a
+# `propertyName` and a string-literal node reduce to a SayaString whose `.value`
+# is the key, so the `property` visitor handles either with no change.
+propertyKey = propertyName | string
+# A property is either `key: value` (propertyFull) or ES2015 shorthand — a bare
+# identifier `{ a }` meaning `{ a: a }` (propertyShorthand; identifier-only, so
+# no string/quoted shorthand). propertyFull is tried first (it needs the colon),
+# so a bare name falls through to shorthand.
+propertyFull = propertyKey + ws? + colon + ws? + expr
+propertyShorthand = name
+# Object spread `{ ...obj }` — merges the spread source's own properties. Tried
+# first (it opens with `...`); later keys win over spread ones (visitor order).
+objectSpread = ellipsis + ws? + expr
+property = objectSpread | propertyFull | propertyShorthand
+properties = (property, comma trim)+
+objectLiteral = openBracket + ws? + properties? + ws? + comma? + ws? + closeBracket
+
+# Array Literal
+# Array spread `[ ...arr ]` — splices the spread source's elements in place.
+arraySpread = ellipsis + ws? + expr
+arrayLiteralItem = arraySpread | expr
+arrayLiteralItems = (arrayLiteralItem, comma trim)+
+# Committed at `[` (see groupExpr's note): nothing else in `expr` can start
+# with a bare `[` — propertyAccess's bracket comes AFTER a value. Without the
+# cut, `[[[[1` was the same exponential re-entry as the paren bomb
+# (~x4 per character; 12 chars = 14s of parse).
+arrayLiteral = openSqBracket ~/ ws? + arrayLiteralItems? + ws? + comma? + ws? + closeSqBracket
+
+# function
+paramName = name
+paramWithDefaultValue = paramName + ws? + assign + ws? + expr
+param = paramWithDefaultValue | paramName
+params = (param, comma)+
+functionSignature = openParen + ws? + params? + ws? + comma? + ws? + closeParen
+functionName = name
+function = func + ws? + functionName? + ws? + functionSignature + ws? + block
+
+# Value
+variableIdentifier = name
+memberName = name
+memberAccess = value + ws? + dot + ws? + memberName
+propertyAccessName = string | number
+propertyAccess = value + ws? + openSqBracket + ws? + expr + ws? + closeSqBracket
+args = (expr, comma)+
+invocation = value + ws? + openParen + ws? + args? + ws? + comma? + ws? + closeParen?
+
+value =   invocation |
+        memberAccess |
+      propertyAccess |
+              number |
+              string |
+        regexLiteral |
+             boolean |
+                null |
+        arrayLiteral |
+       objectLiteral |
+       arrowFunction |
+            function |
+                this |
+           groupExpr |
+  variableIdentifier
+
+# Arrow functions: `(a, b) => expr`, `(a, b) => { … }`, and the bare-param
+# `x => x * 2`.
+#
+# The node is shaped like a `function` MINUS its name — `[params, body]` — so the
+# existing `_invokeFunction` drives it unchanged. A concise body needs no implicit
+# `return` either: `_invokeFunction` returns whatever processing the last child
+# yields, and for an `expr` that is simply its value.
+#
+# `arrowBody` tries `block` before `expr` so `() => { … }` is a BLOCK, not an
+# object literal — matching JS, where an object body needs `() => ({ … })`.
+arrow = "=>"
+arrowParams = functionSignature | paramName
+arrowBody = block | expr
+arrowFunction = arrowParams + ws? + arrow + ws? + arrowBody
+
+# Expression
+additiveOperators = add | sub
+additiveExpr = expr + ws? + additiveOperators + ws? + expr
+
+multiplicativeOperators = mul | div | mod
+multiplicativeExpr = expr + ws? + multiplicativeOperators + ws? + expr
+
+expExpr = expr + ws? + exp + ws? + expr
+
+relationalOperators = gte | lte | gt | lt 
+relationalExpr = expr + ws? + relationalOperators + ws? + expr
+
+equalityOperators = seq | sne | eq | ne 
+equalityExpr = expr + ws? + equalityOperators + ws? +  expr
+
+logicalAndExpr = expr + ws? + and + ws? + expr
+logicalOrExpr = expr + ws? + or + ws? + expr
+
+assignmentExpr = expr + ws? + assignmentOperators + ws? + expr
+# The `~/` commits the expression choice to the group once `(` is consumed.
+# Safe because `arrowFunction` is listed BEFORE groupExpr in `expr` — an
+# arrow's `(params) =>` has already had its chance by the time we get here,
+# and no LATER alternative can start with `(`. Without the cut, a paren run
+# like `((((1` re-entered `expr` at every depth through multiple paths —
+# measured ~x5 per character (12 chars = 79s of parse; docs/cpu-runaway-audit.md K1).
+groupExpr = openParen ~/ ws? + expr + ws? + closeParen
+
+postfixOperators = incr | decr
+postfixExpr = expr + ws? + postfixOperators
+unaryOperators = incr | decr | not | add | sub
+unaryExpr = unaryOperators + ws? + expr
+# `typeof x`. Kept out of `unaryOperators` on purpose: that rule allows OPTIONAL
+# whitespace before the operand, so `typeof` there would make `typeofx` parse as
+# `typeof x`. A word operator must be followed by real separation, hence `ws`
+# (required) rather than `ws?` — a parenthesised operand still works because
+# `typeof(x)` has the group as its expr... which needs no space, so the group form
+# is spelled with the space: `typeof (x)`.
+typeofExpr = typeof + ws + expr
+instantiation = new + ws? + expr
+
+ternaryExpr = expr + ws? + qm + ws? + expr + ws? + colon + ws? + expr
+
+expr =      postfixExpr |
+             typeofExpr |
+              unaryExpr | 
+          expExpr right |
+     multiplicativeExpr | 
+           additiveExpr | 
+         relationalExpr | 
+           equalityExpr | 
+         logicalAndExpr | 
+          logicalOrExpr | 
+            ternaryExpr |
+         assignmentExpr |
+          instantiation |
+                  value
+
+# Statements
+functionStatement = function
+variableName = name
+# A declaration opens with `const` or `let` — both block-scoped (bound in the
+# current frame). `var` is intentionally NOT supported (it stays reserved via
+# the `name` exclusion, so `var x` fails loudly instead of mis-parsing). `const`
+# is not enforced immutable. The keyword collapses out in cleanAst.
+declarator = const | let
+variableDeclarationStatement = declarator + ws? + variableName
+variableAssignmentStatement = declarator + ws? + variableName + ws? + assign + ws? + expr
+returnStatement = return + lws? + expr?
+breakStatement = break
+continueStatement = continue
+
+# ── Module system ────────────────────────────────────────────────────────────
+# `import { a, b as c } from "./util.saya"` and `import * as util from "./util.saya"`.
+#
+# The specifier is a PLAIN quoted string — deliberately NOT `string`, which
+# would also admit a template literal. Specifiers must be statically readable
+# from the source (the module loader resolves them before any code runs), so an
+# interpolated `` `./${dir}.saya` `` is a parse error rather than a silent
+# runtime hole. This is also what keeps the private file map non-computable.
+moduleSpecifier = doubleQuoteStringLiteral | singleQuoteStringLiteral
+
+# `importAliased` is listed FIRST in `importBinding` so the LONGER match wins:
+# cpat takes the first alternative that succeeds, so a bare `importName` would
+# otherwise match `a` in `a as b` and leave `as b` dangling.
+importName = name
+importAlias = name
+importAliased = importName + ws? + as + ws? + importAlias
+importBinding = importAliased | importName
+importBindings = (importBinding, comma)+
+namedImports = openBracket + ws? + importBindings? + ws? + closeBracket
+namespaceImport = star + ws? + as + ws? + importAlias
+importClause = namedImports | namespaceImport
+importStatement = import + ws? + importClause + ws? + from + ws? + moduleSpecifier
+
+# `export function f() {}` / `export const x = 1` / `export let y`.
+#
+# A MODIFIER on an existing declaration rather than a new declaration form, so
+# the underlying statement rules — and their visitors — are untouched: the
+# `exportStatement` visitor runs its child declaration normally and then records
+# the declared name on the module frame's export set.
+exportable = functionStatement | variableAssignmentStatement | variableDeclarationStatement
+exportStatement = export + ws? + exportable
+
+# Branching
+condition = groupExpr
+
+# A control-flow BODY is either a `{ … }` block or a single unbraced statement, so
+# `if (!city) return { … };` parses — the shape a JS author writes without thinking,
+# and previously a bare "unexpected \"r\"" that cost a real agent two iterations.
+#
+# `loneStatement` wraps exactly ONE `statement`, never a list: `statements` is
+# `(statement)+` and greedy, so using it here would let `if (x) a; b;` swallow `b`
+# into the branch.
+loneStatement = statement
+body = block | loneStatement
+
+elseBranch = else + ws? + body
+elseIfBranch = elseIf + ws? + condition + ws? + body
+elseIfBranches = (elseIfBranch, ws)+
+ifStatement = if + ws? + condition + ws? + body + ws? + elseIfBranches? + ws? + elseBranch? 
+
+# Loops
+whileHeader = condition
+whileStatement = while + ws? + whileHeader + ws? + body
+forInit = variableAssignmentStatement | expr
+forTest = expr
+forUpdate = expr
+forHeader = openParen + ws? + forInit? + ws? + semiColon + ws? + forTest? + semiColon + ws? + forUpdate? + ws? + closeParen 
+forStatement = for + ws? + forHeader + ws? + body
+
+# `for (const x of iterable)` and `for (const k in object)`.
+#
+# `of` and `in` stay CONTEXTUAL — they are not added to `name`'s exclusion list,
+# so both remain legal identifiers and only read as keywords in these headers
+# (JS does the same for `of`). The iterable/object is an `expr`, so
+# `for (const x of items.filter(f))` works.
+of = /of(?![A-Za-z0-9_$])/
+in = /in(?![A-Za-z0-9_$])/
+forEachTarget = declarator + ws? + variableName
+forOfHeader = openParen + ws? + forEachTarget + ws? + of + ws? + expr + ws? + closeParen
+forOfStatement = for + ws? + forOfHeader + ws? + body
+forInHeader = openParen + ws? + forEachTarget + ws? + in + ws? + expr + ws? + closeParen
+forInStatement = for + ws? + forInHeader + ws? + body
+
+# Error handling
+throwStatement = throw + ws? + expr
+catchBinding = openParen + ws? + name + ws? + closeParen
+catchClause = catch + ws? + catchBinding? + ws? + block
+finallyClause = finally + ws? + block
+tryStatement = try + ws? + block + ws? + catchClause? + ws? + finallyClause?
+
+# Classes (word-boundary so `className`/`classify`/`privateKey` are identifiers)
+private = /private(?![A-Za-z0-9_$])/
+class = /class(?![A-Za-z0-9_$])/
+constructor = /constructor(?![A-Za-z0-9_$])/
+accessModifiers = private  
+className = name
+classPropertyName = name
+classProperty = accessModifiers? + ws? + name + ws? + semiColon
+classMethodName = name
+classMethodSignature = openParen + ws? + params? + ws? + comma? + ws? + closeParen
+classMethod = accessModifiers? + ws? + classMethodName + ws? + classMethodSignature + ws? + block
+constructorMethod = constructor + ws? + classMethodSignature + ws? + block
+classBodyItems = classProperty | classMethod | constructorMethod
+classBody = (classBodyItems, ws)+
+classStatement = class + ws? + className + ws? + openBracket + ws? + classBody? + ws? + closeBracket
+
+# Statement
+block = openBracket + ws? + statements? + ws? + closeBracket
+allStatements = importStatement |
+                           exportStatement |
+                  variableAssignmentStatement |
+               variableDeclarationStatement |
+                            returnStatement |
+                                ifStatement |
+                             whileStatement |
+                             forOfStatement |
+                             forInStatement |
+                               forStatement |
+                                tryStatement |
+                              throwStatement |
+                          functionStatement |
+                             breakStatement |
+                          continueStatement |
+                                      block |
+                             classStatement |
+                                       expr
+
+# Leading `ws?` lets each statement — including the FIRST — absorb preceding
+# trivia (whitespace + `//`/`/* */` comments, which `ws` consumes) IN PLACE. So
+# a body that opens with blank lines or a comment banner parses without any
+# source rewriting — which keeps every node's offset aligned with the ORIGINAL
+# source, so the debugger's line mapping is correct (no `stripLeadingTrivia`).
+statement = ws? + allStatements + ws? + semiColon? + ws?
+statements = (statement)+

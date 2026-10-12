@@ -1,7 +1,7 @@
 //! Ports of v12 `Context.test.ts`, plus naming and lookup cases checked
 //! against v12 on the same inputs.
 //!
-//! Deferred: 'With Grammar' (the grammar milestone). 'isEqual…', 'find
+//! 'With Grammar' is in `tests/grammar.rs` (`context_with_grammar`). 'isEqual…', 'find
 //! locates…', 'standalone introspection…', 'introspection delegates…',
 //! 'getTokens delegates…' and 'getPatterns delegates…' are in
 //! `tests/introspect_reference.rs`.

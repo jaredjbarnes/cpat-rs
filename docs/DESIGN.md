@@ -32,6 +32,10 @@
 > milestone-8 queries, and JS `localeCompare` order) is implemented; see §17. It also makes the
 > leaf matches' tie rule treat a take-until's terminator as v12 does, parentless (§15). Its
 > fix round pins the error-end filter and the furthest-start drop with tests (§17).
+> Milestone 10 (the grammar core: the cpat grammar written by hand, `Grammar::parse_string` and
+> the builder for every rule, without imports, params or decorators) is implemented; see §8 and
+> §18. It also spells an ASCII `\b` for the backtracking regex engine (§6) and builds a context
+> found by its own name only when a lookup needs the pattern (§18).
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -120,7 +124,9 @@ work commits nothing. A cut reached at the end of input still fires.
 linear-time `regex` crate is used unless the source needs lookaround or backreferences. The
 pattern compiles as `^(?:src)` and matches on `&text[pos..]`, so `\b` and lookbehind treat the
 cursor as the start of input, the same as the JS substring. `regex_translate` rewrites JS-only
-syntax (ASCII `\d \w \b`, class escapes, `[^]`, `\0`, `\/`). A source that won't compile is a
+syntax (ASCII `\d \w \b`, class escapes, `[^]`, `\0`, `\/`). An ASCII `\b` is spelled per engine:
+`(?-u:\b)` for `regex`, lookaround over `[0-9A-Za-z_]` for `fancy-regex`, which refuses the
+inline flag *(milestone 10, §18)*. A source that won't compile is a
 build error naming the pattern.
 
 - **Rejected:** calling JS `RegExp` from wasm. It would make native and browser results differ
@@ -145,17 +151,21 @@ build error naming the pattern.
   builds a tree as deep as the input is long. A recursive walk aborted the process on such
   input (fix round 1 of milestone 4).
 
-## 8. The grammar *(next milestones)*
+## 8. The grammar *(milestone 10; imports, params and decorators next)*
 
-- The cpat grammar is written by hand with the Rust API. Later, as a test, cpat's own grammar
-  will be written as a `.cpat` file and built by the builder.
-- The builder walks the read-only tree and flattens nested `+`/`|` on the fly.
-- Synchronous core with an `ImportResolver` trait; JS fetches imports ahead of time.
-- Errors are values (`GrammarError`).
-- Anonymous names are counted per grammar.
-- **One `Choice` pattern** with modes `Ordered`, `LiteralSet` and `Pratt`, picked at build time
-  from the classified alternatives (references resolved one level, alias cycles detected).
-  There is no `Options`/`Expression` split and no greedy `<|>`.
+- The cpat grammar is written by hand with the Rust API (`grammar/cpat.rs`, `cpat_grammar()`).
+  As a test, cpat's own grammar is written as a `.cpat` file and built by the builder
+  (`tests/fixtures/cpat.cpat`, §18). *(Implemented.)*
+- The builder walks the read-only tree and flattens nested `+`/`|` on the fly. *(Implemented:
+  `syntax::flattened`.)*
+- Synchronous core with an `ImportResolver` trait; JS fetches imports ahead of time. *(Next.)*
+- Errors are values (`GrammarError`). *(Implemented, §18.)*
+- Anonymous names are counted per grammar. *(Implemented.)*
+- **One `Choice` pattern** with modes `Ordered`, `LiteralSet` and `Pratt`, picked from the
+  classified alternatives (references resolved one level, alias cycles detected by the builder).
+  There is no `Options`/`Expression` split and no greedy `<|>`. *(Milestone 10: the builder
+  leaves a choice with reference alternatives to classify at its first parse, as v12 does; see
+  §18 for why it can't decide earlier.)*
 - **When a choice classifies** *(decided in milestone 4)*. In `Choice::new`, unless an
   alternative (seen through `RightAssociated`) is a `Reference`; then at the choice's first
   parse, resolving the reference one level against the cursor's scopes, as a `Reference` would
@@ -196,7 +206,7 @@ build error naming the pattern.
   differing first `char`) but would put literals that share only a UTF-8 lead byte (`é`, `è`) in
   one bucket, to fail at the start anyway. The index is a sorted `Vec` searched by binary
   search, built once at classification.
-- Shadowed literals, unknown names and alias cycles are build errors.
+- Shadowed literals, unknown names and alias cycles are build errors. *(Implemented, §18.)*
 
 ## 9. Decorators *(next milestones)*
 
@@ -518,7 +528,7 @@ build error naming the pattern.
   intellisense milestone, which will also skip an atom already being expanded higher up (done
   in milestone 8, §16); the
   `LiteralSet` mode and its tests to M5 (done, §13); the grammar-file cut tests (`~/` in `.cpat`, the
-  shell-shaped blow-up test) to the grammar milestone.
+  shell-shaped blow-up test) to the grammar milestone (done, `tests/grammar_cut.rs`).
 
 ## 13. The choice's LiteralSet mode *(milestone 5)*
 
@@ -990,6 +1000,102 @@ build error naming the pattern.
   - Positions are bytes and options never start inside a character (above).
   - The milestone-8 deviations apply to the queries autocomplete asks (the repeat facade, a
     marked atom, unknown names, home binding).
+
+## 18. The grammar builder *(milestone 10)*
+
+- **Layout** (`src/grammar/`): `cpat.rs` (the hand-written grammar), `mod.rs` (`Grammar::
+  parse_string`, the syntax parse, the removed-`<|>` check), `builder.rs` (the walk over the
+  statements, the rule table, the record), `build.rs` (one pattern per syntax node, dispatched on
+  the closed `syntax::Syntax` enum), `repeat.rs`, `block.rs`, `checks.rs` (unknown names, alias
+  resolution, shadowed literals), `escapes.rs`, `json.rs` (`JSON.stringify` of a string),
+  `anonymous.rs`, `patterns.rs` (`Patterns`, the record), `error.rs` (`GrammarError`).
+- **The hand-written grammar matches v12's trees exactly.** Checked by running both on the 11
+  agent-harness grammars (436 KB of trees, byte offsets on both sides) and on 46 snippets that
+  use every construct and every syntax error path: identical trees and identical
+  `generate_error_message` text.
+- **The builder is v12's `_buildPatterns`, step for step**: rules in order; a name defined
+  earlier is copied in (a clone that keeps its id), a later one is a `Reference` noted as
+  pending; then unknown names, then aliases, then shadowed literals, each the first failure in
+  v12's order. Literal and regex parts in anonymous position are named by their content; `!p`,
+  `p?` are named `not-<inner>`, `optional-<inner>`; `(p)*` is `Optional(name, Repeat(
+  "inner-optional-<name>"))`; block delimiters are literals `open` and `close`; `~/` inserts
+  `Cut::default()`. Each `GrammarError` prints v12's message character for character, the
+  shadowed literal quoted with `JSON.stringify`, the removed `<|>` located by its outermost
+  node (v12's `Node.find` lets an ancestor that also matches win, so `a <|> b <|> c` is named
+  whole) with its column in UTF-16 units. A syntax error's message comes from a recording parse,
+  as in v12; it is run only after the ordinary parse failed, since both find the same leaf match.
+- **The record shares one table.** v12 wraps every rule in `Context(name, p, all other rules)`.
+  Here every context's scope holds one shared `Rc` of the definitions (`scope::Definitions`,
+  `Context::sharing`): the shell grammar has 345 rules, and a copy of every other rule per rule
+  would be 119 000 clones of whole rule trees. The shared table holds each rule's own definition
+  too; a context answers its own name before its table, so a lookup never reaches it. (The only
+  visible difference: `patterns_within_context` lists the context's own rule as well; v12
+  leaves it out.) As in v12, definitions are keyed by each pattern's own name, so a rule whose
+  pattern has another name (`x = "a"?` is named `optional-a`) can't be found by a reference to
+  `x`; see the known limitation below.
+- **A context found by its own name is built only when needed** (`scope::Found::master`). Every
+  lookup that hit a context's own name used to copy the context's whole child at once. Over a
+  grammar that names its entry rule from inside (the shell's `script`, 16 600 patterns), the
+  up-front reference check took 5.9 s for that copying alone (measured, release build); it now
+  makes the copy only for a target it walks for the first time (33 ms), and a parse makes it once
+  per reference instance, as before.
+- **Classification stays at first parse.** The builder could classify each choice with the
+  definitions it holds (`Choice::classify_with`), but which pattern a name means depends on the
+  context running: a rule's context answers its own name with itself (an atom), while every
+  other context finds the rule's definition (which may be an operator sequence). So `x = y |
+  "a"`, `y = x + "!"` classifies differently run from `x` and from `y`, in v12 and here; only
+  the parse-time scopes give v12's answer. The cost is §8's: each instance with reference
+  alternatives classifies on its first parse.
+- **Unreachable shapes.** A node the builder has no rule for (`UnbuildableNode`), an empty group
+  and a lone block delimiter are `GrammarError`s with v12's text, though the cpat grammar never
+  produces them where the builder looks; unit tests build them from hand-made nodes. An operator
+  node without its operand (v12's "… missing inner pattern" throws) is an `expect`: the grammar
+  makes every operator sequence with its operand.
+- **The self-host test** (`tests/grammar_fixtures.rs`): `fixtures/cpat.cpat` is cpat's grammar
+  in cpat; built by the builder, it parses cpat.cpat itself, the 11 harness grammars and seven
+  snippets covering the rest of the syntax to the same trees as `cpat_grammar()`, and refuses
+  the same bad inputs at the same place. Punctuation is written inline so its nodes are named
+  by their text, as v12 names them. The one name a grammar file can't give is the comma's: v12
+  names a regex `,`, and a rule name must be a word, so the file calls it `comma` and the test
+  maps it.
+- **The harness grammars** (`tests/fixtures/harness/`, copied at agent-harness bef209c) all build,
+  with v12's rule counts, and 44 inputs through their entry rules give the trees v12 gives
+  (`fixtures/harness_smoke.tsv`, written by v12). Building jq's grammar found a milestone-1 bug:
+  `fancy-regex` refuses the `(?-u:\b)` spelling of an ASCII word boundary, so a regex with a
+  lookahead and `\b` didn't build. The translation now has a dialect per engine, and for the
+  backtracking engine `\b`/`\B` are spelled with lookaround over `[0-9A-Za-z_]`, which is what
+  JS's `\b` means (`tests/regex.rs`).
+- **Checked against v12** with a TS runner over v12's `src` and a scratch Rust binary on the same
+  inputs: the hand-written grammar's trees and messages (above); the builder's errors on 41
+  grammars (identical except construction errors, below); every harness entry rule; and each
+  ported test's values (the greedy columns, anonymous node names, error patterns, rule order).
+  The cut tests' error counts are 6, 9, 12, … with the cut and at least doubling without it; v12
+  counts 5, 8, 11, … calls to `recordErrorAt`, and records the summary error through
+  `recordSummaryErrorAt`, which is the one more here (`errors()` lists both).
+- **Deviations from v12:**
+  - A repeat's divider and quantifier are its own children. v12 searches the repeat's whole
+    subtree (`node.find`), so a repeat whose item is itself a repeat took the item's divider and
+    quantifier: `x = (("a", ",")+, ";"){2}` built a `,`-divided one-or-more and refused
+    `a,a;a`. None of the harness grammars has such a repeat (checked). Pinned in
+    `tests/grammar.rs`.
+  - A pattern that can't be constructed (an empty literal, an anchored or invalid regex) is
+    `GrammarError::Pattern` with cpat-rs's own message, which names the pattern. v12 passes on
+    its constructors' text ("Value Cannot be empty.", "Invalid Arguments: …").
+  - Imports fail with v12's message for a grammar built without a resolver ("No import resolver
+    supplied."), the only case there is until imports arrive. `use params` and decorators are
+    refused (`GrammarError::Unsupported`) until their milestone, rather than ignored.
+  - A `\u` escape that is half of a surrogate pair with no partner decodes to U+FFFD: a Rust
+    string can't hold a lone surrogate. Two `\u` escapes that form a pair are one character, as
+    in v12.
+  - The unknown-name check of a hand-built reference is up front (§11), so v12's "a hand-built
+    Reference stays lazy" is `ParseResult::pattern_error` here.
+- **Known limitation, kept from v12:** a reference from an earlier rule to a rule whose pattern
+  is named otherwise (`y = x + "b"`, then `x = "a"?`) names nothing in scope: v12 throws
+  "Couldn't find 'x'" at first parse, and `exec` reports it up front here. Defined first, the
+  rule is copied in and works. Pinned in `tests/grammar.rs`.
+- **Not ported here:** imports, `with params`, `use params`, decorators and their tests
+  (`Grammar.test.ts`'s import, param and decorator tests), the async API, and the JS `patterns`
+  template helper. The wasm layer gets grammars in a later milestone.
 
 ## Behavior fixed relative to clarity-pattern-parser v11
 

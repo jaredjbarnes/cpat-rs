@@ -1,0 +1,179 @@
+# calc — arithmetic expression grammar, bash `$(( ))` parity.
+#
+# Precedence (loosest → tightest, matches bash arithmetic / C):
+#   comma   ,
+#   assign  = += -= *= /= %= &= ^= |= <<= >>=   (right-assoc)
+#   ternary ? :                                 (right-assoc)
+#   logOr   ||
+#   logAnd  &&
+#   bitOr   |
+#   bitXor  ^
+#   bitAnd  &
+#   eq      == !=
+#   comp    < <= > >=
+#   shift   << >>
+#   add     + -
+#   mul     * / %
+#   exp     **                                  (right-assoc)
+#   unary   ! ~ +x -x ++x --x x++ x--
+#   atom    NUMBER | IDENTIFIER | ( expr )
+#
+# DIVERGENCE FROM PRIOR calc: `^` was exponent. Now `^` is BITWISE XOR
+# and `**` is exponent — matches bash. Update any old tests accordingly.
+
+# ─── Whitespace ──────────────────────────────────────────────
+ws = /[ \t\n\r]+/
+
+# ─── Numbers ────────────────────────────────────────────────
+# Hex first (longest prefix), then octal (only when followed by 0-7
+# digits and NOT 8/9/decimal point — disambiguates `09` as decimal,
+# not malformed octal), then decimal.
+hexNumber = /0[xX][0-9a-fA-F]+/
+octalNumber = /0[0-7]+(?![0-9.])/
+decimalNumber = /(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?/
+number = hexNumber | octalNumber | decimalNumber
+
+# ─── Identifier (variable reference / assignment target) ────
+identifier = /[a-zA-Z_][a-zA-Z_0-9]*/
+varRef = identifier
+
+# ─── Operator literals ──────────────────────────────────────
+# Listed longest-first where they share a prefix so cpat's first-match
+# commits to the longer form (`<<=` before `<<` before `<=` before `<`).
+shlAssign = "<<="
+shrAssign = ">>="
+addAssign = "+="
+subAssign = "-="
+mulAssign = "*="
+divAssign = "/="
+modAssign = "%="
+bitAndAssign = "&="
+bitOrAssign  = "|="
+bitXorAssign = "^="
+expOp        = "**"
+shlOp        = "<<"
+shrOp        = ">>"
+logAndOp     = "&&"
+logOrOp      = "||"
+eqOp         = "=="
+neOp         = "!="
+leOp         = "<="
+geOp         = ">="
+incOp        = "++"
+decOp        = "--"
+
+# Single-char ops use negative-lookahead so they don't accidentally
+# eat the first char of a longer operator at the same position.
+# `1 && 2` would otherwise parse as `1 & (& 2)` because `&` matches
+# greedily before the alternation reaches `&&`. Same trick the shell
+# grammar uses for `arithBitAndOp = /&(?!&|=)/`.
+addOp     = /\+(?![+=])/
+subOp     = /-(?![-=])/
+mulOp     = /\*(?![*=])/
+divOp     = /\/(?!=)/
+modOp     = /%(?!=)/
+bitAndOp  = /&(?![&=])/
+bitOrOp   = /\|(?![|=])/
+bitXorOp  = /\^(?!=)/
+ltOp      = /<(?![<=])/
+gtOp      = />(?![>=])/
+notOp     = /!(?!=)/
+bitNotOp  = "~"
+assignOp  = /=(?!=)/
+
+question  = "?"
+colon     = ":"
+comma     = ","
+
+# ─── Operator groups ────────────────────────────────────────
+mulModOp  = mulOp | divOp | modOp
+addSubOp  = addOp | subOp
+shiftOp   = shlOp | shrOp
+compOp    = leOp | geOp | ltOp | gtOp
+equalityOp = eqOp | neOp
+
+compoundAssignOp =
+    shlAssign | shrAssign
+  | addAssign | subAssign | mulAssign | divAssign | modAssign
+  | bitAndAssign | bitOrAssign | bitXorAssign
+anyAssignOp = compoundAssignOp | assignOp
+
+# ─── Punctuation ─────────────────────────────────────────────
+openParen  = "("
+closeParen = ")"
+
+# ─── Group (parenthesized expression) ───────────────────────
+group = openParen + ws? + expr + ws? + closeParen
+
+# ─── Unary prefix ───────────────────────────────────────────
+# Each prefix binds the entire expr to its right; cpat's PEG ordered
+# alternation in `expr` resolves the precedence (these listed near
+# the top → tightest binding).
+preIncExpr   = incOp    + ws? + expr
+preDecExpr   = decOp    + ws? + expr
+unaryPlus    = addOp    + ws? + expr
+unaryMinus   = subOp    + ws? + expr
+logNotExpr   = notOp    + ws? + expr
+bitNotExpr   = bitNotOp + ws? + expr
+
+# ─── Postfix ────────────────────────────────────────────────
+postIncExpr = expr + incOp
+postDecExpr = expr + decOp
+
+# ─── Binary expressions ─────────────────────────────────────
+expExpr     = expr + ws? + expOp       + ws? + expr
+mulExpr     = expr + ws? + mulModOp    + ws? + expr
+addExpr     = expr + ws? + addSubOp    + ws? + expr
+shiftExpr   = expr + ws? + shiftOp     + ws? + expr
+compExpr    = expr + ws? + compOp      + ws? + expr
+eqExpr      = expr + ws? + equalityOp  + ws? + expr
+bitAndExpr  = expr + ws? + bitAndOp    + ws? + expr
+bitXorExpr  = expr + ws? + bitXorOp    + ws? + expr
+bitOrExpr   = expr + ws? + bitOrOp     + ws? + expr
+logAndExpr  = expr + ws? + logAndOp    + ws? + expr
+logOrExpr   = expr + ws? + logOrOp     + ws? + expr
+
+# ─── Ternary ────────────────────────────────────────────────
+ternaryExpr = expr + ws? + question + ws? + expr + ws? + colon + ws? + expr
+
+# ─── Assignment ─────────────────────────────────────────────
+# Visitor verifies the LHS is a varRef (lvalue) — grammar accepts any
+# expr to mirror bash's runtime error behavior rather than a parse
+# failure when the LHS is non-assignable.
+assignExpr = expr + ws? + anyAssignOp + ws? + expr
+
+# ─── Comma ──────────────────────────────────────────────────
+commaExpr = expr + ws? + comma + ws? + expr
+
+# ─── expr (Expression-promoted) — tightest first ───────────
+# Order matters: cpat's PEG tries alternatives left-to-right; for
+# binary operators, listing TIGHTER ones first establishes precedence
+# via expression promotion. Right-associative rules carry `right`.
+expr = preIncExpr
+     | preDecExpr
+     | postIncExpr right
+     | postDecExpr right
+     | unaryPlus
+     | unaryMinus
+     | logNotExpr
+     | bitNotExpr
+     | expExpr right
+     | mulExpr
+     | addExpr
+     | shiftExpr
+     | compExpr
+     | eqExpr
+     | bitAndExpr
+     | bitXorExpr
+     | bitOrExpr
+     | logAndExpr
+     | logOrExpr
+     | ternaryExpr right
+     | assignExpr right
+     | commaExpr
+     | group
+     | number
+     | varRef
+
+# ─── Top level ──────────────────────────────────────────────
+calc = ws? + expr + ws?

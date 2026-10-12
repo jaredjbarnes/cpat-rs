@@ -14,9 +14,15 @@ use crate::patterns::Context;
 /// recursion level gets its own instance.
 #[derive(Debug)]
 pub(crate) struct Scope {
-    patterns: HashMap<Name, Entry>,
+    // Shared: a grammar's rules all put the same definitions in scope, so
+    // their contexts hold one table instead of one copy each (`Context::
+    // sharing`).
+    patterns: Rc<Definitions>,
     owner: Option<Owner>,
 }
+
+/// Master definitions by name, as a scope holds them.
+pub(crate) type Definitions = HashMap<Name, Entry>;
 
 /// One definition. `home` is where an implicit-scope target was found in
 /// the root's tree: the contexts around it, outermost first. A target with
@@ -27,7 +33,7 @@ pub(crate) struct Scope {
 /// v12 drops it for references wrapped beneath a choice (its choice clones
 /// from never-parsed originals), a deviation recorded in DESIGN §11.
 #[derive(Debug)]
-struct Entry {
+pub(crate) struct Entry {
     master: Rc<Pattern>,
     home: Option<Rc<[ScopeFrame]>>,
 }
@@ -60,7 +66,7 @@ pub(crate) enum TargetKey {
 }
 
 pub(crate) struct Found {
-    pub(crate) master: Rc<Pattern>,
+    target: FoundTarget,
     pub(crate) key: TargetKey,
     /// The whole scope stack the master parses under, when it has a home:
     /// the frames up to the one that answered (the implicit scope), then
@@ -74,6 +80,36 @@ pub(crate) struct Found {
     /// (`tests/reference.rs`,
     /// `an_implicit_target_resolves_names_where_it_is_defined`).
     pub(crate) home: Option<Rc<[ScopeFrame]>>,
+}
+
+/// What a lookup found, before it is needed as a pattern.
+enum FoundTarget {
+    Master(Rc<Pattern>),
+    /// The context that owns the frame, answering to its own name. Built
+    /// only when asked for (`Found::master`): it copies the context's whole
+    /// child, and most lookups only want the key (the static check walks a
+    /// target once however many references name it; a grammar rule's own
+    /// name is named all over a big grammar).
+    OwnContext(ScopeFrame),
+}
+
+impl Found {
+    /// The master definition the lookup found.
+    pub(crate) fn master(self) -> Rc<Pattern> {
+        match self.target {
+            FoundTarget::Master(master) => master,
+            FoundTarget::OwnContext(frame) => {
+                let own = frame
+                    .scope
+                    .owner
+                    .as_ref()
+                    .expect("an own-context hit has an owner");
+                let context =
+                    Context::from_scope(frame.owner, own.child.clone(), Rc::clone(&frame.scope));
+                Rc::new(context.into())
+            }
+        }
+    }
 }
 
 /// What a scope answers for a name, borrowed from it.
@@ -101,16 +137,11 @@ impl Scope {
         child: Pattern,
         patterns: Vec<Pattern>,
     ) -> Scope {
-        let patterns = patterns
-            .into_iter()
-            .map(|pattern| {
-                let entry = Entry {
-                    master: Rc::new(pattern),
-                    home: None,
-                };
-                (entry.master.meta().name, entry)
-            })
-            .collect();
+        Scope::sharing(original_name, child, Rc::new(definitions(patterns)))
+    }
+
+    /// A context's scope over a table other contexts share.
+    pub(crate) fn sharing(original_name: Name, child: Pattern, patterns: Rc<Definitions>) -> Scope {
         Scope {
             patterns,
             owner: Some(Owner {
@@ -129,7 +160,7 @@ impl Scope {
         let mut patterns = HashMap::new();
         collect_first_matches(root, &mut Vec::new(), &mut patterns);
         Scope {
-            patterns,
+            patterns: Rc::new(patterns),
             owner: None,
         }
     }
@@ -165,6 +196,22 @@ impl Scope {
             .iter()
             .map(|(name, entry)| (*name, entry.master.as_ref()))
     }
+}
+
+/// Definitions of `patterns`, keyed by each pattern's own name. Later
+/// patterns win over earlier ones with the same name, as v12's record
+/// assignment does. They have no home: they sit in no tree.
+pub(crate) fn definitions(patterns: Vec<Pattern>) -> Definitions {
+    patterns
+        .into_iter()
+        .map(|pattern| {
+            let entry = Entry {
+                master: Rc::new(pattern),
+                home: None,
+            };
+            (entry.master.meta().name, entry)
+        })
+        .collect()
 }
 
 /// `contexts` are the contexts around `pattern` in the root's tree, which
@@ -235,23 +282,16 @@ impl ScopeFrame {
     /// frames below.
     fn find(&self, name: Name) -> Option<Found> {
         Some(match self.scope.find_ref(self.owner, name)? {
-            TargetRef::Owner {
-                scope,
-                owner,
-                child,
-            } => {
-                let context = Context::from_scope(owner, child.clone(), Rc::clone(&self.scope));
-                // No home: v12 clones the live context, but a context's
-                // clone clones its child twice and the second copy drops what
-                // its references resolved, so they resolve where they are used.
-                Found {
-                    master: Rc::new(context.into()),
-                    key: TargetKey::Owner(std::ptr::from_ref(scope)),
-                    home: None,
-                }
-            }
+            // No home: v12 clones the live context, but a context's clone
+            // clones its child twice and the second copy drops what its
+            // references resolved, so they resolve where they are used.
+            TargetRef::Owner { scope, .. } => Found {
+                target: FoundTarget::OwnContext(self.clone()),
+                key: TargetKey::Owner(std::ptr::from_ref(scope)),
+                home: None,
+            },
             TargetRef::Entry { master, home } => Found {
-                master: Rc::clone(master),
+                target: FoundTarget::Master(Rc::clone(master)),
                 key: TargetKey::Entry(Rc::as_ptr(master)),
                 home: home.map(Rc::clone),
             },

@@ -17,6 +17,7 @@ use crate::pattern::Pattern;
 use crate::pattern_error::PatternError;
 use crate::pattern_id::Meta;
 use crate::patterns::Sequence;
+use crate::scope;
 use crate::tree::NodeId;
 
 use classify::{LiteralSets, Ready};
@@ -199,7 +200,7 @@ impl Choice {
         let first = cursor.pos();
 
         if self.ready.is_none() {
-            let resolve = |name| cursor.lookup(name).map(|found| found.master);
+            let resolve = |name| cursor.lookup(name).map(scope::Found::master);
             if let Err(error) = self.classify_with(&resolve) {
                 cursor.halt(first, self.meta, At::Frame, Halt::Pattern(error));
                 return None;

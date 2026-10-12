@@ -1,0 +1,124 @@
+# PCRE-ish regex grammar. Superset of ERE with extra group/assertion
+# forms. Unsupported PCRE features (recursive patterns `(?R)`,
+# conditionals `(?(...)...)`, atomic groups `(?>...)`, possessive
+# quantifiers, `\K`) are REJECTED by the visitor at AST-build time
+# rather than by the grammar — the grammar accepts them syntactically
+# so the visitor can produce a clear error message.
+
+pcre = pcreAlternation
+
+pcreAlternation = pcreSequence + (pcreAltTail)*
+pcreAltTail     = pcreAltSep + pcreSequence
+pcreAltSep      = "|"
+
+pcreSequence = (pcreAtomQ)*
+
+pcreAtomQ = pcreAtom + pcreQuantSuffix?
+
+# Order matters — the more-specific group forms must precede the
+# plain capturing group so `(?:...)` etc. aren't swallowed by it.
+pcreAtom = pcreNonCapturingGroup
+         | pcreNamedGroupJs
+         | pcreNamedGroupPython
+         | pcreLookahead
+         | pcreNegativeLookahead
+         | pcreLookbehind
+         | pcreNegativeLookbehind
+         | pcreUnsupportedSpecialGroup
+         | pcreGroup
+         | pcreCharClass
+         | pcreAnchorStart
+         | pcreAnchorEnd
+         | pcreDot
+         | pcreEscapedAtom
+         | pcreLiteralChar
+
+# Plain group `(...)`.
+pcreGroup      = pcreGroupOpen + pcreAlternation + pcreGroupClose
+pcreGroupOpen  = "("
+pcreGroupClose = ")"
+
+# `(?:...)` non-capturing.
+pcreNonCapturingGroup = pcreNonCapOpen + pcreAlternation + pcreGroupClose
+pcreNonCapOpen        = "(?:"
+
+# `(?<name>...)` JS-style named group.
+pcreNamedGroupJs    = pcreNamedJsOpen + pcreGroupName + ">" + pcreAlternation + pcreGroupClose
+pcreNamedJsOpen     = "(?<"
+pcreGroupName       = /[A-Za-z_][A-Za-z0-9_]*/
+
+# `(?P<name>...)` Python-style named group — normalised by the visitor.
+pcreNamedGroupPython = pcreNamedPyOpen + pcreGroupName + ">" + pcreAlternation + pcreGroupClose
+pcreNamedPyOpen      = "(?P<"
+
+# Lookaround: `(?=...)`, `(?!...)`, `(?<=...)`, `(?<!...)`.
+pcreLookahead         = "(?="  + pcreAlternation + pcreGroupClose
+pcreNegativeLookahead = "(?!"  + pcreAlternation + pcreGroupClose
+pcreLookbehind        = "(?<=" + pcreAlternation + pcreGroupClose
+pcreNegativeLookbehind = "(?<!" + pcreAlternation + pcreGroupClose
+
+# Catch-all for unsupported `(?X...)` forms — listed so the grammar
+# matches them but the visitor rejects with a clear message. Avoids
+# falling through to `(` as a literal (which would be confusing) or
+# to a parse error (less helpful than naming the feature). Matches
+# from `(?X` through the next `)`. Body is any non-`)` chars so we
+# don't try to balance nested parens (the unsupported forms don't
+# nest in their common usage anyway).
+pcreUnsupportedSpecialGroup = /\(\?[^:<=!P][^)]*\)/
+
+pcreCharClass = /\[\^?\]?(?:\[:[a-z]+:\]|\\.|[^\]])*\]/
+
+pcreAnchorStart = "^"
+pcreAnchorEnd   = "$"
+pcreDot         = "."
+
+pcreEscapedAtom = pcreUnsupportedEscape
+                | pcreBackref
+                | pcreWordBoundaryAlias
+                | pcreWordBoundary
+                | pcreNonWordBoundary
+                | pcreClassDigit
+                | pcreClassWord
+                | pcreClassSpace
+                | pcreClassNotDigit
+                | pcreClassNotWord
+                | pcreClassNotSpace
+                | pcreControlEscape
+                | pcreHexEscape
+                | pcreUnicodeEscape
+                | pcreLiteralEscape
+
+# `\K` and `\Q` are unsupported — match them so we can throw with a
+# named error rather than swallow as `pcreLiteralEscape`.
+pcreUnsupportedEscape = /\\[KQ]/
+
+# Multi-digit backrefs (PCRE allows \10, \11, etc.).
+pcreBackref           = /\\[1-9][0-9]?/
+pcreWordBoundaryAlias = /\\[<>]/
+pcreWordBoundary      = /\\b/
+pcreNonWordBoundary   = /\\B/
+pcreClassDigit        = /\\d/
+pcreClassNotDigit     = /\\D/
+pcreClassWord         = /\\w/
+pcreClassNotWord      = /\\W/
+pcreClassSpace        = /\\s/
+pcreClassNotSpace     = /\\S/
+pcreControlEscape     = /\\[ntrfv0]/
+pcreHexEscape         = /\\x[0-9a-fA-F][0-9a-fA-F]/
+pcreUnicodeEscape     = /\\u[0-9a-fA-F]{4}/
+pcreLiteralEscape     = /\\[^bBdDwWsSntrfv0xuKQ1-9]/
+
+pcreLiteralChar = /[^.\\\[\^$()|+*?{}]/
+
+pcreQuantSuffix = pcreBraceQuant
+                | pcreStarQ
+                | pcrePlusQ
+                | pcreQuestionQ
+
+# Possessive `*+`, `++`, `?+` are caught here so the visitor can
+# reject them by name. JS RegExp can't express possessive
+# quantifiers.
+pcreStarQ     = /\*[?+]?/
+pcrePlusQ     = /\+[?+]?/
+pcreQuestionQ = /\?[?+]?/
+pcreBraceQuant = /\{[0-9]+(?:,[0-9]*)?\}[?+]?/

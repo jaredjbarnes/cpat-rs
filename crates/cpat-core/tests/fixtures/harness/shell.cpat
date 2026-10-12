@@ -1,0 +1,1119 @@
+# ─── Whitespace / comments ───────────────────────────────────
+ws       = /[ \t]+/
+nl       = "\n"
+wsNl     = /\s+/
+comment  = /#[^\n]*/
+
+# Inter-statement trivia: whitespace, newlines, and comment lines.
+# `Options` produces no wrapper node — only `wsNl` or `comment` shows up.
+triviaUnit = wsNl | comment
+trivias    = (triviaUnit)+
+
+# ─── Leaves ──────────────────────────────────────────────────
+identifier = /[A-Za-z_][A-Za-z0-9_]*/
+# `=` is included so bare `key=value` after a command name tokenizes as
+# a single positional bareword. Real bash doesn't treat `=` as a token
+# boundary in arg position — `echo key=val` is one positional. The
+# `namedArg` rule below requires a leading `--` or `-`, so unprefixed
+# `key=val` falls through to `word` (which uses this bareword).
+# A bareword admits regex anchors (`^`, `$`) so patterns like `^[0-9]+$`
+# parse as a single token in `[[ … =~ … ]]` and `case` clauses. `$` is
+# in the alternation rather than the character class so it can carry a
+# negative lookahead: `$` followed by an expansion starter (`{(letter
+# digit ? @ * #`) belongs to `expansion` / `varRef`, not the bareword.
+# Same trick the `dqLiteral` rule uses inside double-quoted strings.
+# `\{\}` is matched as a literal bareword chunk so empty braces parse
+# as ordinary text — matches bash, where `{}` (empty) and `{x}` (single
+# item) are both literal. The canonical idiom this enables is
+# `xargs -I {} sh -c '...'`; without it the LLM gets a parse error on
+# something every Unix-trained model writes by reflex. Placed first in
+# the alternation so the longer literal wins before the class consumes
+# `{` (it doesn't anyway — `{`/`}` aren't in the class — but the
+# explicit ordering matches the rest of the grammar's longest-first
+# convention).
+# The extglob operator chars `? * + @ !` are pulled out of the main class
+# into a guarded alternative `[?*+@!](?!\()` so a bareword never swallows
+# the operator of a following extglob group (`@(a|b)`): when one of them
+# is immediately followed by `(`, the bareword stops and `extglobGroup`
+# (a separate wordPart) takes over. Standalone (`a*b`, `x?`, `!`, `a+`)
+# they're consumed exactly as before.
+# The comma `,` is an ORDINARY word character in bash everywhere except
+# brace expansion (`{a,b}`) and arithmetic (`$((a,b))`), both of which are
+# separate sub-grammars. So `--ref t8,t9` is one word. The brace-context
+# bareword (`braceBareword`, below) deliberately OMITS the comma so the
+# comma keeps splitting `braceItem`s inside `{ }`.
+bareword   = /(?:\{\}|\\.|\$(?![{(A-Za-z_0-9?@*#])|[?*+@!](?!\()|[a-zA-Z0-9_.\/%:=^~,\[\]-])+/
+sqString   = /'(?:\\[\s\S]|[^'\\])*'/
+
+# ─── Expansions ($VAR / ${VAR} / $(...) / $?) ───────────────
+# Listed longest-first so the matcher commits to the longer
+# prefix (e.g. `${` and `$(` before `$`). `specialVar` covers
+# bash's special parameters — currently `$?` only, easy to extend.
+# `arithExpansion` matches `$((expr))`, listed before `cmdSub` so its
+# `$((` prefix wins first-match over `$(` — and the `~/` COMMITS there:
+# once `$((` is seen this IS arithmetic, and a failure inside it is a
+# syntax error, never re-read as a cmdSub. That matches bash/POSIX
+# (`$((echo hi))` errors; a subshell inside cmdSub is written `$( (…) )`
+# with the space) and kills the exponential cross-backtrack: without the
+# cut, an input like `$((((((…` was re-parsed as arithmetic at EVERY
+# nesting depth of the cmdSub fallback — a 156-byte command was a fatal
+# heap OOM (docs/cpu-runaway-audit.md K1).
+#
+# `bracedVar` uses Block delimiters so the matching `}` is found
+# by depth-counted scan BEFORE content parses — nested forms like
+# `${var:-${other}}` Just Work because the outer `}` is paired
+# with the outer `${` before the inner contents are touched.
+# Inside, `bracedBody` dispatches structurally on the form: plain
+# identifier (`${VAR}`), or one of the parameter-expansion shapes.
+varRef         = "$" + identifier
+bracedVar      = ["${"] bracedBody ["}"]
+cmdSub         = "$(" + script + ")"
+arithExpansion = "$((" ~/ ws? + arithExpr + ws? + "))"
+specialVarName = /[?@*#0-9]/
+specialVar     = "$" + specialVarName
+# Backticks: legacy command substitution equivalent to `$(cmd)`. Same
+# trim-trailing-newlines semantics; visitor delegates to _evalCmdSub.
+backtickSub    = "`" + script + "`"
+expansion      = arithExpansion | bracedVar | cmdSub | backtickSub | specialVar | varRef
+
+# Process substitution: `<(cmd)` exposes cmd's OUTPUT as a readable file
+# path; `>(cmd)` exposes a writable file path whose contents are fed to
+# cmd's stdin after the outer command runs. The visitor runs the inner
+# script against a temp path in the FileStore and substitutes that path as
+# the word. Mirrors `cmdSub`'s `"$(" + script + ")"` shape. These are
+# wordParts (tried before the `<`/`>` redirect operators can claim the
+# leading char, since a redirect's `< word` can't start a word with `(`).
+procSubIn      = "<(" + script + ")"
+procSubOut     = ">(" + script + ")"
+
+# ─── Parameter expansion (`${var…}`) — body shapes ──────────
+# bracedBody dispatches on which form is inside the braces. The
+# visitor reads the matched alternative's name (cpat Options
+# collapses to the matched alternative — there's no `bracedBody`
+# wrapper node, so the body child carries one of: `pexDefault`,
+# `pexLength`, `pexSubstr`, `pexStrip`, `pexReplace`, `pexCase`,
+# `pexIndirect`, `identifier`, …). Order matters: longest/most-specific
+# first so a `${var:-d}` doesn't bind as a bare identifier before the
+# operator is even examined, and `pexDefault` stays ahead of `pexSubstr`
+# so `${var:-d}` parses as default (op `:-`) rather than substring (op
+# `:` + arg `-d`). `pexIndirect` is leading-`!`-keyed and `pexLength`
+# is leading-`#`-keyed — both are disjoint from the identifier-first
+# rules and from each other. The remaining pex* rules (`pexStrip`,
+# `pexReplace`, `pexCase`) have disjoint operator sets too, so their
+# relative ordering is purely stylistic.
+# `pexPositionalSlice` and `pexSpecialLength` come before the identifier-keyed
+# rules because their leading char (`@`/`*`/`#`) can never start an identifier;
+# `pexSpecial` is LAST of the three so the longer forms commit first
+# (`${@:2}` must not bind as a bare `${@}` with a stray `:2`).
+bracedBody = pexSpecialLength | pexPositionalSlice
+           | pexLength | pexArrayIndices | pexIndirect
+           | pexDefault | pexSubstr | pexStrip | pexReplace | pexCase
+           | pexTransform | pexArrayRead | pexSpecial | identifier
+
+# ─── Braced special parameters — `${@}`, `${*}`, `${#}`, `${1}` ───
+# The unbraced forms (`$@`, `$#`, `$1`) are matched by `specialVar` in the
+# expansion rule. Inside braces NOTHING accepted them: every `bracedBody`
+# alternative was keyed on `identifier`, which is `[A-Za-z_]…`, so `"${@}"`
+# was a hard parse error that killed the whole script while `"$@"` worked.
+# `${10}` and up — the only way to reach a positional past 9 — failed for the
+# same reason.
+#
+# The name set matches `specialVarName` plus multi-digit positionals.
+pexSpecialName = /[?@*#$!]|[0-9]+/
+pexSpecial     = pexSpecialName
+
+# `${#@}` / `${#*}` — the COUNT of positional parameters, the special-param
+# twin of `${#arr[@]}`. Distinct from `${#}` (also the count, but reached
+# through `pexSpecial`) and from `${#var}` (string length, `pexLength`).
+pexSpecialLength = "#" + /[@*]/
+
+# `${@:offset}` / `${@:offset:length}` — slice the positional parameters.
+# `${@:2}` ("everything after the first argument") is the idiom this exists
+# for. Reuses `pexNum` so the slots accept the same expansions the string
+# substring form does.
+pexPositionalSlice = /[@*]/ + ":" + pexNum + pexSubstrLen?
+
+# `${#var}` — character length of `$var`. With an optional `[…]`
+# subscript: `${#arr[N]}` is the length of element N's string;
+# `${#arr[@]}` and `${#arr[*]}` are the element count of the array.
+# The leading `#` is the only parameter-expansion form that starts
+# with a non-identifier, so disambiguation is structural — no other
+# shape begins with `#`.
+pexLength = "#" + identifier + arraySubscript?
+
+# `${arr[N]}` indexed read, `${arr[@]}` / `${arr[*]}` "all elements"
+# expansions. The visitor reads the subscript word and dispatches:
+# `@`/`*` produce a joined-by-IFS string (documented divergence from
+# bash, which preserves element boundaries inside double quotes);
+# numeric subscripts read that one element.
+pexArrayRead = identifier + arraySubscript
+
+# `${var@op}` — transform operators (bash's `@`-suffix family):
+#   @Q  quote the value so it can be re-read as shell input
+#   @E  interpret ANSI-C backslash escapes (`\n`, `\t`, `\xNN`, …)
+#   @P  prompt-style escape expansion (a near-superset of @E here)
+#   @A  print the `declare` statement that would recreate the variable
+#   @a  the variable's attribute flags (`a` indexed, `A` associative)
+# Optional `[…]` subscript so `${arr[@]@Q}` transforms each element.
+# Must precede `pexArrayRead`/`identifier` in `bracedBody` so the
+# trailing `@op` isn't left unconsumed.
+pexTransformOp = /@[QEPAa]/
+pexTransform   = identifier + arraySubscript? + pexTransformOp
+
+# `${!arr[@]}` / `${!arr[*]}` → indices of the array. Distinct from
+# `${!var}` (indirect) and `${!prefix*}` (name list) — the bracketed
+# form switches to indices semantics. Order in `bracedBody` puts
+# `pexArrayIndices` before `pexIndirect` so the bracketed form wins.
+pexArrayIndices = "!" + identifier + arraySubscript
+
+# `${var<op>arg}` — default / alt / assign / error family.
+# Eight operators total; their semantics split on whether `:`
+# treats empty as unset:
+#   :-  -   default if unset (or empty, for `:-`)
+#   :=  =   assign default + return it (same unset/empty rule)
+#   :?  ?   error if unset (or empty, for `:?`)
+#   :+  +   alt if SET (and non-empty, for `:+`)
+#
+# Listed longest-first so the matcher commits to `:-` before `-`
+# (the cpat PEG won't backtrack across an Options match).
+pexOpDefault  = ":-" | ":=" | ":?" | ":+" | "-" | "=" | "?" | "+"
+# Optional `arraySubscript` before the operator lets `${arr[i]:-d}` /
+# `${m[key]:-d}` work. The visitor extracts the array element (or
+# scalar var when subscript is absent) as the "subject" the op
+# operates on. Assigning forms (`:=`/`=`) write back to arr[i]/m[k].
+pexDefault    = identifier + arraySubscript? + pexOpDefault + pexArg?
+
+# The argument inside `${var:-ARG}` is one word, but with two
+# divergences from a plain shell word:
+#   1. Spaces are allowed — `${var:?file not found}` is valid.
+#   2. `$`/`${`/`$(` still trigger expansion inside the arg.
+# `pexArgLiteral` matches any run of chars that aren't `$`, `{`,
+# `}`, or `\` — plus `\X` escapes and bare-`$` that isn't an
+# expansion starter (mirrors `bareword`'s negative-lookahead trick).
+# Stops cleanly at `}` so the surrounding Block close matches.
+pexArgLiteral = /(?:\\[\s\S]|\$(?![{(A-Za-z_0-9?@*#])|[^${}\\])+/
+pexArgPart    = expansion | pexArgLiteral
+pexArg        = (pexArgPart)+
+
+# `${var:offset}` and `${var:offset:length}` — substring extraction.
+# Both slots are evaluated as integers (bash treats them as full
+# arithmetic expressions; we accept the same shape but evaluate via
+# parseInt — full `$((…))` works because expansions run as a child).
+# `pexNumLiteral` is like `pexArgLiteral` but also excludes `:` so
+# the second colon separator (length) doesn't get absorbed into the
+# offset's literal run. Spaces are still allowed inside slots (for
+# `${var: -5}` "from end" idiom — not yet implemented, but the
+# grammar shape leaves room for it).
+pexNumLiteral = /(?:\\[\s\S]|\$(?![{(A-Za-z_0-9?@*#])|[^${}:\\])+/
+pexNumPart    = expansion | pexNumLiteral
+pexNum        = (pexNumPart)+
+pexSubstrLen  = ":" + pexNum
+# Subscript form supported: `${arr[i]:offset:length}`.
+pexSubstr     = identifier + arraySubscript? + ":" + pexNum + pexSubstrLen?
+
+# `${var<op>pattern}` — prefix/suffix strip family. Four operators:
+#   #   strip shortest matching prefix
+#   ##  strip longest matching prefix
+#   %   strip shortest matching suffix
+#   %%  strip longest matching suffix
+# The pattern is evaluated as a normal pex-arg (so `$VAR`, `$(cmd)`,
+# and escapes work inside it) and then matched as a bash glob via
+# `globMatch`. Operators listed longest-first so `##` commits before
+# `#` (cpat PEG, no backtrack across Options). The arg reuses `pexArg`
+# rather than introducing a new type — bash treats the strip pattern
+# as a word with the same expansion rules as the default-form arg.
+pexOpStrip = "##" | "#" | "%%" | "%"
+pexStrip   = identifier + arraySubscript? + pexOpStrip + pexArg?
+
+# `${var/pat/repl}` and family — pattern replacement.
+#   /     replace first match
+#   //    replace all matches
+#   /#    replace if matched at start (prefix anchor)
+#   /%    replace if matched at end (suffix anchor)
+#
+# Pattern syntax is bash-glob (matched via `globMatchString` — `*`
+# unrestricted across `/`, like the rest of bash's string-matching
+# contexts). The pattern is bounded by an unescaped `/` (start of
+# replacement) or `}` (end of expansion); `\/` is a literal `/` in
+# the pattern. The replacement reuses `pexArg`, so `/` is allowed
+# inside it (no escape needed there).
+#
+# Both pattern and replacement are optional:
+#   `${var//}` → empty pattern, empty replacement (no-op, matches bash)
+#   `${var/pat}` → omitted replacement is treated as empty
+#
+# Operators listed longest-first (`//` before `/`, `/#` and `/%`
+# before `/`) so cpat commits to the most specific operator first.
+pexOpReplace        = "//" | "/#" | "/%" | "/"
+pexReplacePatLiteral = /(?:\\[\s\S]|\$(?![{(A-Za-z_0-9?@*#])|[^${}\/\\])+/
+pexReplacePatPart    = expansion | pexReplacePatLiteral
+pexReplacePat        = (pexReplacePatPart)+
+pexReplaceRepl       = "/" + pexArg?
+pexReplace           = identifier + arraySubscript? + pexOpReplace + pexReplacePat? + pexReplaceRepl?
+
+# `${var^}` / `${var^^}` / `${var,}` / `${var,,}` — case conversion.
+#   ^   uppercase the first character
+#   ^^  uppercase every character
+#   ,   lowercase the first character
+#   ,,  lowercase every character
+#
+# The optional arg is a single-character bash glob: when present, only
+# characters matching it get transformed. `${var^^[aeiou]}` uppercases
+# vowels and leaves consonants alone. Without an arg, every character
+# in scope is transformed unconditionally. Operators listed longest-
+# first so `^^` commits before `^` and `,,` before `,`.
+pexOpCase = "^^" | "^" | ",," | ","
+pexCase   = identifier + arraySubscript? + pexOpCase + pexArg?
+
+# `${!var}` — indirect lookup (value of the variable named by $var).
+# `${!prefix*}` / `${!prefix@}` — names of variables whose names start
+# with `prefix`. Both name-list forms emit a string with the first
+# `$IFS` character as the separator; word-splitting on the unquoted
+# expansion then produces multiple args, which is the most useful
+# bash idiom (`for v in ${!FOO*}; do …`). The bash `*`-vs-`@` distinction
+# only matters inside double quotes — we treat them identically because
+# the shell has no way to emit "N separate words" from a single
+# expansion (no array infrastructure yet).
+pexOpNameList = "*" | "@"
+pexIndirect   = "!" + identifier + pexOpNameList?
+
+# ─── Double-quoted strings (with interpolation) ──────────────
+# Inside "...", split into literal runs and expansions.
+# A literal run can contain `\X` escapes and bare `$` only when the
+# `$` isn't the start of a recognized expansion (negative lookahead).
+dqLiteral = /(?:\\[\s\S]|\$(?![{(A-Za-z_?@*#0-9])|[^"\\$`])+/
+dqPart    = expansion | dqLiteral
+dqParts   = (dqPart)+
+dqString  = "\"" + dqParts? + "\""
+
+# ─── Brace expansion ({a,b,c}) ───────────────────────────────
+# `{a,b,c}` is one wordPart; the visitor expands a word with brace
+# parts via cartesian product before evaluating each alternative.
+# Single-item braces (`{only}`) parse but the visitor leaves them
+# literal — matching bash, where expansion needs ≥2 items.
+#
+# A `braceItem` uses `braceWordPart`, whose bareword (`braceBareword`)
+# is the comma-FREE variant — identical to the top-level `bareword`
+# minus the `,`. This is what lets the comma keep splitting items here
+# (`braceMore`) while staying an ordinary character in a plain word.
+# Without the split, `{a,b,c}` would collapse to one item and lose the
+# structured children the visitor needs to expand `{$x,$y}` per-item.
+braceBareword = /(?:\{\}|\\.|\$(?![{(A-Za-z_0-9?@*#])|[?*+@!](?!\()|[a-zA-Z0-9_.\/%:=^~\[\]-])+/
+braceWordPart = procSubIn | procSubOut | expansion | braceList | sqString | dqString | extglobGroup | braceBareword
+braceItem  = (braceWordPart)+
+braceMore  = "," + braceItem
+braceMores = (braceMore)+
+braceList  = "{" + braceItem + braceMores? + "}"
+
+# ─── Extglob group (shopt extglob) ───────────────────────────
+# `?(…)` `*(…)` `+(…)` `@(…)` `!(…)` — one operator char glued to a
+# `|`-separated list of sub-patterns, captured as a single wordPart. The
+# visitor reads the node's raw text and hands it to the glob matcher
+# (`glob.cpat`), which does the actual extglob→regex translation; here we
+# only need to delimit the token correctly.
+#
+# Nesting (`@(a|@(b))`) is handled by ordinary recursion (`extglobItem` →
+# `extglobGroup`), NOT a `Block` depth-scan — a raw scan would miscount
+# escaped parens. `extglobEsc` is tried before any literal so `\(`/`\)`/
+# `\|` are consumed as literals and never shift the group's nesting.
+# `extglobOpenAhead` guards a literal run so it stops before a nested
+# `op(`; whitespace ends the run (and so the word).
+extglobOpenAhead = /[?*+@!]\(/
+extglobOp        = /[?*+@!]/
+extglobOpen      = "("
+extglobClose     = ")"
+extglobEsc       = /\\./
+extglobInChar    = /[^()|\s\\]/
+extglobInUnit    = !extglobOpenAhead + extglobInChar
+extglobInRun     = (extglobInUnit)+
+extglobItem      = extglobGroup | extglobEsc | extglobInRun
+extglobAlt       = (extglobItem)*
+extglobAlts      = (extglobAlt, "|")+
+extglobGroup     = extglobOp + extglobOpen + extglobAlts + extglobClose
+
+# ─── Word (compound token) ───────────────────────────────────
+# A shell word is a glued sequence of bareword/quote/expansion
+# parts (no whitespace between them). Most argument positions use this.
+# `extglobGroup` precedes `bareword` so an `op(` commits to a group
+# before the operator char is read as a bareword.
+# `$'…'` — ANSI-C quoting. The body's backslash escapes (`\n`, `\t`, `\xNN`,
+# `\uNNNN`, `\0NNN`) are interpreted, unlike a plain `'…'` where every
+# character is literal. `ansi_c.ts` has done the interpreting all along, but it
+# was only ever wired to `printf` and `${v@E}` — as a WORD, `$'a\tb'` fell
+# through to `bareword` `$` plus an ordinary single-quoted string and came out
+# as the seven literal characters `$a\tb`. That made `IFS=$'\n'` — much the
+# most common use — silently set IFS to a backslash and an `n`.
+#
+# Listed before `expansion` and `bareword` so the `$'` prefix commits here
+# first; `expansion` never claims it (none of its forms accept a quote after
+# the `$`), so without this rule the `$` is simply eaten as a bareword.
+ansiCString = /\$'(?:\\[\s\S]|[^'\\])*'/
+
+wordPart = procSubIn | procSubOut | ansiCString | expansion | braceList | sqString | dqString | extglobGroup | bareword
+word     = (wordPart)+
+
+# Assignment-value word: same idea, but its bareword variant allows
+# `=` so values like `FOO=a=b=c` work without quotes.
+# `\{\}` allowed as a literal chunk for parity with `bareword` — keeps
+# assignment values like `FOO={}` working without quoting.
+assignBareword = /(?:\{\}|\\.|[a-zA-Z0-9_.\/@%+:=*?,\[\]~-])+/
+assignWordPart = ansiCString | expansion | sqString | dqString | assignBareword
+assignWord     = (assignWordPart)+
+
+# ─── Arguments ───────────────────────────────────────────────
+# `namedArg` requires a leading `--` or `-` — matches bash. Bare
+# `key=value` after a command name is a positional (handled by the
+# `word` fall-through and bareword's `=` allowance above). The
+# standalone `FOO=bar` statement and the `FOO=bar cmd` prefix form
+# are handled by `assignment` / `prefixedCommand` below; those use
+# `assignWord` directly, not `namedArg`, so this rule only governs
+# what happens to `=` tokens AFTER a command name.
+argName       = /(?:--|-)[a-zA-Z_][a-zA-Z0-9_-]*/
+argEquals     = "="
+namedArg      = argName + argEquals + word
+arg           = namedArg | word
+
+# ─── Redirects ───────────────────────────────────────────────
+# `<<HEREDOC` is a synthetic operator emitted by the heredoc preprocessing
+# pass — the user writes `<< EOF\n...\nEOF` and the preprocessor rewrites
+# it to a single-line `<<HEREDOC <string>` form before the grammar runs.
+mergeStderrToStdout = "2>&1"
+# `>&2` / `1>&2` — send stdout to stderr (mirror of `2>&1`). Ordered in
+# the `redirect` options BEFORE `redirectFile` so this commits before
+# `writeStdout` (`>`) can match its leading `>` (cpat `|` is ordered
+# first-match — the longer/specific form must come first). A single regex
+# (not `">&2" | "1>&2"`) so the node keeps the name `dupStdoutToStderr`;
+# an Options of inline literals would name the node after the literal.
+dupStdoutToStderr   = /1?>&2/
+# `>&-` / `1>&-` close stdout, `2>&-` closes stderr (discard the stream).
+# Single regex for the stdout form so the node keeps its name; ordered
+# before `dupStdoutToStderr`/`writeStdout` so the longer form commits.
+closeStdout         = /1?>&-/
+closeStderr         = "2>&-"
+appendStdout        = ">>"
+writeStdout         = ">"
+readStdin           = "<"
+appendStderr        = "2>>"
+writeStderr         = "2>"
+heredocOp           = "<<HEREDOC"
+heredocBody         = sqString | dqString
+heredocRedir        = heredocOp + ws + heredocBody
+# `<<<` here-string: feed the literal word + a trailing newline as
+# stdin. Common idiom `read x <<< "$y"` parses a string into a var
+# without needing a temp file. The grammar puts hereString BEFORE
+# heredocRedir / readStdin so the longer `<<<` literal commits first
+# (otherwise `<` would match and the rest would fail to parse).
+hereStringOp        = "<<<"
+hereString          = hereStringOp + ws? + word
+# `appendStderr` (`2>>`) before `writeStderr` (`2>`) so the longer op wins.
+redirectOpFile      = appendStdout | writeStdout | readStdin | appendStderr | writeStderr
+redirectFile        = redirectOpFile + ws? + word
+# Close ops (`>&-`/`2>&-`) and dup ops precede `redirectFile` so their
+# leading `>`/`2>` doesn't get consumed by `writeStdout`/`writeStderr`.
+redirect            = hereString | heredocRedir | mergeStderrToStdout | dupStdoutToStderr
+                    | closeStdout | closeStderr | redirectFile
+
+# ─── Command (atom of expr) ─────────────────────────────────
+commandName     = word
+commandSuffix   = redirect | arg
+spacedSuffix    = ws? + commandSuffix
+commandSuffixes = (spacedSuffix)+
+command         = commandName + commandSuffixes?
+
+# ─── Variable assignment ────────────────────────────────────
+# `FOO=bar` standalone is a statement that mutates Shell.vars.
+# `FOO=bar cmd args` is a prefix that scopes the assignment to
+# that command's frame only. Multiple prefixes are allowed.
+assignment      = identifier + argEquals + assignWord
+spacedAssign    = assignment + ws
+prefixList      = (spacedAssign)+
+prefixedCommand = prefixList + command
+
+# ─── Array assignment ───────────────────────────────────────
+# `arr=(a b c)` initializes an indexed array (replaces any prior).
+# `arr+=(d e)` appends elements. `arr+=value` (no parens) appends
+# value to arr[0] for arrays, or concatenates for scalars — but
+# we only support the paren form here; scalar string-concat is
+# a separate path. Element words go through the same brace/glob
+# /IFS-split expansion as command args.
+#
+# Separators are `wsNl` (whitespace INCLUDING newlines), not plain `ws`:
+# bash separates array elements by any whitespace, so the multi-line form
+#   arr=(
+#     "a"
+#     "b"
+#   )
+# is valid. With newline-less `ws` the rule failed to match the `(`-then-
+# newline and the whole `arr=(…)` fell back to a bogus command word.
+arrayInitOp     = "+=" | "="
+arrayElement    = wsNl? + word
+arrayElements   = (arrayElement)+
+arrayInit       = identifier + arrayInitOp + "(" + wsNl? + arrayElements? + wsNl? + ")"
+
+# Indexed assignment: `arr[i]=value` (or `arr[i]+=value` for
+# append-to-element). The subscript can contain expansions
+# (`$VAR`, `${other}`, `$((expr))`) and otherwise any char except
+# `]` itself — we can't use the generic `word` because the
+# `bareword` regex includes `[` and `]` in its char class, so it
+# would greedily eat past the subscript's closing `]`. Same shape
+# as `pexArgLiteral` but `]` is also excluded.
+arraySubLiteral = /(?:\\[\s\S]|\$(?![{(A-Za-z_0-9?@*#])|[^\]${}"'\\])+/
+# arraySubPart admits expansions and quoted strings (so assoc keys
+# with spaces / special chars work via `m["hello world"]=x`), plus
+# raw literal runs that exclude `]` (subscript terminator) and `"` /
+# `'` (handled by the quoted alternatives).
+arraySubPart    = expansion | sqString | dqString | arraySubLiteral
+arraySubWord    = (arraySubPart)+
+# Subscript can be empty (`m[""]` with an empty key, parsed as
+# `[" "]` where the dqString is empty). `?` lets the empty-content
+# case parse cleanly; the visitor then evaluates to empty text.
+arraySubscript  = "[" + arraySubWord? + "]"
+arrayIndexedAssign = identifier + arraySubscript + arrayInitOp + assignWord
+
+# ─── Subshell ───────────────────────────────────────────────
+# `(cmd1; cmd2)` runs the inner script in an isolated var scope —
+# assignments inside don't leak to the outer shell.
+subshell = "(" + trivias? + statementList + trivias? + ")"
+
+# ─── Loop keywords (word-bounded) ───────────────────────────
+# Each keyword uses a negative-lookahead regex so prefixes like
+# `forecast` / `donate` / `breaker` stay as ordinary barewords.
+forKw      = /for(?![a-zA-Z0-9_-])/
+inKw       = /in(?![a-zA-Z0-9_-])/
+doKw       = /do(?![a-zA-Z0-9_-])/
+doneKw     = /done(?![a-zA-Z0-9_-])/
+breakKw    = /break(?![a-zA-Z0-9_-])/
+continueKw = /continue(?![a-zA-Z0-9_-])/
+exitKw     = /exit(?![a-zA-Z0-9_-])/
+ifKw       = /if(?![a-zA-Z0-9_-])/
+thenKw     = /then(?![a-zA-Z0-9_-])/
+elifKw     = /elif(?![a-zA-Z0-9_-])/
+elseKw     = /else(?![a-zA-Z0-9_-])/
+fiKw       = /fi(?![a-zA-Z0-9_-])/
+whileKw    = /while(?![a-zA-Z0-9_-])/
+untilKw    = /until(?![a-zA-Z0-9_-])/
+caseKw     = /case(?![a-zA-Z0-9_-])/
+esacKw     = /esac(?![a-zA-Z0-9_-])/
+selectKw   = /select(?![a-zA-Z0-9_-])/
+functionKw = /function(?![a-zA-Z0-9_-])/
+returnKw   = /return(?![a-zA-Z0-9_-])/
+localKw    = /local(?![a-zA-Z0-9_-])/
+exportKw   = /export(?![a-zA-Z0-9_-])/
+shiftKw    = /shift(?![a-zA-Z0-9_-])/
+trapKw     = /trap(?![a-zA-Z0-9_-])/
+aliasKw    = /alias(?![a-zA-Z0-9_-])/
+unaliasKw  = /unalias(?![a-zA-Z0-9_-])/
+unsetKw    = /unset(?![a-zA-Z0-9_-])/
+evalKw     = /eval(?![a-zA-Z0-9_-])/
+letKw      = /let(?![a-zA-Z0-9_-])/
+readonlyKw = /readonly(?![a-zA-Z0-9_-])/
+typeKw     = /type(?![a-zA-Z0-9_-])/
+commandKw  = /command(?![a-zA-Z0-9_-])/
+# `source` is the long form. The short form `.` needs a negative
+# lookahead that excludes the chars used by file paths (`./foo`,
+# `.txt`, `.bashrc`) so the keyword only matches a standalone dot
+# followed by whitespace/separator. Word-bounded the same way the
+# other keywords are.
+sourceLongKw  = /source(?![a-zA-Z0-9_-])/
+sourceShortKw = /\.(?![a-zA-Z0-9_.\/])/
+
+# ─── For-loop (list form) ───────────────────────────────────
+# `for X in W W W; do BODY; done`. The iteration list reuses
+# the standard `word` machinery, so braces and globs expand
+# the same way they do for command arguments. The body uses a
+# `!doneKw` lookahead at each repeat iteration to keep `done`
+# out of the body — otherwise `(statement)+` would greedily
+# consume it as a bareword command and the terminator would fail.
+loopWord         = ws + word
+loopWords        = (loopWord)+
+forBodyStatement = !doneKw + statement
+forBody          = (forBodyStatement)+
+# A bash compound command (including `for ... done`) accepts trailing
+# redirects that apply to the loop's combined output. `loopRedirect`
+# mirrors `spacedSuffix`'s redirect half — same `redirect` rule, just
+# without the arg branch (no positionals after `done`).
+loopRedirect     = ws + redirect
+loopRedirects    = (loopRedirect)+
+forLoop          = forKw + ws + identifier + ws + inKw + loopWords?
+                 + sep + doKw + trivias + forBody + trivias? + doneKw
+                 + loopRedirects?
+
+# `select NAME in WORDS; do BODY; done` — interactive prompt loop.
+# Same grammar shape as `forLoop`; the visitor presents the words as
+# a numbered menu via the shell's `promptHandler` and binds NAME to
+# the chosen word each iteration. Without a promptHandler configured,
+# the loop runs zero iterations (cleanly skips — bash on EOF does the
+# same). `break` inside the body exits the loop.
+selectLoop       = selectKw + ws + identifier + ws + inKw + loopWords?
+                 + sep + doKw + trivias + forBody + trivias? + doneKw
+                 + loopRedirects?
+
+# ─── If / elif / else / fi ───────────────────────────────────
+# Bash's full conditional. `cond` and `body` are lists of statements;
+# the cond's exit status is the **last statement's** success flag, and
+# the body runs in textual order. Negative lookaheads on every body
+# slot keep the structure keywords from being greedily consumed as
+# bareword commands — same trick the for-loop uses for `done`.
+ifBlockStmt   = !thenKw + !elifKw + !elseKw + !fiKw + statement
+ifBlockStmts  = (ifBlockStmt)+
+ifClause      = ifKw + ws + ifBlockStmts + thenKw + trivias? + ifBlockStmts
+elifClause    = elifKw + ws + ifBlockStmts + thenKw + trivias? + ifBlockStmts
+elifClauses   = (elifClause)+
+elseClause    = elseKw + trivias + ifBlockStmts
+ifStmt        = ifClause + elifClauses? + elseClause? + fiKw
+
+# ─── While / until loops ────────────────────────────────────
+# `while COND; do BODY; done` runs BODY while COND's last statement
+# succeeds. `until` is the same with the condition inverted. The body
+# reuses the for-loop's `forBody` (its `!doneKw` lookahead is exactly
+# what we need); the cond uses a `!doKw` lookahead so it doesn't eat
+# `do` as a bareword command.
+whileCondStmt  = !doKw + statement
+whileCondStmts = (whileCondStmt)+
+whileLoop      = whileKw + ws + whileCondStmts + doKw + trivias
+               + forBody + trivias? + doneKw + loopRedirects?
+untilLoop      = untilKw + ws + whileCondStmts + doKw + trivias
+               + forBody + trivias? + doneKw + loopRedirects?
+
+# ─── Case / esac ────────────────────────────────────────────
+# `case WORD in PAT) body ;; PAT) body ;& PAT) body ;;& esac`
+# Patterns are bash globs (matched via globMatch at runtime). Three
+# terminators: `;;` stop, `;&` fall through to the NEXT body
+# unconditionally, `;;&` continue testing remaining patterns.
+caseTermFall    = ";;&"
+caseTermNextEnd = ";&"
+caseTermEnd     = ";;"
+# Listed longest-first so the matcher commits to the longer literal.
+caseTerminator  = caseTermFall | caseTermEnd | caseTermNextEnd
+
+casePatternAlt  = ws? + "|" + ws? + word
+casePatternAlts = (casePatternAlt)+
+casePattern     = word + casePatternAlts?
+
+caseBodyStmt    = !caseTerminator + !esacKw + statement
+caseBody        = (caseBodyStmt)+
+
+caseClause      = casePattern + ws? + ")" + trivias?
+                + caseBody? + ws? + caseTerminator
+# Named the repeat element so each clause is a direct, predictable child
+# of `caseClauses` — `(trivias? + caseClause)+` would create an anonymous
+# wrapper pattern.
+caseClauseEntry = trivias? + caseClause
+caseClauses     = (caseClauseEntry)+
+
+caseStmt        = caseKw + ws + word + ws + inKw + trivias
+                + caseClauses? + trivias? + esacKw
+
+# ─── Functions ──────────────────────────────────────────────
+# Two declaration forms — POSIX `name() body` and bash's
+# `function name [()] body`. Body is a `{ … }` group; the closing
+# `}` is kept out of the body via a `!closeBrace` lookahead so
+# `(funcBodyStmt)+` doesn't greedily consume it as a bareword.
+closeBrace    = "}"
+funcBodyStmt  = !closeBrace + statement
+# Pulling the repeat into its own named rule (rather than inline inside
+# `funcBody`) gives cleaner AST children — no anonymous-pattern wrapper.
+funcBodyStmts = (funcBodyStmt)+
+funcBody      = "{" + ws + trivias? + funcBodyStmts + trivias? + closeBrace
+# `trivias?` (OPTIONAL), not `trivias`: bash accepts `f(){ …; }` with no
+# space between `)` and `{`, and it is a common style. The body itself still
+# requires `"{" + ws`, which is what keeps a brace GROUP distinguishable from
+# a brace EXPANSION, so nothing is made ambiguous by relaxing this.
+funcDefPosix  = identifier + ws? + "(" + ws? + ")" + trivias? + funcBody
+funcDefBash   = functionKw + ws + identifier + (ws? + "(" + ws? + ")")? + trivias? + funcBody
+funcDef       = funcDefBash | funcDefPosix
+
+# ─── Brace group — `{ list; }` ──────────────────────────────
+# POSIX compound command: runs `list` in the CURRENT shell (unlike a
+# `(subshell)`, which copies the frame — so assignments persist and
+# exit/return/break/continue propagate). Disambiguated from brace
+# EXPANSION (`{a,b}`) by the REQUIRED whitespace after `{` (expansion has
+# none) — same `"{" + ws` shape funcBody uses. Reuses `funcBodyStmts`
+# (`(!closeBrace + statement)+`). `loopRedirects?` allows `{ …; } > out`.
+braceGroup    = "{" + ws + trivias? + funcBodyStmts + trivias? + closeBrace + loopRedirects?
+
+# ─── return / local / shift ─────────────────────────────────
+returnArg  = ws + word
+returnStmt = returnKw + returnArg?
+# `local NAME[=VALUE] …` — multiple bindings allowed per call.
+# Each binding parses as an `assignment` (so `=value` is required when
+# the form has a value); a bare `local x` just declares without setting,
+# which we treat as setting to empty.
+localBinding   = ws + assignment
+localBareName  = ws + identifier
+localItem      = localBinding | localBareName
+localItems     = (localItem)+
+localStmt      = localKw + localItems
+
+# `export [-n|-p] NAME[=value]…` — mark names for the ENVIRONMENT, i.e. the
+# variables a child BODY inherits (a `$PATH` dynamic tool, a script tool). Bash
+# passes a child process only the exported set; assignment alone is shell-local.
+# `-n` unexports, `-p`/bare `export` lists. Same item shape as `local` so
+# `export A=1 B` parses in one statement.
+exportBinding  = ws + assignment
+exportBareWord = ws + word
+exportItem     = exportBinding | exportBareWord
+exportItems    = (exportItem)+
+exportStmt     = exportKw + exportItems?
+
+# ─── unset / readonly / eval / let / type / command ─────────
+# Six builtins that had no implementation anywhere. `unset` is the notable
+# absence: `set -u` was fully supported while the builtin that makes nounset
+# usable was missing, and a script that called it died with exit 127.
+#
+# All are grammar-level statements rather than registered tools because each
+# needs the FRAME — to delete a variable, re-enter the parser in the current
+# scope, assign an arithmetic result, or resolve a shell function by name. A
+# tool only ever sees its argv.
+
+# Each arg slot carries a `!redirect` lookahead so the greedy repetition stops
+# at a redirect instead of swallowing it — without it the `2` of
+# `unset v 2>/dev/null` is read as an argument and the `>` has nowhere to go.
+# The generic `command` rule solves the same problem the other way round, by
+# trying `redirect` before `arg` in every suffix slot.
+#
+# Each takes a NAMED wrapper around its `(arg)+` repetition — an inline
+# repetition produces an anonymous node, and the visitor's arg reader would
+# find no children to walk.
+#
+# All six also carry `loopRedirects?`, reusing the machinery `{ …; } > out`
+# and `done < file` already use. Without it `type foo >/dev/null 2>&1` — the
+# single most common way either probe is written — is a PARSE ERROR, since a
+# grammar-level statement is not a `command` and the redirect has nowhere to
+# attach.
+
+# `unset [-v|-f] NAME…` — remove variables, array elements (`unset 'a[1]'`)
+# or functions. Bareword args so `unset 'a[1]'` and `unset $name` both work.
+unsetArg   = ws + !redirect + word
+unsetArgs  = (unsetArg)+
+unsetStmt  = unsetKw + unsetArgs + loopRedirects?
+
+# `readonly [-p] [NAME[=VALUE]]…` — same item shape as `export`, since both
+# mark names and both accept an inline assignment.
+readonlyStmt = readonlyKw + exportItems? + loopRedirects?
+
+# `eval ARG…` — concatenate the arguments with spaces and run the result as
+# shell input, in the CURRENT frame.
+evalArg    = ws + !redirect + word
+evalArgs   = (evalArg)+
+evalStmt   = evalKw + evalArgs? + loopRedirects?
+
+# `let EXPR…` — evaluate each argument as an arithmetic expression. Exit
+# status is 0 when the LAST expression is non-zero, mirroring `((…))`.
+letArg     = ws + !redirect + word
+letArgs    = (letArg)+
+letStmt    = letKw + letArgs + loopRedirects?
+
+# `type [-t|-p|-a] NAME…` and `command [-v|-V] NAME [ARG…]`.
+typeArg    = ws + !redirect + word
+typeArgs   = (typeArg)+
+typeStmt   = typeKw + typeArgs + loopRedirects?
+commandArg = ws + !redirect + word
+commandArgs = (commandArg)+
+commandStmt = commandKw + commandArgs + loopRedirects?
+shiftArg       = ws + word
+shiftStmt      = shiftKw + shiftArg?
+# `trap ACTION SIGNAL…` — register ACTION (a command string) to run on a
+# signal. Requires the action + at least one signal name. The single
+# meaningful signal here is `EXIT` (fires when the top-level script ends);
+# others are stored but inert in this single-process shell.
+trapArg        = ws + word
+trapArgs       = (trapArg)+
+trapStmt       = trapKw + trapArgs
+
+# `alias [name[=value] …]` / `unalias [-a] name…`. Each arg is one word —
+# `name='ls -la'` arrives as a single word (the quotes concatenate), and
+# the visitor splits it on the first `=`. Bare `alias` (no args) prints the
+# table; `unalias` requires at least one arg (a name or `-a`).
+aliasArg       = ws + word
+aliasArgs      = (aliasArg)+
+aliasStmt      = aliasKw + aliasArgs?
+unaliasStmt    = unaliasKw + aliasArgs
+
+# `. FILE [args…]` and `source FILE [args…]`. The file path is the first
+# arg; any additional args become the file's positional params ($1..$N)
+# during execution. The keyword regex (above) keeps `.` from absorbing
+# bareword chars in `./script.sh`, so the file path still parses as a
+# normal word containing slashes/dots.
+sourceArg      = ws + word
+sourceArgs     = (sourceArg)+
+sourceKw       = sourceLongKw | sourceShortKw
+# Args are optional in the grammar so `source` with no args parses and
+# the visitor can emit the bash-style "filename argument required"
+# diagnostic. Without `?`, the rule fails and `source` falls through
+# to a generic command, producing a less helpful "Command not found".
+sourceStmt     = sourceKw + sourceArgs?
+
+# `read [-r] [VAR…]` — read one line from stdin and assign it to VARs
+# (splitting on $IFS). With no VAR names, the line lands in `REPLY`.
+# With multiple VARs, the last one collects the remainder of the line
+# (trailing fields plus their IFS separators). Implemented as a
+# grammar-level statement (not a tool) because it needs to mutate the
+# caller's `frame.vars` and consume from `frame.stdin`.
+#
+# Each suffix is either a redirect (`read x < file`, `read x <<< "$y"`)
+# or a word (flag like `-r` or a var name). The visitor classifies
+# words after evaluation. Mirrors how `command` is built (commandSuffix
+# = redirect | arg), but uses `word` directly because `read` doesn't
+# accept `--key=value` named-arg syntax.
+readKw           = /read(?![a-zA-Z0-9_-])/
+readSuffix       = redirect | word
+readSpacedSuffix = ws? + readSuffix
+# Name the repeat (not `(readSpacedSuffix)*` inline) so the AST has a
+# predictable `readSuffixes` child rather than an anonymous wrapper —
+# same gotcha as `caseClauses`, `whileCondStmts`, `funcBodyStmts`.
+readSuffixes     = (readSpacedSuffix)+
+readStmt         = readKw + readSuffixes?
+
+# `mapfile [-t] [-d DELIM] [-n N] [-s S] arr` (also `readarray`, an
+# exact alias). Reads all of stdin into the indexed array `arr`, one
+# element per line. With `-t`, trailing newlines are stripped from
+# each line. Same suffix shape as `read`; the visitor parses flags
+# and the final var name from the args.
+mapfileKw        = /mapfile(?![a-zA-Z0-9_-])/
+readarrayKw      = /readarray(?![a-zA-Z0-9_-])/
+mapfileNameKw    = mapfileKw | readarrayKw
+mapfileSuffix    = redirect | word
+mapfileSpacedSuffix = ws? + mapfileSuffix
+mapfileSuffixes  = (mapfileSpacedSuffix)+
+mapfileStmt      = mapfileNameKw + mapfileSuffixes?
+
+# `set [-eEunxv]…` / `set -o NAME` / `set -- args…` — shell option
+# toggles and positional-parameter replacement. Same suffix shape as
+# `read`: each arg is a word (flag like `-e`, `+u`, the literal `-o`,
+# or a positional value). Repeat is named to avoid the inline-anon
+# wrapper trap.
+setKw           = /set(?![a-zA-Z0-9_-])/
+setArg          = ws + word
+setArgs         = (setArg)+
+setStmt         = setKw + setArgs?
+
+# `declare [-a|-A|-aA|…] name[=value]…` — declare a variable or array
+# with optional attributes. The most common forms are `declare -a arr`
+# (indexed array) and `declare -A m` (associative array — REQUIRED
+# because without it, `m[key]=v` would treat the subscript as
+# arithmetic and assign to `arr[0]`). Same suffix shape as `set`.
+declareKw       = /declare(?![a-zA-Z0-9_-])/
+# A declare item is either an array initializer (`arr=(a b c)` — tried
+# first so its `=(…)` isn't mis-tokenized as separate words) or a plain
+# word (a `-flag`, a bare NAME, or a scalar `NAME=value`). This is what
+# makes the combined `declare -a arr=(a b c)` one-liner parse.
+declareItem     = arrayInit | word
+declareArg      = ws + declareItem
+declareArgs     = (declareArg)+
+declareStmt     = declareKw + declareArgs?
+
+# `shopt [-s|-u] [NAME…]` — toggle shell-behavior options. Subset:
+# `extglob`, `nullglob`, `dotglob`, etc. `-s NAME` enables, `-u NAME`
+# disables. Bare `shopt` (no args) lists all (we just return success).
+shoptKw         = /shopt(?![a-zA-Z0-9_-])/
+shoptArg        = ws + word
+shoptArgs       = (shoptArg)+
+shoptStmt       = shoptKw + shoptArgs?
+
+# `getopts OPTSTRING VARNAME [ARGS]` — parse one positional option per
+# call. Reads/writes shell-managed vars (OPTIND, OPTARG, the named
+# var), so it's a grammar-level statement (visitor needs frame access).
+# Returns success while options remain; failure when args are exhausted
+# or a non-option arg is reached. Common idiom:
+#   while getopts "vf:" opt; do case $opt in v) verbose=1;; f) file=$OPTARG;; esac; done
+getoptsKw       = /getopts(?![a-zA-Z0-9_-])/
+getoptsArg      = ws + word
+getoptsArgs     = (getoptsArg)+
+getoptsStmt     = getoptsKw + getoptsArgs?
+
+# ─── [[ ]] compound conditional ─────────────────────────────
+# Bash's enhanced test. Differences from `test`/`[`:
+#   - && / || / ! are logical operators within the form (not pipe
+#     operators), with proper precedence (! highest, then &&, then ||)
+#   - == / != do glob matching; =~ matches regex; <, > do lexicographic
+#     string compare (with `[ ]` they'd be redirection)
+#   - No word splitting on unquoted expansions inside the form
+dbOpenKw    = "[["
+dbCloseKw   = "]]"
+
+# Operators. Inside `dbBinaryOp` the longer literals come first so the
+# matcher commits to `==` before `=`, `<=` before `<`, etc.
+dbUnaryOp   = "-z" | "-n" | "-e" | "-f" | "-d" | "-s" | "-v"
+            | "-r" | "-w" | "-x"
+dbBinaryOp  = "==" | "!=" | "=~" | "<=" | ">="
+            | "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge"
+            | "=" | "<" | ">"
+
+# ─── The `=~` regex operand ─────────────────────────────────
+# The right side of `=~` is a REGEX, not a glob or a filename, so it routinely
+# contains `(`, `|`, `{`, `^`, `+` — characters `bareword` deliberately
+# excludes because everywhere else they are shell syntax. With only `word`
+# available, `[[ abc =~ (a)(b) ]]` was a PARSE ERROR that killed the whole
+# script, which ruled out capture groups: the main reason to reach for `=~`.
+#
+# `regexBareword` takes any run of non-space characters, plus a `]` that is
+# NOT the start of the closing `]]` — so a character class (`[a-c]`) survives
+# while the terminator still ends the operand. Expansions and quoted strings
+# are tried first, so `[[ $x =~ $re ]]` and `[[ $x =~ "lit" ]]` still work.
+regexBareword = /(?:\\.|\](?!\])|[^\s\]])+/
+regexWord     = (expansion | sqString | dqString | regexBareword)+
+dbRegexOp     = "=~"
+
+# Atoms (non-self-recursive) — listed inside `dbExpr` below.
+dbAtomRegex  = word + ws + dbRegexOp + ws + regexWord
+dbAtomBinary = word + ws + dbBinaryOp + ws + word
+dbAtomUnary  = dbUnaryOp + ws + word
+dbAtomParen  = "(" + ws? + dbExpr + ws? + ")"
+dbAtomSingle = word
+
+# Logic operators. cpat auto-classifies a rule by where the self-ref
+# (dbExpr) appears: at end → prefix, at start AND end → infix.
+dbAndOp = "&&"
+dbOrOp  = "||"
+dbNotOp = "!"
+
+dbNot   = dbNotOp + ws + dbExpr
+dbAnd   = dbExpr + ws + dbAndOp + ws + dbExpr
+dbOr    = dbExpr + ws + dbOrOp  + ws + dbExpr
+
+# Order matters: declare higher-precedence operators first (! > && > ||),
+# and ensure atoms come AFTER the operator/atom-binary rules so a single
+# bareword doesn't shortcut a binary form like `word OP word`.
+# `dbAtomRegex` precedes `dbAtomBinary` so the permissive regex operand wins
+# over `dbBinaryOp`'s plain-`word` right side whenever the operator is `=~`.
+dbExpr  = dbNot | dbAnd | dbOr
+        | dbAtomRegex | dbAtomBinary | dbAtomUnary | dbAtomParen | dbAtomSingle
+
+dblBracketStmt = dbOpenKw + ws + dbExpr + ws + dbCloseKw
+
+# ─── Break / continue / exit ────────────────────────────────
+# Loop control. Outside a loop, the visitor surfaces break/continue as
+# `success: false` with an explanatory stderr (matching bash). `exit`
+# halts the enclosing script — or the subshell, if inside one — via a
+# signal sentinel caught at the appropriate boundary.
+# The optional count is bash's "break out of N enclosing loops". Without it
+# `break 2` failed to parse the ENCLOSING loop, not just the statement, so a
+# nested-loop script died with `Command not found: for`.
+loopLevel    = ws + word
+breakStmt    = breakKw + loopLevel?
+continueStmt = continueKw + loopLevel?
+exitArg      = ws + word
+exitStmt     = exitKw + exitArg?
+
+# ─── Arithmetic expressions ─────────────────────────────────
+# Shared sub-grammar for the three arithmetic call sites:
+#   `$((expr))`     — arithExpansion, slots into `expansion`
+#   `((expr))`      — arithCommand,   slots into `expr` and `negatable`
+#   `for ((;;));…`  — arithFor,       slots into `expr` and `negatable`
+#
+# All three use the same `arithExpr` Expression pattern. cpat
+# auto-classifies each alternative by structure (atom / prefix /
+# postfix / infix). Declaration order determines precedence —
+# **earliest = highest precedence (binds tighter)**. The `right`
+# keyword on `arithPower`, `arithTernary`, and `arithAssign` gives
+# them right-associativity to match bash.
+#
+# Multi-char operators must be listed before any single-char prefix
+# in their Options (`**` before `*`, `==` before `=`, `<<=` before
+# `<<` before `<=` before `<`, `&&` before `&`, `||` before `|`).
+
+# Integer literals: an explicit base (`2#101`, `16#ff`), hex (`0xFF`),
+# octal (`0` followed by 0-7 digits, matching bash's leading-zero rule),
+# or decimal (`0` alone, or any non-leading-zero number).
+#
+# `BASE#DIGITS` comes FIRST so `2#101` is not read as the number 2 followed
+# by a stray `#`. Bash allows bases 2-64 with digits 0-9 a-z A-Z @ _; the
+# range check is the evaluator's job, so the pattern stays permissive.
+arithInt        = /[0-9]+#[0-9a-zA-Z@_]+|0[xX][0-9a-fA-F]+|0[0-7]+|[1-9][0-9]*|0/
+
+# Atom: variable read via bare identifier (`i`) or `$VAR` / `${VAR}`,
+# plus special positionals via `$1`..`$9` / `$#` / `$@` / `$*` / `$?`.
+arithVar        = identifier
+arithDollarRef  = "$" + identifier
+arithDollarBrc  = "${" + identifier + "}"
+arithDollarSpec = "$" + specialVarName
+arithParen      = "(" + ws? + arithExpr + ws? + ")"
+
+# Operator literals. Where a shorter operator is a prefix of a
+# longer one (`&` ⊂ `&&`, `|` ⊂ `||`, `<` ⊂ `<=` / `<<`, `=` ⊂ `==`,
+# `*` ⊂ `**` / `*=`, etc.), the shorter one uses a **negative-
+# lookahead regex** so cpat's PEG parser doesn't greedily consume
+# the first character and then fail to backtrack into the longer
+# operator. Without this, `1 && 2` would parse `&` as bitwise-and,
+# fail to find a RHS, and never reach arithLogAnd.
+#
+# Compound assignments (`+=`, `*=`, `<<=`, etc.) are listed first
+# in their Options so `i = j == 5` parses as `i = (j == 5)` —
+# `=` (assign) wouldn't conflict here, but the same length-first
+# pattern keeps things readable.
+arithPostfixOp  = "++" | "--"
+# Prefix `+` / `-` / `!` must not eat the first char of `+=` /
+# `-=` / `!=`. But prefix is only ever tried at the start of an
+# arithExpr (atom-scan phase), so the only risk is if a unary
+# prefix appears immediately before a compound-assign'd identifier —
+# extremely unlikely in practice. We still guard `!` from `!=`
+# because `!=` is also a valid operator slot and the ambiguity is
+# real if a `!` shows up where an infix op could.
+arithPrefixOp   = "++" | "--" | "+" | "-" | /!(?!=)/ | "~"
+arithPowerOp    = "**"
+arithMulDivOp   = /\*(?![*=])/ | /\/(?!=)/ | /%(?!=)/
+arithAddSubOp   = /\+(?!=)/ | /-(?!=)/
+arithShiftOp    = /<<(?!=)/ | />>(?!=)/
+arithCompareOp  = "<=" | ">=" | /<(?![<=])/ | />(?![>=])/
+arithEqualityOp = "==" | "!="
+arithBitAndOp   = /&(?![&=])/
+arithBitXorOp   = /\^(?!=)/
+arithBitOrOp    = /\|(?![|=])/
+arithLogAndOp   = "&&"
+arithLogOrOp    = "||"
+arithAssignOp   = "**=" | "<<=" | ">>=" | "+=" | "-=" | "*=" | "/=" | "%="
+                | "&=" | "|=" | "^=" | /=(?!=)/
+arithCommaOp    = ","
+
+# Self-referencing rules — cpat auto-classifies these into prefix /
+# postfix / infix based on where the self-ref appears. arithParen
+# is an atom despite containing arithExpr because the self-ref is
+# wrapped in literal `(` / `)` (neither boundary is the self-ref).
+arithPostfix    = arithExpr + ws? + arithPostfixOp
+arithPrefix     = arithPrefixOp + ws? + arithExpr
+arithPower      = arithExpr + ws? + arithPowerOp    + ws? + arithExpr
+arithMulDiv     = arithExpr + ws? + arithMulDivOp   + ws? + arithExpr
+arithAddSub     = arithExpr + ws? + arithAddSubOp   + ws? + arithExpr
+arithShift      = arithExpr + ws? + arithShiftOp    + ws? + arithExpr
+arithCompare    = arithExpr + ws? + arithCompareOp  + ws? + arithExpr
+arithEquality   = arithExpr + ws? + arithEqualityOp + ws? + arithExpr
+arithBitAnd     = arithExpr + ws? + arithBitAndOp   + ws? + arithExpr
+arithBitXor     = arithExpr + ws? + arithBitXorOp   + ws? + arithExpr
+arithBitOr      = arithExpr + ws? + arithBitOrOp    + ws? + arithExpr
+arithLogAnd     = arithExpr + ws? + arithLogAndOp   + ws? + arithExpr
+arithLogOr      = arithExpr + ws? + arithLogOrOp    + ws? + arithExpr
+arithTernary    = arithExpr + ws? + "?" + ws? + arithExpr + ws? + ":" + ws? + arithExpr
+arithAssign     = arithExpr + ws? + arithAssignOp   + ws? + arithExpr
+arithComma      = arithExpr + ws? + arithCommaOp    + ws? + arithExpr
+
+# Expression: ordered by precedence (highest first). `right`
+# keyword marks right-associative infix operators. Atoms last so
+# operators match before raw literals (Expression Pattern picks
+# atoms during initial scan regardless of position, but we keep
+# them at the bottom of the list for clarity).
+arithExpr = arithPostfix | arithPrefix | arithPower right | arithMulDiv
+          | arithAddSub | arithShift | arithCompare | arithEquality
+          | arithBitAnd | arithBitXor | arithBitOr | arithLogAnd
+          | arithLogOr | arithTernary right | arithAssign right
+          | arithComma
+          | arithParen | arithDollarBrc | arithDollarSpec | arithDollarRef
+          | arithInt | arithVar
+
+# ─── Arithmetic command + arithmetic for-loop ───────────────
+# `(( expr ))` is a standalone arithmetic command. Bash's exit
+# semantics for this construct are **inverted** from normal
+# commands: success when the result is non-zero, failure when
+# zero. The visitor implements that — it lets `((i > 0)) && …`
+# read naturally.
+# `((` at command position COMMITS to the arithmetic command (the `~/`),
+# mirroring the `$((` cut above: `((echo hi))`-style input is an arith
+# syntax error, and nested subshells are written `( (…) )` with a space —
+# the POSIX-recommended spelling. Without the cut, `(((((…` cross-
+# backtracked between this rule and `subshell` at every depth (6+ seconds
+# at 100 parens, growing without bound).
+arithCommand = "((" ~/ ws? + arithExpr + ws? + "))"
+
+# `for ((init; cond; update)); do BODY; done`. Each slot is
+# optional (`for ((;;))` is the canonical infinite loop, capped
+# by Shell.maxLoopIterations). Body, terminator, and trailing
+# redirects come from the list-form for-loop machinery above.
+arithForHead = forKw + ws + "((" + ws? + arithExpr? + ws? + ";"
+             + ws? + arithExpr? + ws? + ";"
+             + ws? + arithExpr? + ws? + "))"
+arithFor     = arithForHead + sep + doKw + trivias + forBody
+             + trivias? + doneKw + loopRedirects?
+
+# ─── Negation (!) ───────────────────────────────────────────
+# `! expr` flips the success bit while preserving stdout/stderr.
+# Binds to a single primary, not to a binaryExpr — so
+# `! a && b` parses as `(!a) && b`. To negate a whole pipeline,
+# wrap it in a subshell: `! (a | b)`.
+# `arithFor` and `arithCommand` are listed before `forLoop` /
+# `subshell` so their `((` prefix wins first-match over single
+# `(`. `forLoop` still has to come before plain `command` for the
+# same keyword-vs-bareword reason as before.
+negatable   = arithFor | arithCommand | forLoop | prefixedCommand
+            | assignment | subshell | braceGroup | command
+notOp       = "!"
+negatedExpr = notOp + ws + negatable
+
+# ─── Binary operators (Expression-promoted infix) ───────────
+# Operator tokens. Listed longest-first so the matcher commits to
+# the longer literal (e.g. `||` before `|`).
+andOp      = "&&"
+orOp       = "||"
+# Negative lookahead so `|` doesn't greedily match the first half of
+# `||`. Same tokenization trick used by `arithBitOrOp` above. Without
+# this, `cmd1 || cmd2` would parse the first `|` as a `pipeOp`, then
+# fail to find a second `expr` because the remaining `| cmd2` is a
+# stray `|`. (When the operators all lived in one `binaryOp` flat
+# alternation, the alternation order — `orOp | andOp | pipeOp` — was
+# sufficient because longer literals were tried first. With each
+# operator promoted to its own precedence-level rule, the longest-first
+# guarantee is lost; tokenization disambiguation now lives in the regex
+# itself.)
+pipeOp     = /\|(?!\|)/
+# One rule per precedence level, each defined as `expr + op + expr`
+# (full recursion on both sides). cpat's Expression Pattern uses
+# the alternation order in `expr` (below) to encode precedence —
+# tightest binding listed first. Bash precedence:
+#   `|`  > `&&` > `||`
+# so `a && b | c` parses as `a && (b | c)`, and
+#    `a || b && c` parses as `a || (b && c)`.
+# Same shape as the arithmetic operators (arithMulDiv / arithAddSub /
+# arithLogAnd / arithLogOr above) — they all share the Expression
+# Pattern convention.
+#
+# Right-side trivia (after the operator) is `trivias?` rather than
+# `ws?` so a newline IMMEDIATELY after `&&` / `||` / `|` is treated
+# as implicit line continuation — the operator demands a right
+# operand, so the newline can't terminate the statement there. Matches
+# bash. Left-side stays `ws?`: a newline BEFORE the operator
+# terminates the previous statement (also matches bash — `cmd\n&& x`
+# is a syntax error in real bash).
+pipeExpr   = expr + ws? + pipeOp + trivias? + expr
+andExpr    = expr + ws? + andOp  + trivias? + expr
+orExpr     = expr + ws? + orOp   + trivias? + expr
+# Loop atoms (forLoop, breakStmt, continueStmt) and the script-control
+# atom (exitStmt) are listed before `command` so their word-bounded
+# keyword regexes win first-match over the generic `bareword`.
+# arithFor / arithCommand come ahead of forLoop / subshell so their
+# `((` prefix beats single `(`.
+# Binary operators come FIRST and IN PRECEDENCE ORDER (highest binding
+# first): pipeExpr > andExpr > orExpr. Atoms (command, subshell, …)
+# go at the tail.
+expr       = pipeExpr | andExpr | orExpr
+           | negatedExpr | arithFor | arithCommand
+           | forLoop | selectLoop | whileLoop | untilLoop | ifStmt | caseStmt
+           | funcDef | dblBracketStmt
+           | breakStmt | continueStmt | exitStmt
+           | builtinStmt
+           | arrayInit | arrayIndexedAssign
+           | prefixedBuiltin | prefixedCommand | assignment | subshell | braceGroup | command
+
+# The grammar-level builtins, named as a group so the prefix form below can
+# reference them without restating the list.
+builtinStmt = returnStmt | localStmt | exportStmt | shiftStmt | trapStmt | sourceStmt | readStmt | setStmt
+            | aliasStmt | unaliasStmt | mapfileStmt | declareStmt | shoptStmt | getoptsStmt
+            | unsetStmt | readonlyStmt | evalStmt | letStmt | typeStmt | commandStmt
+
+# `VAR=value builtin …` — a variable prefix in front of a grammar-level
+# builtin. `IFS=: read -r a b` is the canonical case and it did not parse at
+# all: `prefixedCommand` only accepts a `command`, so `IFS=: read` fell
+# through to the generic command path, looked for a TOOL named `read`, and
+# died with `Command not found: read` — while the very same script with
+# `IFS=:` on its own line worked. Listed before `prefixedCommand` so the
+# builtin wins over the tool lookup.
+prefixedBuiltin = prefixList + builtinStmt
+
+# ─── Top level ──────────────────────────────────────────────
+# A `;` only counts as a statement separator when it's not the start of a
+# case-terminator (`;;`, `;&`, `;;&`). Otherwise the regular statement
+# parser would greedily eat the terminator and leave the case clause
+# unparseable. Newlines have no such collision.
+sepCore       = /(?:;(?![;&])|\n)+/
+sep           = ws? + comment? + sepCore + trivias?
+statement     = expr + sep?
+statementList = (statement)+
+script        = trivias? + statementList + trivias?

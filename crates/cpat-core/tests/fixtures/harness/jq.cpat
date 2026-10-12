@@ -1,0 +1,483 @@
+# ─── Whitespace ──────────────────────────────────────────────
+# Whitespace also swallows `#`-to-end-of-line comments, so they may
+# appear anywhere inter-token whitespace is allowed. `#` inside a string
+# is safe — dqString tokenizes the whole `"..."` before ws is consulted.
+ws = /(?:[ \t\n\r]+|#[^\n]*)+/
+
+# ─── Reserved keywords ──────────────────────────────────────
+trueKw  = "true"
+falseKw = "false"
+nullKw  = "null"
+andKw   = "and"
+orKw    = "or"
+ifKw    = "if"
+thenKw  = "then"
+elifKw  = "elif"
+elseKw  = "else"
+endKw   = "end"
+tryKw   = "try"
+catchKw = "catch"
+asKw    = "as"
+defKw     = "def"
+reduceKw  = "reduce"
+foreachKw = "foreach"
+labelKw   = "label"
+breakKw   = "break"
+moduleKw  = "module"
+importKw  = "import"
+includeKw = "include"
+
+# ─── Identifier (excludes reserved keywords) ────────────────
+identifier = /(?!(?:true|false|null|and|or|if|then|elif|else|end|try|catch|as|def|reduce|foreach|label|break|import|include|module)\b)[a-zA-Z_][a-zA-Z0-9_]*/
+
+# A bareword that DOESN'T exclude keywords. jq allows reserved words in two
+# positions where there's no ambiguity: object keys (`{if: 1}`) and variable
+# names (`$then`, `$foreach`). Both are anchored by a preceding `{`/`,`/`:` or
+# `$`, so letting a keyword through here can't be mistaken for the keyword's
+# statement form.
+bareWord = /[a-zA-Z_][a-zA-Z0-9_]*/
+
+# ─── Numbers ────────────────────────────────────────────────
+number   = /(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?/
+
+# ─── Double-quoted strings (with interpolation) ──────────────
+# A jq string is a `"`-delimited run of literal chunks and `\(expr)`
+# interpolations. A flat token regex CANNOT model this: an interpolation
+# may itself contain a nested string (`"x\(.a + "y")"`), whose interior
+# `"` would prematurely close a regex-based token. So `dqString` is a
+# structured atom — `strChunk` matches a literal run (any `\X` escape
+# except the `\(` that opens an interpolation, plus ordinary non-quote
+# chars), and `interpolation` recurses into `expr` between `\(` and `)`.
+# Because the self-reference sits in the MIDDLE (never at the start/end),
+# the Expression classifier treats dqString as an Atom — same shape as
+# `group`. The visitor evaluates it structurally (see visitor/atoms.ts).
+strChunk      = /(?:\\[^(]|[^"\\])+/
+interpStart   = /\\\(/
+interpolation = interpStart + ws? + expr + ws? + closeParen
+strPart       = interpolation | strChunk
+strParts      = (strPart)+
+dqString      = "\"" + strParts? + "\""
+
+# ─── Operator literals ──────────────────────────────────────
+# `|=` is the update-assignment op, so a bare `|` must not eat it.
+pipeOp  = /\|(?!=)/
+commaOp = ","
+# `//=` is the alt-assignment op, so a bare `//` must not eat its `=`.
+altOp   = /\/\/(?!=)/
+eqOp    = "=="
+neOp    = "!="
+leOp    = "<="
+geOp    = ">="
+ltOp    = "<"
+gtOp    = ">"
+# Each bare arithmetic op needs a negative lookahead so it doesn't
+# consume the leading char of its compound-assignment variant
+# (`+=`, `-=`, `*=`, `/=`, `%=`). Without these, `.x += 5` would
+# match `+` here, leave `= 5` dangling, and addExpr would fail —
+# but cpat's expression promotion doesn't reliably backtrack to
+# assignExpr from a half-matched addExpr.
+addOp   = /\+(?!=)/
+subOp   = /-(?!=)/
+mulOp   = /\*(?!=)/
+divOp   = /\/(?![\/=])/
+modOp   = /%(?!=)/
+optOp   = "?"
+
+multOp   = mulOp | divOp | modOp
+addSubOp = addOp | subOp
+compOp   = eqOp | neOp | leOp | geOp | ltOp | gtOp
+
+# ─── Punctuation ─────────────────────────────────────────────
+openParen      = "("
+closeParen     = ")"
+openSqBracket  = "["
+closeSqBracket = "]"
+openBracket    = "{"
+closeBracket   = "}"
+dot            = "."
+recurseKw      = ".."
+colon          = ":"
+semicolon      = ";"
+varSigil       = "$"
+formatAt       = "@"
+
+# ─── Literal atoms ──────────────────────────────────────────
+literal = number | trueKw | falseKw | nullKw
+
+# ─── Variable reference ($x) ────────────────────────────────
+# Variable names may be reserved words (`$then`, `$foreach`, `$label`); the
+# `$` sigil removes any ambiguity with the keyword's statement form. An
+# optional `::suffix` names a data module's binding (`$d::d`).
+varName  = /[a-zA-Z_][a-zA-Z0-9_]*(?:::[a-zA-Z_][a-zA-Z0-9_]*)?/
+variable = varSigil + varName
+
+# ─── Format reference (@base64, etc.) ───────────────────────
+formatName = identifier
+formatRef  = formatAt + formatName
+formatExpr = formatRef + ws? + dqString
+formatAtom = formatRef
+
+# ─── Identity / field path ──────────────────────────────────
+# Bare `.` is identity, but `.5` is the number 0.5 — so identity must NOT
+# match a `.` that begins a leading-dot number literal. (A `.` before `[`,
+# a letter, or another `.` still matches: those are index/field/recurse.)
+identity  = /\.(?![0-9])/
+fieldName = identifier
+fieldPath = dot + fieldName
+# `."quoted key"` — sugar for `.["quoted key"]`, for keys that aren't
+# bare identifiers. The dqString may interpolate, like `.[ ]` does.
+quotedFieldPath = dot + dqString
+
+# ─── Group ──────────────────────────────────────────────────
+# Committed at `(` — the only rule that starts an expression atom with a
+# bare paren (reduce/foreach/def parens follow keywords; computedKey lives
+# in object-key position). Kills the superlinear re-read of `(`-runs
+# (docs/cpu-runaway-audit.md K1: 1000 parens ≈ 0.6 s and growing).
+group = openParen ~/ ws? + expr + ws? + closeParen
+
+# ─── Array construction ─────────────────────────────────────
+arrayExpr = openSqBracket + ws? + expr? + ws? + closeSqBracket
+
+# ─── Object construction ────────────────────────────────────
+# Object keys may be reserved words unquoted (`{if: 1, and: 2}`).
+objectKeyName    = bareWord
+quotedKey        = dqString
+computedKey      = openParen + ws? + expr + ws? + closeParen
+# A `$var: value` entry keys on the variable's (string) VALUE — `$k: 1` is
+# `{ ($k): 1 }`. Listed last so `$x` with no colon still falls to the shorthand.
+objectKey        = objectKeyName | quotedKey | computedKey | variable
+objectEntryPair  = objectKey + ws? + colon + ws? + exprNoComma
+objectShorthand  = objectKeyName
+objectVarShort   = variable
+# `{"a"}` is shorthand for `{"a": .a}` (and `{"\(f)"}` for the interpolated
+# key). Tried after `objectEntryPair` so `"a": v` still parses as a pair.
+objectStrShort   = quotedKey
+objectEntry      = objectEntryPair | objectVarShort | objectStrShort | objectShorthand
+objectComma      = ws? + commaOp + ws?
+objectEntries    = (objectEntry, objectComma trim)+
+objectExpr       = openBracket + ws? + objectEntries? + ws? + closeBracket
+
+# ─── if / then / elif / else / end ─────────────────────────
+elseIfBranch   = elifKw + ws + expr + ws + thenKw + ws + expr
+elseIfBranches = (elseIfBranch, ws)+
+elseBranch     = elseKw + ws + expr
+ifExpr = ifKw + ws + expr + ws + thenKw + ws + expr + ws? + elseIfBranches? + ws? + elseBranch? + ws? + endKw
+
+# ─── try / catch ─────────────────────────────────────────────
+# Unlike `if`/`reduce`/`foreach` (which are closed by `end`/`)`), `try` and
+# its `catch` handler have NO trailing delimiter. In jq's precedence table
+# `try`/`catch` bind TIGHTER than every infix operator, so `1 + try 2 catch 3
+# + 4` is `1 + (try 2 catch 3) + 4` (= 7) and `try a catch b | c` is
+# `(try a catch b) | c`. We get that by referencing `expr` DIRECTLY at each
+# rule's tail — cpat then classifies `try`/`catch` as tight PREFIX operators
+# (the same idiom as unary `-`), so the body and handler bind an operand
+# tighter than `+`/`|`/`,`/`//` instead of swallowing them.
+catchClause = ws + catchKw + ws + tightExpr
+tryExpr     = tryKw + ws + tightExpr + catchClause?
+
+# ─── label / break ───────────────────────────────────────────
+# `label $out | BODY` establishes a named breakpoint; `break $out`
+# inside BODY cuts BODY's output stream at that point. As in jq, `label`
+# is a lowest-precedence binder whose BODY greedily extends over `,` and
+# `|` (so `label $o | .[] | …, break $o` is all one body — no parens).
+#
+# The greediness comes from hiding the `expr` reference behind the named
+# `labelBody` rule, exactly like `defBody` does for `def`: when a rule
+# references `expr` DIRECTLY at its tail, cpat classifies it as a prefix
+# operator and binds the operand tightly; when the reference is wrapped
+# in a sub-rule, the rule is a greedy atom (like `group`/`defExpr`) whose
+# inner `expr` consumes maximally. breakExpr is a plain atom.
+labelBody = ws? + expr
+labelExpr = labelKw + ws + variable + ws? + pipeOp + labelBody
+breakExpr = breakKw + ws + variable
+
+# ─── Destructuring patterns ──────────────────────────────────
+# A binding target after `as` is a `patternTerm`: one or more `pattern`s
+# separated by the `?//` alternative-destructuring operator. A `pattern`
+# is a variable, an array pattern, or an object pattern — the array/object
+# forms recurse into `pattern`, so the self-reference is always nested
+# inside `[ ]` / `{ }` (an Atom in the pattern Expression, like `group`
+# in `expr`). Object entries support `$x` shorthand (binds `.x`),
+# `key: pattern`, `"str": pattern` (interpolated), and `(expr): pattern`
+# (computed). The visitor walks these structurally (see visitor/destructure.ts).
+destructAltOp  = "?//"
+patComma       = ws? + commaOp + ws?
+patternList    = (pattern, patComma trim)+
+arrayPat       = openSqBracket + ws? + patternList? + ws? + closeSqBracket
+# Object-pattern keys may be reserved words (`{as: $x}`). The `$name: pat`
+# form (`objPatVarPair`) is jq's bind-and-recurse: it binds `$name` to `.name`
+# AND matches `pat` against `.name` (e.g. `{$b: [$c, $d]}`).
+objPatKeyName  = bareWord
+objPatKey      = objPatKeyName | dqString | computedKey
+objPatPair     = objPatKey + ws? + colon + ws? + pattern
+objPatVarPair  = variable + ws? + colon + ws? + pattern
+objPatEntry    = objPatVarPair | objPatPair | variable
+objPatEntries  = (objPatEntry, patComma trim)+
+objectPat      = openBracket + ws? + objPatEntries? + ws? + closeBracket
+pattern        = variable | arrayPat | objectPat
+destructAltSep = ws? + destructAltOp + ws?
+patternTerm    = (pattern, destructAltSep trim)+
+
+# ─── reduce / foreach ────────────────────────────────────────
+reduceExpr  = reduceKw + ws + expr + ws + asKw + ws + patternTerm + ws? + openParen + ws? + expr + ws? + semicolon + ws? + expr + ws? + closeParen
+foreachExtractPart = ws? + semicolon + ws? + expr
+foreachExpr = foreachKw + ws + expr + ws + asKw + ws + patternTerm + ws? + openParen + ws? + expr + ws? + semicolon + ws? + expr + foreachExtractPart? + ws? + closeParen
+
+# ─── def — user function ─────────────────────────────────────
+defParam      = variable | identifier
+defParamSep   = ws? + semicolon + ws?
+defParamList  = (defParam, defParamSep trim)+
+defParamGroup = openParen + ws? + defParamList + ws? + closeParen
+defName       = identifier
+defStatement  = defKw + ws + defName + ws? + defParamGroup? + ws? + colon + ws? + expr + ws? + semicolon
+defBody       = ws? + expr
+defExpr       = defStatement + defBody
+
+# ─── Module directives (import / include / module) ──────────
+# A program may be prefixed by directives: `module {meta};`, then
+# `import "path" as ns {meta}?;` / `import "path" as $data {meta}?;`, then
+# `include "path" {meta}?;`. Each carries the rest of the program as a greedy
+# body (the `def`/`defBody` idiom), so `import "a" as foo; BODY` nests as
+# importExpr(directive, BODY). `as ns` (identifier) is a function module;
+# `as $data` (variable) is a JSON data import. The optional trailing object is
+# the directive metadata (`{search:"./"}`).
+importName  = variable | identifier
+importDir   = importKw + ws + dqString + ws + asKw + ws + importName + ws? + objectExpr? + ws? + semicolon
+includeDir  = includeKw + ws + dqString + ws? + objectExpr? + ws? + semicolon
+moduleDir   = moduleKw + ws? + objectExpr + ws? + semicolon
+importExpr  = importDir + defBody
+includeExpr = includeDir + defBody
+moduleExpr  = moduleDir + defBody
+
+# ─── Builtin / user-fn calls ────────────────────────────────
+# Same exclusion as `identifier`, plus an optional `::name` namespace suffix
+# for imported-module functions (`foo::bar`). A single token so the visitor
+# keeps reading `builtinName`'s `.value` ("foo::bar").
+builtinName     = /(?!(?:true|false|null|and|or|if|then|elif|else|end|try|catch|as|def|reduce|foreach|label|break|import|include|module)\b)[a-zA-Z_][a-zA-Z0-9_]*(?:::[a-zA-Z_][a-zA-Z0-9_]*)?/
+builtinArgSep   = ws? + semicolon + ws?
+builtinArgList  = (expr, builtinArgSep trim)+
+builtinArgGroup = openParen + ws? + builtinArgList + ws? + closeParen
+builtinCall     = builtinName + builtinArgGroup?
+
+# ─── Postfix steps (shared) ─────────────────────────────────
+fieldStep    = dot + fieldName
+fieldStepStr = dot + dqString
+indexStep    = openSqBracket + ws? + expr + ws? + closeSqBracket
+sliceStep    = openSqBracket + ws? + expr? + ws? + colon + ws? + expr? + ws? + closeSqBracket
+iterateStep  = openSqBracket + ws? + closeSqBracket
+optStep      = optOp
+
+# ─── Postfix accesses (in expr) ─────────────────────────────
+# `ws?` before each step: jq's lexer skips whitespace between tokens, so a
+# postfix access may be separated from its operand by spaces —
+# `if … end []`, `.a [0]`, `.a .b` are all valid.
+fieldAccess    = expr + ws? + fieldStep
+fieldAccessStr = expr + ws? + fieldStepStr
+indexAccess    = expr + ws? + indexStep
+sliceAccess    = expr + ws? + sliceStep
+iterateAccess  = expr + ws? + iterateStep
+optionalAccess = expr + ws? + optStep
+
+# Dot-bracket sugar: an optional `.` may precede a bracket step, so
+# `.a.[0]` / `.a.[1:2]` / `.a.[]` mean the same as `.a[0]` etc. Same visitor
+# as the dot-less forms — the middle `dot` node is ignored (base is
+# children[0], step is the last child).
+dotIndexAccess   = expr + ws? + dot + indexStep
+dotSliceAccess   = expr + ws? + dot + sliceStep
+dotIterateAccess = expr + ws? + dot + iterateStep
+
+# ─── Assignment operators ───────────────────────────────────
+# Listed longest-first where prefixes overlap. `plainAssignOp` uses
+# negative lookahead so a bare `=` doesn't get eaten when followed
+# by another `=` (compEx `==`).
+altAssignOp   = "//="
+updateOp      = "|="
+plusAssignOp  = "+="
+minusAssignOp = "-="
+mulAssignOp   = "*="
+divAssignOp   = "/="
+modAssignOp   = "%="
+plainAssignOp = /=(?!=)/
+
+anyAssignOp = altAssignOp | updateOp | plusAssignOp | minusAssignOp
+            | mulAssignOp | divAssignOp | modAssignOp | plainAssignOp
+
+# ─── Unary minus ────────────────────────────────────────────
+unaryExpr = subOp + ws? + expr
+
+# ─── Binary expressions (in expr) ───────────────────────────
+mulExpr    = expr + ws? + multOp   + ws? + expr
+addExpr    = expr + ws? + addSubOp + ws? + expr
+compExpr   = expr + ws? + compOp   + ws? + expr
+andExpr    = expr + ws? + andKw    + ws? + expr
+orExpr     = expr + ws? + orKw     + ws? + expr
+altExpr    = expr + ws? + altOp    + ws? + expr
+commaExpr  = expr + ws? + commaOp  + ws? + expr
+pipeExpr   = expr + ws? + pipeOp   + ws? + expr
+assignExpr = expr + ws? + anyAssignOp + ws? + expr
+# `E as PAT | BODY`. cpat sees the leading and trailing `expr` and classifies
+# this as a BINARY operator whose "operator" is `as PAT |` — so the source and
+# body are its two operands, at `asExpr`'s (loose) precedence. Right-associated
+# so chained binders nest correctly: `a as $x | b as $y | body` is
+# `a as $x | (b as $y | body)`.
+asExpr     = expr + ws  + asKw + ws + patternTerm + ws? + pipeOp + ws? + expr
+
+# ─── exprNoComma duplicates (no commaExpr) ──────────────────
+fieldAccessNc    = exprNoComma + ws? + fieldStep
+fieldAccessStrNc = exprNoComma + ws? + fieldStepStr
+indexAccessNc    = exprNoComma + ws? + indexStep
+sliceAccessNc    = exprNoComma + ws? + sliceStep
+iterateAccessNc  = exprNoComma + ws? + iterateStep
+optionalAccessNc = exprNoComma + ws? + optStep
+dotIndexAccessNc   = exprNoComma + ws? + dot + indexStep
+dotSliceAccessNc   = exprNoComma + ws? + dot + sliceStep
+dotIterateAccessNc = exprNoComma + ws? + dot + iterateStep
+unaryExprNc      = subOp + ws? + exprNoComma
+mulExprNc        = exprNoComma + ws? + multOp   + ws? + exprNoComma
+addExprNc        = exprNoComma + ws? + addSubOp + ws? + exprNoComma
+compExprNc       = exprNoComma + ws? + compOp   + ws? + exprNoComma
+andExprNc        = exprNoComma + ws? + andKw    + ws? + exprNoComma
+orExprNc         = exprNoComma + ws? + orKw     + ws? + exprNoComma
+altExprNc        = exprNoComma + ws? + altOp    + ws? + exprNoComma
+pipeExprNc       = exprNoComma + ws? + pipeOp   + ws? + exprNoComma
+assignExprNc     = exprNoComma + ws? + anyAssignOp + ws? + exprNoComma
+asExprNc         = exprNoComma + ws  + asKw + ws + patternTerm + ws? + pipeOp + ws? + exprNoComma
+
+# ─── tightExpr duplicates — accesses/primaries, NO infix binaries ──
+# The operand level for `try`/`catch` (see the try/catch section). Same
+# expression-promotion idiom as `exprNoComma`, but the alternation omits every
+# infix binary (`* / % + - == and or = // , |`, `as|`) so a body/handler binds
+# only a primary/postfix term (unary `-` kept for `try -.`). Each access rule
+# self-references `tightExpr` so cpat's left-recursion resolves within THIS
+# promoted pattern (referencing `expr`/`exprNoComma` here would not parse).
+fieldAccessT      = tightExpr + ws? + fieldStep
+fieldAccessStrT   = tightExpr + ws? + fieldStepStr
+indexAccessT      = tightExpr + ws? + indexStep
+sliceAccessT      = tightExpr + ws? + sliceStep
+iterateAccessT    = tightExpr + ws? + iterateStep
+optionalAccessT   = tightExpr + ws? + optStep
+dotIndexAccessT   = tightExpr + ws? + dot + indexStep
+dotSliceAccessT   = tightExpr + ws? + dot + sliceStep
+dotIterateAccessT = tightExpr + ws? + dot + iterateStep
+unaryExprT        = subOp + ws? + tightExpr
+
+# ─── expr (Expression-promoted) — tightest first ───────────
+expr = optionalAccess
+     | fieldAccess
+     | fieldAccessStr
+     | dotIterateAccess
+     | dotSliceAccess
+     | dotIndexAccess
+     | iterateAccess
+     | sliceAccess
+     | indexAccess
+     | unaryExpr
+     | mulExpr
+     | addExpr
+     | compExpr
+     | andExpr
+     | orExpr
+     | assignExpr right
+     | altExpr
+     | commaExpr
+     | pipeExpr
+     | asExpr right
+     | group
+     | arrayExpr
+     | objectExpr
+     | dqString
+     | ifExpr
+     | tryExpr
+     | reduceExpr
+     | foreachExpr
+     | labelExpr
+     | breakExpr
+     | defExpr
+     | importExpr
+     | includeExpr
+     | moduleExpr
+     | recurseKw
+     | formatExpr
+     | formatAtom
+     | builtinCall
+     | quotedFieldPath
+     | fieldPath
+     | variable
+     | identity
+     | literal
+
+# ─── exprNoComma — same alts minus commaExpr (with Nc binaries) ────
+exprNoComma = optionalAccessNc
+            | fieldAccessNc
+            | fieldAccessStrNc
+            | dotIterateAccessNc
+            | dotSliceAccessNc
+            | dotIndexAccessNc
+            | iterateAccessNc
+            | sliceAccessNc
+            | indexAccessNc
+            | unaryExprNc
+            | mulExprNc
+            | addExprNc
+            | compExprNc
+            | andExprNc
+            | orExprNc
+            | assignExprNc right
+            | altExprNc
+            | pipeExprNc
+            | asExprNc right
+            | group
+            | arrayExpr
+            | objectExpr
+            | dqString
+            | ifExpr
+            | tryExpr
+            | reduceExpr
+            | foreachExpr
+            | labelExpr
+            | breakExpr
+            | defExpr
+            | recurseKw
+            | formatExpr
+            | formatAtom
+            | builtinCall
+            | quotedFieldPath
+            | fieldPath
+            | variable
+            | identity
+            | literal
+
+# ─── tightExpr — same atoms, accesses/unary only (no infix binaries) ──
+tightExpr = optionalAccessT
+          | fieldAccessT
+          | fieldAccessStrT
+          | dotIterateAccessT
+          | dotSliceAccessT
+          | dotIndexAccessT
+          | iterateAccessT
+          | sliceAccessT
+          | indexAccessT
+          | unaryExprT
+          | group
+          | arrayExpr
+          | objectExpr
+          | dqString
+          | ifExpr
+          | tryExpr
+          | reduceExpr
+          | foreachExpr
+          | labelExpr
+          | breakExpr
+          | defExpr
+          | recurseKw
+          | formatExpr
+          | formatAtom
+          | builtinCall
+          | quotedFieldPath
+          | fieldPath
+          | variable
+          | identity
+          | literal
+
+# ─── Top level ──────────────────────────────────────────────
+filter = ws? + expr + ws?

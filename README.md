@@ -23,7 +23,7 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 9)
+## What's in the box (milestone 10)
 
 `Literal`, `Regex`, `Sequence`, `Choice`, `Repeat` (unbounded or bounded, with an optional
 divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for recursive
@@ -91,7 +91,32 @@ assert_eq!(suggestion.options[0].text, "th");
 assert_eq!(suggestion.options[0].start_index, 8);
 ```
 
-Still to come: the `.cpat` grammar, decorators, autocomplete in JS.
+`Grammar::parse_string(text, GrammarOptions::default())` builds a `.cpat` grammar: every rule
+comes back by name in `Patterns`, each a `Context` with every rule in scope, so a rule runs on
+its own. The grammar language is v12's: literals with escapes, `/regex/`, `a + b` (and `a ~/ b`,
+which inserts a cut), `a | b`, `(p)+`, `(p)*`, `(p, divider trim){m,n}`, `!p`, `p?`, `p right`,
+`?->| p`, `["{"] p ["}"]` and `["{"] ... ["}"]`, groups, aliases and exports. Mistakes are a
+`GrammarError` with v12's message: a syntax error with its line, column and hint, a removed `<|>`,
+a name no rule defines, rules that only rename each other in a loop, and a literal an earlier,
+shorter one hides (`"=" | "=="`). The hand-written cpat grammar itself is `cpat_grammar()`.
+
+```rust
+use cpat_core::{Grammar, GrammarOptions};
+
+let mut patterns = Grammar::parse_string(r#"
+    number = /[0-9]+/
+    mul = expr + "*" + expr
+    add = expr + "+" + expr
+    expr = mul | add | number
+"#, GrammarOptions::default())?;
+
+let result = patterns["expr"].exec("1+2*3");
+assert_eq!(result.tree().unwrap().root().name(), "add");
+```
+
+Still to come: imports, `use params` and decorators in grammar files (refused for now, with
+`GrammarError::NoImportResolver` or `GrammarError::Unsupported`), and autocomplete and grammars
+in JS.
 
 ```rust
 use cpat_core::{Block, Choice, Literal, Pattern, Reference, Regex, Sequence};

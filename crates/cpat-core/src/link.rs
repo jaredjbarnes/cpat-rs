@@ -186,16 +186,20 @@ impl Checker {
     }
 
     fn follow(&mut self, reference: &Reference, frames: &[ScopeFrame]) -> Result<(), PatternError> {
-        let (master, key, home) = match reference.master() {
+        // The master is made only for a target not walked yet: a context
+        // found by its own name is a copy of its whole child.
+        let (master, key, home): (Box<dyn FnOnce() -> Rc<Pattern>>, _, _) = match reference.master()
+        {
             Some(master) => (
-                Rc::clone(master),
+                Box::new(|| Rc::clone(master)),
                 TargetKey::Entry(Rc::as_ptr(master)),
                 reference.home().cloned(),
             ),
             None => {
-                let found =
+                let mut found =
                     scope::lookup(frames, reference.target()).ok_or_else(|| reference.unknown())?;
-                (found.master, found.key, found.home)
+                let (key, home) = (found.key, found.home.take());
+                (Box::new(move || found.master()), key, home)
             }
         };
 
@@ -214,7 +218,7 @@ impl Checker {
             // Walk what the parse would run: the master under the
             // reference's name (a renamed context answers to that name).
             self.pending.push(State {
-                pattern: master.renamed_to(reference.meta.name),
+                pattern: master().renamed_to(reference.meta.name),
                 frames,
             });
         }

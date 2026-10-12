@@ -1,0 +1,159 @@
+# sed — script grammar.
+#
+# Input: the raw sed script text (the string the user passes as the
+# first positional, e.g. `s/foo/bar/g;/baz/d`).
+#
+# Strategy: cpat captures the script's HIGH-LEVEL structure
+# (statements, addresses, command letters, separators). The
+# data-dependent bodies (`s/.../.../`, `y/.../.../`, `c TEXT`, etc.)
+# are captured as opaque regex matches and unpacked by the visitor —
+# the variable-delimiter problem doesn't fit a clean PEG and the
+# visitor already needs to interpret the inner content (regex
+# compilation, escape translation) regardless.
+#
+# For variable-delim commands we use JS regex NAMED BACKREFERENCES
+# (`(?<d>.)...\k<d>`) — supported since ES2018. The first non-alpha
+# non-whitespace char after `s` or `y` becomes the delimiter; the
+# regex matches "any char or backslash-escape that isn't the
+# delimiter, until the delimiter."
+
+# ─── Whitespace + separators ────────────────────────────────
+# Inline whitespace inside a statement (between address and command,
+# around `,` in a range). NOT a statement separator.
+ws = /[ \t]+/
+
+# Statement separator — `;` or newline, any number of them.
+sep = /[ \t]*[;\n][ \t;\n]*/
+
+# ─── Address atoms ──────────────────────────────────────────
+lineAddr = /\d+/
+lastAddr = "$"
+# Regex address: `/PAT/` where PAT can contain `\/` and other escapes
+# but not unescaped `/` or `\n`.
+regexAddr = /\/(?:\\.|[^\/\\\n])*\//
+
+singleAddr = regexAddr | lastAddr | lineAddr
+
+# ─── Range ──────────────────────────────────────────────────
+comma = ","
+rangeAddr = singleAddr + ws? + comma + ws? + singleAddr
+
+# An address can be a range OR a single addr. Range listed first so
+# cpat's PEG commits to the longer form when comma is present.
+addressSpec = rangeAddr | singleAddr
+
+# ─── Negation ──────────────────────────────────────────────
+bang = "!"
+
+# ─── Command bodies ────────────────────────────────────────
+# Each body rule captures one complete command as its `node.value`.
+# The visitor then peels apart pattern/replacement/flags or text.
+#
+# All body regexes are anchored to consume up to but not past the
+# next statement boundary (`;` / `\n` / end of input) for atom
+# commands; for `s` / `y` the regex naturally stops after the
+# trailing delimiter and optional flags.
+
+# s/PAT/REPL/[gimp][NUM][ w FILE]
+# `(?<sd>...)` captures the delimiter; `\k<sd>` references it.
+# Body chars: backslash-escape (any char) OR any char that's not the
+# delimiter or backslash. Flag region after the trailing delimiter:
+#   - letter flags `[gimp]`
+#   - optional numeric NUM (replace only the Nth match)
+#   - optional `w FILE` trailer (write pattern space on successful
+#     substitute; FILE runs until `;` / `\n`)
+# Visitor parses the flag region; we accept letter+digit flags in
+# any order, and the visitor errors on unknown letters.
+sCmd = /s(?<sd>[^A-Za-z0-9\s\\\n])(?:\\.|(?!\k<sd>)[^\\])*\k<sd>(?:\\.|(?!\k<sd>)[^\\])*\k<sd>[gimp0-9]*(?:[ \t]*w[ \t]+[^;\n]+)?/
+
+# y/SRC/DST/ — like s but no flags.
+yCmd = /y(?<yd>[^A-Za-z0-9\s\\\n])(?:\\.|(?!\k<yd>)[^\\])*\k<yd>(?:\\.|(?!\k<yd>)[^\\])*\k<yd>/
+
+# c / a / i — text commands. The body runs to an unescaped `\n` and
+# NOTHING ELSE ends it. `\X` (backslash + any char including newline)
+# is consumed as one escape unit, so GNU's `c\\\n line2\\\n line3`
+# multi-line continuation works — the trailing `\\\n` between lines
+# stays inside the regex's `\\.` branch.
+#
+# A `;` is ORDINARY TEXT here, matching real sed: `1c foo; bar`
+# inserts "foo; bar", and you cannot put another command after a
+# c/a/i on the same line because the text swallows it. This used to
+# exclude `;` and so rejected any body containing one — which is
+# every non-trivial line of code. Two real runs died on it, both
+# while rewriting a chunk of a script with `c\`, and the error
+# ("could not parse script") pointed at the whole script and named
+# nothing. Verified against BSD sed: escaped and bare semicolons in
+# a `-f` script both insert the text verbatim.
+changeCmd = /c(?:\\(?:.|\n)|[^\n\\])*/
+appendCmd = /a(?:\\(?:.|\n)|[^\n\\])*/
+insertCmd = /i(?:\\(?:.|\n)|[^\n\\])*/
+
+# r / w — file-I/O commands. Body is a filename run, same shape as
+# the text commands minus the multi-line continuation (filenames
+# don't contain newlines). A `;` is part of the filename here too,
+# for the same reason it is part of a c/a/i body: real sed reads the
+# rest of the LINE as the name.
+readCmd  = /r(?:\\.|[^\n\\])*/
+writeCmd = /w(?:\\.|[^\n\\])*/
+
+# Branch + label commands. Label names: identifier-shape. `b` and
+# `t` accept an optional label; absent = "branch to end of script."
+labelDecl = /:[a-zA-Z_][a-zA-Z_0-9]*/
+bCmd      = /b(?:[ \t]+[a-zA-Z_][a-zA-Z_0-9]*)?/
+tCmd      = /t(?:[ \t]+[a-zA-Z_][a-zA-Z_0-9]*)?/
+TCmd      = /T(?:[ \t]+[a-zA-Z_][a-zA-Z_0-9]*)?/
+
+# Atom commands — single letter, no body.
+pCmd = "p"
+dCmd = "d"
+qCmd = "q"
+nCmd = "n"
+lCmd = "l"
+eqCmd = "="
+
+# Hold-space commands. Single uppercase/lowercase letters; cpat
+# alternation will commit on the matching letter.
+hCmd  = "h"
+HCmd  = "H"
+gCmd  = "g"
+GCmd  = "G"
+xCmd  = "x"
+
+# Multi-line commands (D / N / P): read or operate on lines
+# beyond the current one. N appends next input line; D deletes
+# the first newline-terminated part and restarts the cycle; P
+# prints the first newline-terminated part.
+NCmd  = "N"
+DCmd  = "D"
+PCmd  = "P"
+
+atomCmd = pCmd | dCmd | qCmd | nCmd | NCmd | DCmd | PCmd | lCmd | eqCmd
+        | hCmd | HCmd | gCmd | GCmd | xCmd
+
+# Block: `{ cmd; cmd; … }`. Inner script reuses the top-level
+# `statements` rule, so blocks nest naturally.
+openBrace  = "{"
+closeBrace = "}"
+block = openBrace + sep? + statements + sep? + closeBrace
+
+# Order matters in this alternation: multi-char (regex-captured)
+# bodies tried before the single-letter atoms so `s.../.../` doesn't
+# get misread as the `s` alone-then-garbage. `block` tried first so
+# `{` isn't mistaken for a stray atom.
+commandBody = block
+            | sCmd | yCmd
+            | changeCmd | appendCmd | insertCmd
+            | readCmd | writeCmd
+            | labelDecl | bCmd | tCmd | TCmd
+            | atomCmd
+
+# ─── Statement ──────────────────────────────────────────────
+# [address] [!] command
+statement = addressSpec? + ws? + bang? + ws? + commandBody
+
+# ─── Top level ──────────────────────────────────────────────
+# Named repeat to avoid cpat's anonymous-pattern wrapper (see the
+# convention in `docs/bash-roadmap.md`). The visitor walks
+# `script.children` looking for `statements`, then iterates that.
+statements = (statement, sep trim)*
+script = sep? + statements + sep?

@@ -1,0 +1,157 @@
+# find — predicate-expression grammar.
+#
+# Input shape: the encoder in `./encoder.ts` takes the shell's
+# tokenized args + the `_meta` channel and produces a single string
+# where:
+#   - Structural tokens (keywords, operators, terminators, grouping)
+#     are bare and whitespace-separated.
+#   - Every value is either a bareword (if its source was a single
+#     bareword wordPart) or a double-quoted token (if the source had
+#     a quoted / expansion / brace-list part).
+#   - Inside `-exec ... ;` / `-exec ... +` the encoder always quotes
+#     args (even barewords), so the only bare tokens between -exec
+#     and its terminator are the terminator itself.
+#
+# Structure: the grammar produces a FLAT LIST of items (atoms +
+# `-o` markers + `-a`/`-and` no-op markers). The visitor groups
+# items by `-o` boundaries, ANDs items within each group, and ORs
+# the groups together. This avoids left-recursive infix grammar
+# and keeps the cpat side small.
+#
+# Precedence (visitor):
+#   - `-not` / `!` (prefix on a single atom — handled in `notExpr`)
+#   - implicit AND between adjacent atoms (visitor combines)
+#   - `-o` / `-or` (lowest — visitor splits chain on these)
+
+# ─── Whitespace ──────────────────────────────────────────────
+ws = /[ \t\n\r]+/
+
+# ─── Tokens ─────────────────────────────────────────────────
+# Standard double-quoted string. Visitor unescapes `\\` and `\"`.
+quoted = /"(?:\\.|[^"\\])*"/
+
+# A bareword is any non-whitespace, non-quote, non-paren run. Listed
+# AFTER the keyword rules in alternations so cpat tries the keyword
+# literals first and `bareword` is the fallback for everything else.
+# Includes `;` and `+` so a value like `foo+bar` parses as one token
+# — `-exec` terminator disambiguation is handled by the encoder
+# always quoting exec args.
+bareword = /[^"\s()]+/
+
+# ─── Structural single-char tokens ──────────────────────────
+openParen  = "("
+closeParen = ")"
+semi       = ";"
+plus       = "+"
+
+# ─── Operator keywords ──────────────────────────────────────
+notKw  = "-not"
+bangKw = "!"
+notOp  = notKw | bangKw
+
+andKw  = "-and"
+aKw    = "-a"
+andOp  = andKw | aKw
+
+orKw   = "-or"
+oKw    = "-o"
+orOp   = orKw | oKw
+
+# ─── Predicate keywords ─────────────────────────────────────
+maxdepthKw = "-maxdepth"
+mindepthKw = "-mindepth"
+typeKw     = "-type"
+nameKw     = "-name"
+inameKw    = "-iname"
+pathKw     = "-path"
+ipathKw    = "-ipath"
+regexKw    = "-regex"
+iregexKw   = "-iregex"
+sizeKw     = "-size"
+emptyKw    = "-empty"
+
+# ─── Action keywords ────────────────────────────────────────
+printKw  = "-print"
+print0Kw = "-print0"
+deleteKw = "-delete"
+execKw   = "-exec"
+
+# ─── Value (predicate argument) ─────────────────────────────
+# Accepts a quoted token OR a bareword. The encoder guarantees that
+# values originating from quoted / expansion / brace-list parts arrive
+# as `quoted`, so a value that happens to spell a keyword is
+# unambiguous — the grammar isn't in keyword-position here.
+value = quoted | bareword
+
+# ─── Predicates ─────────────────────────────────────────────
+pMaxdepth = maxdepthKw + ws + value
+pMindepth = mindepthKw + ws + value
+pType     = typeKw     + ws + value
+pName     = nameKw     + ws + value
+pIname    = inameKw    + ws + value
+pPath     = pathKw     + ws + value
+pIpath    = ipathKw    + ws + value
+pRegex    = regexKw    + ws + value
+pIregex   = iregexKw   + ws + value
+pSize     = sizeKw     + ws + value
+pEmpty    = emptyKw
+
+predicate = pMaxdepth
+          | pMindepth
+          | pType
+          | pName
+          | pIname
+          | pPath
+          | pIpath
+          | pRegex
+          | pIregex
+          | pSize
+          | pEmpty
+
+# ─── Actions ────────────────────────────────────────────────
+# -exec collects (quoted)+ until a bare `;` or `+`. The encoder
+# always quotes -exec args, so the only bareword between -exec and
+# the terminator is the terminator itself.
+execArg     = quoted
+execArgList = (execArg, ws trim)+
+execTerm    = semi | plus
+aExec       = execKw + ws + execArgList + ws + execTerm
+
+aPrint  = printKw
+aPrint0 = print0Kw
+aDelete = deleteKw
+
+action = aExec | aPrint0 | aDelete | aPrint
+
+# ─── Grouping ───────────────────────────────────────────────
+# `( ... )` wraps an inner chainItems list so precedence can be
+# overridden. The visitor descends transparently into the group's
+# inner chain.
+group = openParen + ws? + chainItems + ws? + closeParen
+
+# ─── Negation ───────────────────────────────────────────────
+# `-not` / `!` is a prefix that binds to a single atom (the atom
+# rule includes notExpr so `-not -not -name foo` works via right
+# recursion).
+notExpr = notOp + ws + atom
+
+# ─── Atom ───────────────────────────────────────────────────
+atom = group | notExpr | action | predicate
+
+# ─── Chain items ────────────────────────────────────────────
+# The visitor reads this list, splits on orMarker, AND-joins atoms
+# within each segment, OR-joins segments. andMarker is consumed by
+# the grammar (so `-a` / `-and` parse cleanly) but contributes no
+# semantics — implicit AND is the default between atoms.
+orMarker  = orOp
+andMarker = andOp
+chainItem = orMarker | andMarker | atom
+
+chainItems = (chainItem, ws trim)+
+
+# ─── Top level ──────────────────────────────────────────────
+# pathArg is handled by `src/tools/find.ts` BEFORE encoding — it
+# peels off the leading non-keyword positional and only the
+# expression body is fed to cpat. So findExpr here is just an
+# optional chainItems wrapped in optional whitespace.
+findExpr = ws? + chainItems? + ws?

@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::cursor::Cursor;
 use crate::pattern::Pattern;
 use crate::pattern_id::Meta;
-use crate::scope::{Scope, ScopeFrame};
+use crate::scope::{Definitions, Scope, ScopeFrame};
 use crate::tree::NodeId;
 
 /// A pattern parsed with extra definitions in scope: references inside it
@@ -26,6 +26,23 @@ impl Context {
         let meta = Meta::new(name);
         let child = child.adopted();
         let scope = Scope::for_context(meta.name, child.clone(), patterns);
+        Context {
+            meta,
+            child: Box::new(child),
+            scope: Rc::new(scope),
+        }
+    }
+
+    /// A context whose definitions are a table it shares with others: a
+    /// grammar wraps each rule in a context over all the rules (v12
+    /// `_buildPatternRecord`), and one table serves them all instead of a
+    /// copy of every other rule per rule. The table may hold the child's own
+    /// definition too: the context answers its own name first, so a lookup
+    /// never reaches it.
+    pub(crate) fn sharing(name: &str, child: Pattern, definitions: Rc<Definitions>) -> Context {
+        let meta = Meta::new(name);
+        let child = child.adopted();
+        let scope = Scope::sharing(meta.name, child.clone(), definitions);
         Context {
             meta,
             child: Box::new(child),
