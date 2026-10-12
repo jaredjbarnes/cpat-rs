@@ -1,10 +1,17 @@
+use std::rc::Rc;
+
+use crate::ancestors::{Ancestors, Frame};
 use crate::graphemes::Boundaries;
 use crate::name::Name;
 use crate::parse_error::{Match, ParseError};
-use crate::pattern_id::Meta;
+use crate::pattern::Pattern;
+use crate::pattern_error::PatternError;
+use crate::pattern_id::{Meta, PatternId};
+use crate::scope::{self, ScopeFrame};
 use crate::tree::{NodeId, NodeKind, Tree, TreeBuilder};
 
-/// The state of one parse: position, errors, cut scopes and the node arena.
+/// The state of one parse: position, errors, cut scopes, the ancestor and
+/// scope stacks, and the node arena.
 ///
 /// Positions are byte offsets on grapheme boundaries, half-open: after a
 /// pattern matches, the cursor sits just past the match, where the next
@@ -20,6 +27,9 @@ pub struct Cursor<'t> {
     furthest_error: Option<ParseError>,
     leaf_match: Option<Match>,
     choice_scopes: Vec<bool>,
+    ancestors: Ancestors,
+    scopes: Vec<ScopeFrame>,
+    pattern_error: Option<PatternError>,
     tree: TreeBuilder,
 }
 
@@ -34,8 +44,22 @@ impl<'t> Cursor<'t> {
             furthest_error: None,
             leaf_match: None,
             choice_scopes: Vec::new(),
+            ancestors: Ancestors::default(),
+            scopes: Vec::new(),
+            pattern_error: None,
             tree: TreeBuilder::default(),
         }
+    }
+
+    /// An empty-text cursor for asking "would this match nothing?" (what a
+    /// lookahead sees at the very end) without touching this parse. It keeps
+    /// the scopes, so references inside still resolve, and the ancestors, so
+    /// recursion guards see the same chain v12's parent pointers would.
+    pub(crate) fn probe(&self) -> Cursor<'static> {
+        let mut probe = Cursor::new("");
+        probe.ancestors = self.ancestors.clone();
+        probe.scopes = self.scopes.clone();
+        probe
     }
 
     // ─── Position ───────────────────────────────────────────────────────
@@ -174,6 +198,53 @@ impl<'t> Cursor<'t> {
         }
     }
 
+    /// A grammar mistake met while parsing (an unknown reference name, when
+    /// `parse` is driven directly). `exec` checks for these before it parses.
+    pub fn pattern_error(&self) -> Option<&PatternError> {
+        self.pattern_error.as_ref()
+    }
+
+    pub(crate) fn record_pattern_error(&mut self, error: PatternError) {
+        self.pattern_error.get_or_insert(error);
+    }
+
+    // ─── Ancestors (DESIGN §2) ──────────────────────────────────────────
+
+    /// The composites parsing right now, outermost first.
+    pub fn ancestors(&self) -> &[Frame] {
+        self.ancestors.frames()
+    }
+
+    /// Runs `f` inside an ancestor frame for the composite `id`, starting
+    /// here. Always popped: parsing fails only by returning.
+    #[inline]
+    pub(crate) fn framed<R>(&mut self, id: PatternId, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.ancestors.push(id, self.pos);
+        let result = f(self);
+        self.ancestors.pop();
+        result
+    }
+
+    /// How many active composites with `id` began at `pos`, up to `limit`.
+    pub(crate) fn ancestors_at(&self, id: PatternId, pos: usize, limit: usize) -> usize {
+        self.ancestors.count_at(id, pos, limit)
+    }
+
+    // ─── Scopes (DESIGN §3) ─────────────────────────────────────────────
+
+    pub(crate) fn push_scope(&mut self, frame: ScopeFrame) {
+        self.scopes.push(frame);
+    }
+
+    pub(crate) fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    /// The master `name` resolves to here, innermost scope first.
+    pub(crate) fn lookup(&self, name: Name) -> Option<Rc<Pattern>> {
+        scope::lookup(&self.scopes, name).map(|found| found.master)
+    }
+
     // ─── Nodes ──────────────────────────────────────────────────────────
 
     pub fn leaf(&mut self, kind: NodeKind, name: Name, start: usize, end: usize) -> NodeId {
@@ -249,6 +320,7 @@ impl<'t> Cursor<'t> {
             error: self.error,
             furthest_error: self.furthest_error,
             leaf_match: self.leaf_match,
+            pattern_error: self.pattern_error,
         }
     }
 }

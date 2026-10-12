@@ -1,8 +1,9 @@
 //! cpat-core: the clarity pattern parser in Rust.
 //!
 //! Small composable patterns (`Literal`, `Regex`, `Sequence`, `Choice`,
-//! `Repeat`, `Optional`, `Not`, `Cut`) build parsers; `exec` runs one over a text and
-//! returns a read-only tree whose values are slices of that text.
+//! `Repeat`, `Optional`, `Not`, `Cut`, `Reference`, `Context`) build
+//! parsers; `exec` runs one over a text and returns a read-only tree whose
+//! values are slices of that text.
 //!
 //! ```
 //! use cpat_core::{Literal, Pattern, Regex, Sequence};
@@ -17,9 +18,12 @@
 //! assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 //! ```
 
+mod ancestors;
+mod children;
 mod cursor;
 mod exec;
 mod graphemes;
+mod link;
 mod name;
 mod parse_error;
 mod pattern;
@@ -27,8 +31,10 @@ mod pattern_error;
 mod pattern_id;
 mod patterns;
 mod regex_translate;
+mod scope;
 mod tree;
 
+pub use ancestors::Frame;
 pub use cursor::Cursor;
 pub use exec::ParseResult;
 pub use name::Name;
@@ -37,7 +43,7 @@ pub use pattern::Pattern;
 pub use pattern_error::PatternError;
 pub use pattern_id::{Meta, PatternId};
 pub use patterns::{
-    Choice, Custom, CustomParse, Cut, Literal, Not, Optional, Regex, Repeat, RepeatOptions,
-    Sequence,
+    Choice, Context, Custom, CustomParse, Cut, Literal, Not, Optional, Reference, Regex, Repeat,
+    RepeatOptions, Sequence,
 };
 pub use tree::{Node, NodeId, NodeKind, Tree};

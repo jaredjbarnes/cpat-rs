@@ -26,7 +26,7 @@ impl Choice {
 
         Ok(Choice {
             meta: Meta::new(name),
-            alternatives,
+            alternatives: alternatives.into_iter().map(Pattern::adopted).collect(),
         })
     }
 
@@ -41,6 +41,16 @@ impl Choice {
         let (node, committed) = cursor.in_choice_scope(|cursor| {
             for alternative in alternatives.iter_mut() {
                 cursor.set_pos(first);
+
+                // v12's recursion guard for a choice's atoms: an alternative
+                // that is already parsing at this very spot higher up (an
+                // outer recursion level of it) would only repeat that
+                // attempt, so it is skipped. This is what ends mutual
+                // recursion like `a = b | "c"`, `b = a | "d"` before the
+                // references' own guard has to.
+                if cursor.ancestors_at(alternative.id(), first, 1) > 0 {
+                    continue;
+                }
 
                 if let Some(node) = alternative.parse(cursor) {
                     return (Some(node), false);

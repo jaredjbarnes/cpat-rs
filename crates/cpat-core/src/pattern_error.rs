@@ -23,6 +23,13 @@ pub enum PatternError {
         name: String,
         kind: &'static str,
     },
+    /// The reference `name` looks up `target`, and neither an enclosing
+    /// context nor the root pattern's tree defines it. Returned by
+    /// `Pattern::check` and, without parsing, by `exec`.
+    UnknownReference {
+        name: String,
+        target: String,
+    },
 }
 
 impl fmt::Display for PatternError {
@@ -57,6 +64,10 @@ impl fmt::Display for PatternError {
                     "{kind} `{name}` has no children; give it at least one pattern"
                 )
             }
+            PatternError::UnknownReference { name, target } => write!(
+                f,
+                "reference `{name}` looks up `{target}`, but no enclosing context and nothing in the pattern being run is named `{target}`; define it in a Context around the reference, or put it in the pattern's tree"
+            ),
         }
     }
 }

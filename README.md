@@ -23,12 +23,30 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 2)
+## What's in the box (milestone 3)
 
 `Literal`, `Regex`, `Sequence`, `Choice` (ordered), `Repeat` (unbounded or bounded, with an
-optional divider and `trim_divider`), `Optional`, `Not`, `Cut`, and `Custom` for your own
-patterns. Still to come: `Reference`/`Context`, `Expression` (the Pratt mode of
-`Choice`), `TakeUntil`, `Block`, the `.cpat` grammar, decorators, intellisense.
+optional divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for
+recursive grammars, and `Custom` for your own patterns. A reference that names nothing comes
+back from `exec` as `ParseResult::pattern_error` (or from `Pattern::check()`), never a panic.
+Still to come: `Expression` (the Pratt mode of `Choice`), `TakeUntil`, `Block`, the `.cpat`
+grammar, decorators, intellisense.
+
+```rust
+use cpat_core::{Choice, Literal, Pattern, Reference, Sequence};
+
+// expr = "(" expr ")" | "x"
+let mut expr: Pattern = Choice::new("expr", vec![
+    Sequence::new("group", vec![
+        Literal::new("open", "(")?.into(),
+        Reference::new("expr").into(),
+        Literal::new("close", ")")?.into(),
+    ])?.into(),
+    Literal::new("x", "x")?.into(),
+])?.into();
+
+assert!(expr.test("((x))"));
+```
 
 ## Working on it
 

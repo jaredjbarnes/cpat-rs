@@ -26,7 +26,7 @@ impl Sequence {
 
         Ok(Sequence {
             meta: Meta::new(name),
-            children,
+            children: children.into_iter().map(Pattern::adopted).collect(),
             nodes: Vec::new(),
         })
     }
@@ -118,7 +118,7 @@ impl Sequence {
                     child.parse(cursor);
                 }
                 Pattern::Not(not) => {
-                    if not.child_matches_empty() {
+                    if not.child_matches_empty(cursor) {
                         // The lookahead's own failure, just past the end.
                         let end = cursor.pos();
                         cursor.record_error(end, end, not.meta);

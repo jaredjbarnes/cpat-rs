@@ -9,7 +9,8 @@ mod repeat_options;
 mod utf16;
 
 use cpat_core::{
-    Choice, Cut, Literal, Not, Optional, Pattern, Regex, Repeat, RepeatOptions, Sequence,
+    Choice, Context, Cut, Literal, Not, Optional, Pattern, Reference, Regex, Repeat, RepeatOptions,
+    Sequence,
 };
 use wasm_bindgen::prelude::*;
 
@@ -82,9 +83,28 @@ impl JsPattern {
         Cut::default().into()
     }
 
+    /// `Pattern.reference(name, target?)`: the pattern called `target`
+    /// (default `name`), found when it first parses: in an enclosing
+    /// context, or else in the tree of the pattern being run.
+    pub fn reference(name: &str, target: Option<String>) -> JsPattern {
+        Reference::to(name, target.as_deref().unwrap_or(name)).into()
+    }
+
+    /// `Pattern.context(name, child, patterns)`: parses `child` with
+    /// `patterns` in scope for its references. Takes over all of them.
+    pub fn context(name: &str, child: JsPattern, patterns: Vec<JsPattern>) -> JsPattern {
+        Context::new(name, child.inner, unwrap(patterns)).into()
+    }
+
     #[wasm_bindgen(getter)]
     pub fn name(&self) -> String {
         self.inner.name().to_string()
+    }
+
+    /// Throws when a reference names nothing, with the reason; otherwise
+    /// returns nothing. `exec` reports the same through `patternError`.
+    pub fn check(&self) -> Result<(), JsError> {
+        self.inner.check().map_err(js_error)
     }
 
     #[wasm_bindgen(js_name = clone)]

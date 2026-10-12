@@ -1,8 +1,12 @@
 use crate::ParseResult;
+use crate::children::{self, Children};
 use crate::cursor::Cursor;
 use crate::name::Name;
+use crate::pattern_error::PatternError;
 use crate::pattern_id::{Meta, PatternId};
-use crate::patterns::{Choice, Custom, Cut, Literal, Not, Optional, Regex, Repeat, Sequence};
+use crate::patterns::{
+    Choice, Context, Custom, Cut, Literal, Not, Optional, Reference, Regex, Repeat, Sequence,
+};
 use crate::tree::NodeId;
 
 /// Every pattern cpat knows how to run.
@@ -24,6 +28,8 @@ pub enum Pattern {
     Optional(Optional),
     Not(Not),
     Cut(Cut),
+    Reference(Reference),
+    Context(Context),
     Custom(Custom),
 }
 
@@ -31,28 +37,44 @@ impl Pattern {
     /// Tries to match at the cursor. On success the cursor sits just past the
     /// match. `None` with an error on the cursor is a failure; `None` without
     /// one is a zero-width success (an absent optional, a cut, a lookahead).
+    ///
+    /// Composites run inside an ancestor frame (DESIGN §2), pushed here so
+    /// no composite can forget it; leaves have no children to tell.
     #[inline]
     pub fn parse(&mut self, cursor: &mut Cursor<'_>) -> Option<NodeId> {
         match self {
             Pattern::Literal(p) => p.parse(cursor),
             Pattern::Regex(p) => p.parse(cursor),
-            Pattern::Sequence(p) => p.parse(cursor),
-            Pattern::Choice(p) => p.parse(cursor),
-            Pattern::Repeat(p) => p.parse(cursor),
-            Pattern::Optional(p) => p.parse(cursor),
-            Pattern::Not(p) => p.parse(cursor),
             Pattern::Cut(p) => p.parse(cursor),
             Pattern::Custom(p) => p.parse(cursor),
+            Pattern::Sequence(p) => cursor.framed(p.meta.id, |c| p.parse(c)),
+            Pattern::Choice(p) => cursor.framed(p.meta.id, |c| p.parse(c)),
+            Pattern::Repeat(p) => cursor.framed(p.meta.id, |c| p.parse(c)),
+            Pattern::Optional(p) => cursor.framed(p.meta.id, |c| p.parse(c)),
+            Pattern::Not(p) => cursor.framed(p.meta.id, |c| p.parse(c)),
+            Pattern::Reference(p) => cursor.framed(p.meta.id, |c| p.parse(c)),
+            Pattern::Context(p) => cursor.framed(p.meta.id, |c| p.parse(c)),
         }
     }
 
     /// Parses all of `text`. A match that stops short of the end is not a match.
+    ///
+    /// Before the first parse, references are readied: names are looked up in
+    /// enclosing contexts, then in this pattern's own tree. A name found in
+    /// neither comes back as `ParseResult::pattern_error` with no parse run.
     pub fn exec<'t>(&mut self, text: &'t str) -> ParseResult<'t> {
         crate::exec::exec(self, text)
     }
 
     pub fn test(&mut self, text: &str) -> bool {
         self.exec(text).is_match()
+    }
+
+    /// Whether every reference a parse could reach resolves, with `exec`'s
+    /// rules: enclosing contexts first, then this pattern's own tree. `exec`
+    /// runs this itself (once per root); call it to fail early.
+    pub fn check(&self) -> Result<(), PatternError> {
+        crate::link::check(self)
     }
 
     pub fn meta(&self) -> Meta {
@@ -70,9 +92,74 @@ impl Pattern {
     /// A clone under a new name. It keeps the original's id: it is the same
     /// pattern, called something else.
     pub fn renamed(&self, name: &str) -> Pattern {
+        self.renamed_to(Name::new(name))
+    }
+
+    pub(crate) fn renamed_to(&self, name: Name) -> Pattern {
         let mut clone = self.clone();
-        clone.meta_mut().name = Name::new(name);
+        clone.rename(name);
         clone
+    }
+
+    /// v12 `clone(name)` without the clone. A context's child takes the
+    /// name too, so a context resolved by a reference produces nodes named
+    /// after the reference.
+    fn rename(&mut self, name: Name) {
+        self.meta_mut().name = name;
+        if let Pattern::Context(context) = self {
+            context.child.rename(name);
+        }
+    }
+
+    /// This pattern as a composite's child. v12's composites clone their
+    /// children (`clone()`, which keeps the name), and a cloned context
+    /// passes its name down to its child; nothing else changes. Rust
+    /// composites take their children over instead of cloning them, so they
+    /// call this to come out the same.
+    pub(crate) fn adopted(mut self) -> Pattern {
+        if let Pattern::Context(context) = &mut self {
+            let name = context.meta.name;
+            context.child.rename(name);
+        }
+        self
+    }
+
+    /// The patterns this one contains, in order, as v12's `children` lists
+    /// them for a search. A reference's target is not its child here: it is
+    /// found by name, and searches never follow it.
+    pub(crate) fn child_patterns(&self) -> children::Iter<'_> {
+        match self {
+            Pattern::Literal(_)
+            | Pattern::Regex(_)
+            | Pattern::Cut(_)
+            | Pattern::Custom(_)
+            | Pattern::Reference(_) => Children::Few([None, None]),
+            Pattern::Sequence(p) => Children::Many(p.children.iter()),
+            Pattern::Choice(p) => Children::Many(p.alternatives.iter()),
+            Pattern::Repeat(p) => Children::Few([Some(p.child()), p.divider()]),
+            Pattern::Optional(p) => Children::Few([Some(&*p.child), None]),
+            Pattern::Not(p) => Children::Few([Some(&*p.child), None]),
+            Pattern::Context(p) => Children::Few([Some(&*p.child), None]),
+        }
+    }
+
+    pub(crate) fn child_patterns_mut(&mut self) -> children::IterMut<'_> {
+        match self {
+            Pattern::Literal(_)
+            | Pattern::Regex(_)
+            | Pattern::Cut(_)
+            | Pattern::Custom(_)
+            | Pattern::Reference(_) => Children::Few([None, None]),
+            Pattern::Sequence(p) => Children::Many(p.children.iter_mut()),
+            Pattern::Choice(p) => Children::Many(p.alternatives.iter_mut()),
+            Pattern::Repeat(p) => {
+                let (child, divider) = p.parts_mut();
+                Children::Few([Some(child), divider])
+            }
+            Pattern::Optional(p) => Children::Few([Some(&mut *p.child), None]),
+            Pattern::Not(p) => Children::Few([Some(&mut *p.child), None]),
+            Pattern::Context(p) => Children::Few([Some(&mut *p.child), None]),
+        }
     }
 
     fn meta_ref(&self) -> &Meta {
@@ -85,6 +172,8 @@ impl Pattern {
             Pattern::Optional(p) => &p.meta,
             Pattern::Not(p) => &p.meta,
             Pattern::Cut(p) => &p.meta,
+            Pattern::Reference(p) => &p.meta,
+            Pattern::Context(p) => &p.meta,
             Pattern::Custom(p) => &p.meta,
         }
     }
@@ -99,6 +188,8 @@ impl Pattern {
             Pattern::Optional(p) => &mut p.meta,
             Pattern::Not(p) => &mut p.meta,
             Pattern::Cut(p) => &mut p.meta,
+            Pattern::Reference(p) => &mut p.meta,
+            Pattern::Context(p) => &mut p.meta,
             Pattern::Custom(p) => &mut p.meta,
         }
     }
@@ -115,5 +206,5 @@ macro_rules! into_pattern {
 }
 
 into_pattern!(
-    Literal, Regex, Sequence, Choice, Repeat, Optional, Not, Cut, Custom
+    Literal, Regex, Sequence, Choice, Repeat, Optional, Not, Cut, Reference, Context, Custom
 );

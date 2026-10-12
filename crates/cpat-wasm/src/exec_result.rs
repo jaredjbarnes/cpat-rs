@@ -24,6 +24,7 @@ pub struct ExecResult {
     error: Option<Vec<u32>>,
     furthest_error: Option<Vec<u32>>,
     error_names: Vec<String>,
+    pattern_error: Option<String>,
 }
 
 #[wasm_bindgen]
@@ -65,6 +66,13 @@ impl ExecResult {
         self.furthest_error.clone()
     }
 
+    /// Why the pattern couldn't run (a reference that names nothing), or
+    /// `undefined`. When set, nothing was parsed.
+    #[wasm_bindgen(getter, js_name = patternError)]
+    pub fn pattern_error(&self) -> Option<String> {
+        self.pattern_error.clone()
+    }
+
     #[wasm_bindgen(getter, js_name = furthestErrorPattern)]
     pub fn furthest_error_pattern(&self) -> Option<String> {
         self.furthest_error
@@ -101,6 +109,7 @@ impl ExecResult {
             error: result.error.as_ref().map(error_of),
             furthest_error: result.furthest_error.as_ref().map(error_of),
             error_names: vec![name_of(result.error), name_of(result.furthest_error)],
+            pattern_error: result.pattern_error.as_ref().map(ToString::to_string),
         }
     }
 }

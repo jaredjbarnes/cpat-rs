@@ -397,3 +397,69 @@ fn a_cut_inside_a_kept_divider_still_commits() {
         assert!(choice.test("a,;a!"), "max {max:?}");
     }
 }
+
+// Cut.test.ts "clone preserves the cut (Reference resolution path)": a
+// reference resolves by cloning, and the clone must still be the same cut.
+#[test]
+fn clone_preserves_the_cut() {
+    let cut = cut();
+    let clone = cut.clone();
+
+    assert!(matches!(clone, Pattern::Cut(_)));
+    assert_eq!(clone.id(), cut.id());
+}
+
+// Cut.test.ts "cut works inside an Expression's alternatives". Every
+// alternative is an atom (none starts and ends with `expr`), so in v12 this
+// is the ordered choice too, with the cut reached through references.
+//
+//   group = "(#" ~/ expr ")"
+//   pair  = "(" expr expr ")"
+//   expr  = group | pair | atom
+fn cut_through_references() -> Pattern {
+    let group = seq(
+        "group",
+        vec![
+            lit("open", "(#"),
+            cut(),
+            reference("expr"),
+            lit("close", ")"),
+        ],
+    );
+    let pair = seq(
+        "pair",
+        vec![
+            lit("open", "("),
+            reference("expr"),
+            reference("expr"),
+            lit("close", ")"),
+        ],
+    );
+    choice("expr", vec![group, pair, re("atom", "[a-z]")])
+}
+
+#[test]
+fn cut_works_inside_a_recursive_choices_alternatives() {
+    let mut expr = cut_through_references();
+
+    assert!(expr.test("(#a)"));
+    assert!(expr.test("(ab)"));
+    // `(#` commits: the failure inside `group` is not retried as `pair`.
+    assert!(!expr.test("(#1)"));
+}
+
+#[test]
+fn a_cut_commits_only_its_own_recursion_level() {
+    // The inner `(#1)` fails after its cut. That commits the inner `expr`
+    // only; the outer `pair` still fails on its own, with v12's errors.
+    let mut expr = cut_through_references();
+
+    assert_eq!(
+        exec_outline(&mut expr, "((#a)b)").0,
+        "pair@0..7[open@0..1 group@1..5[open@1..3 atom@3..4 close@4..5] atom@5..6 close@6..7]"
+    );
+    assert_eq!(
+        exec_outline(&mut expr, "(a(#1))"),
+        outlined("-", "expr@0..7", "open@4..4")
+    );
+}

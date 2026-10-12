@@ -14,7 +14,7 @@ impl Not {
     pub fn new(name: &str, child: Pattern) -> Not {
         Not {
             meta: Meta::new(name),
-            child: Box::new(child),
+            child: Box::new(child.adopted()),
         }
     }
 
@@ -44,10 +44,13 @@ impl Not {
     /// Whether the child matches the empty rest of the text: what `!x` sees
     /// at the very end. Probed on a throwaway empty cursor, as v12 does, so
     /// nothing the child records or commits reaches the real parse (a
-    /// lookahead keeps none of its child's work anyway).
-    pub(crate) fn child_matches_empty(&mut self) -> bool {
-        let mut probe = Cursor::new("");
-        self.child.parse(&mut probe);
+    /// lookahead keeps none of its child's work anyway). The probe keeps the
+    /// real cursor's scopes and ancestors, as v12's probe keeps its parent
+    /// chain; this `Not` is on that chain, started where the probe starts.
+    pub(crate) fn child_matches_empty(&mut self, cursor: &Cursor<'_>) -> bool {
+        let mut probe = cursor.probe();
+        let child = &mut self.child;
+        probe.framed(self.meta.id, |probe| child.parse(probe));
         !probe.has_error()
     }
 }

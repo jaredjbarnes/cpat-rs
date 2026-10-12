@@ -35,8 +35,8 @@ impl Repeat {
         // v12 clamps in both implementations: zero-or-more is an optional
         // around one-or-more, never a repeat with min 0.
         let min = options.min.max(1);
-        let divider = options.divider.map(Box::new);
-        let child = Box::new(child);
+        let divider = options.divider.map(|d| Box::new(d.adopted()));
+        let child = Box::new(child.adopted());
 
         let strategy = match options.max {
             None => Strategy::Unbounded(Unbounded::new(child, divider, min, options.trim_divider)),
@@ -90,6 +90,15 @@ impl Repeat {
         match &self.strategy {
             Strategy::Unbounded(s) => s.trim_divider,
             Strategy::Bounded(s) => s.trim_divider,
+        }
+    }
+
+    /// The child and divider, for walks that may need to change them (the
+    /// reference link cache).
+    pub(crate) fn parts_mut(&mut self) -> (&mut Pattern, Option<&mut Pattern>) {
+        match &mut self.strategy {
+            Strategy::Unbounded(s) => (&mut s.child, s.divider.as_deref_mut()),
+            Strategy::Bounded(s) => (&mut s.child, s.divider.as_deref_mut()),
         }
     }
 

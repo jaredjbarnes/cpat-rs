@@ -155,3 +155,51 @@ test("a bound too large to double still repeats", () => {
     }
   }
 });
+
+test("a recursive grammar: references resolve, each level its own instance", () => {
+  // expr = "(" expr ")" | "x"
+  const expr = Pattern.choice("expr", [
+    Pattern.sequence("group", [
+      Pattern.literal("open", "("),
+      Pattern.reference("expr"),
+      Pattern.literal("close", ")"),
+    ]),
+    Pattern.literal("x", "x"),
+  ]);
+  const text = "((x))";
+  const result = expr.exec(text);
+  const root = new Tree(text, result).root;
+
+  assert.equal(result.matched, true);
+  assert.equal(result.patternError, undefined);
+  const inner = root.children[1];
+  assert.deepEqual(
+    [root.name, inner.name, inner.children.map(c => c.value)],
+    ["group", "group", ["(", "x", ")"]]
+  );
+  assert.equal(expr.test("((x)"), false);
+});
+
+test("a context puts definitions in scope; a reference can rename its target", () => {
+  const names = Pattern.sequence("names", [
+    Pattern.literal("john", "John"),
+    Pattern.reference("gap", "space"),
+    Pattern.literal("jane", "Jane"),
+  ]);
+  const context = Pattern.context("context", names, [Pattern.literal("space", " ")]);
+  const text = "John Jane";
+  const root = new Tree(text, context.exec(text)).root;
+
+  assert.deepEqual(root.children.map(c => c.name), ["john", "gap", "jane"]);
+  assert.equal(context.test("John Bob"), false);
+});
+
+test("a reference that names nothing is reported, not thrown", () => {
+  const pattern = Pattern.sequence("s", [Pattern.reference("missing")]);
+
+  const result = pattern.exec("a");
+
+  assert.equal(result.matched, false);
+  assert.match(result.patternError, /`missing`/);
+  assert.throws(() => pattern.check(), /`missing`/);
+});

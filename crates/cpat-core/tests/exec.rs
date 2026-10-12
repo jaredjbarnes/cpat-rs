@@ -12,6 +12,9 @@ fn empty_text_is_no_match_and_no_error() {
     assert!(result.error.is_none());
 }
 
+// BasePattern.test.ts "exec keeps the real furthest error": the first two
+// tests are this one and the next. The third ("the error message is
+// unchanged") waits for error messages.
 #[test]
 fn a_failed_exec_keeps_the_deepest_real_failure_as_the_furthest_error() {
     // "Dot" fails against "Doe" at offset 7. The summary error ("didn't match

@@ -4,6 +4,8 @@
 > without new evidence. Milestone 1 (cursor, tree, Literal, Regex, Sequence, ordered Choice,
 > Optional, Not, Cut, Custom, wasm layer) is implemented. Milestone 2 (`Repeat`, unbounded and
 > bounded, with dividers, `trim_divider` and cut restoration) is implemented; see §10.
+> Milestone 3 (`Reference`, `Context`, the ancestor stack, recursion guards, the implicit scope)
+> is implemented; see §11.
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -25,7 +27,7 @@ A child can't point at a parent that is mutably borrowed while parsing. The curs
 ancestor stack instead: `(PatternId, start)` per active composite. That stack drives the
 recursion guard. Start indices on the stack never decrease, so the guard scans down from the top
 only while the start equals the current position. Autocomplete will snapshot the path of the
-furthest leaf match. *(Ancestor stack: lands with `Reference`.)*
+furthest leaf match. *(Implemented in milestone 3: `Cursor::ancestors()`, see §11.)*
 
 ## 3. References resolve by name against a shared scope
 
@@ -33,7 +35,7 @@ furthest leaf match. *(Ancestor stack: lands with `Reference`.)*
 name up on the scope stack, from the top down, the first time it parses. It then clones the
 master copy as its own child. Each recursion level therefore gets its own instance, created
 lazily. The direct API builds an implicit scope before parsing. Unknown names are build errors.
-*(Lands with `Reference`.)*
+*(Implemented in milestone 3. Unknown names come back as `PatternError::UnknownReference`; see §11.)*
 
 ## 4. Cut: only kept work commits
 
@@ -173,6 +175,78 @@ build error naming the pattern.
 - **JS:** `Pattern.repeat(name, child, { min, max, divider, trimDivider })` takes a plain object,
   read through imported getters (no `js-sys`). `max: Infinity` is unbounded, as in v12; a count
   that isn't a whole number of zero or more is an error.
+
+## 11. Reference and Context *(milestone 3)*
+
+- **The ancestor stack.** `Pattern::parse` pushes a `Frame { id, start, child }` for every
+  composite (Sequence, Choice, Repeat, Optional, Not, Reference, Context) around its parse, in
+  the dispatch `match`, so no composite can forget to. Leaves push nothing. `child` is reserved
+  for intellisense and always 0 for now: writing it would cost every composite a store per child
+  for a feature nothing reads yet. When intellisense lands, it snapshots the path of the
+  furthest leaf from this stack, filling `child` then. Guards ask "how many frames with this id
+  began here?"; starts never decrease going up, so the scan stops at the first frame that began
+  earlier.
+- **Two recursion guards, both v12's.** A `Reference` fails, with its own error at
+  `(pos, pos)`, when more than one frame with its target's id began at this position (v12
+  `_isBeyondRecursiveAllowance`). An ordered `Choice` skips an alternative when a frame with
+  that alternative's id began at this position: v12's choice is `Expression`, whose atom path
+  has this guard. It isn't optional: without it, `a = a "b" | "b"` still ends (through the
+  reference guard) but records the reference's error, so the furthest error differs from v12.
+  It is also what ends `a = b | "c"`, `b = a | "d"`.
+- **Resolution.** On its first parse a `Reference` looks its target name up on the cursor's
+  scope stack, innermost first, skipping a reference and a context that only wraps one (v12
+  `_isValidPattern`). A context answers to its own name (current or original) with itself. The
+  master found is kept in an `Rc` (masters are never parsed and never change, so no `Rc` cycle
+  can form), and the reference parses `master.renamed(own name)`, its instance. A clone of a
+  reference keeps the master (v12 `_cachedPattern`) but not the instance, so every recursion
+  level parses a fresh one.
+- **The implicit scope is built once per root.** `exec` needs it only when the root's tree
+  holds a reference. It is v12's `findPattern(root, …)` as a table: depth first, children before
+  parent, never into a reference, first valid match per name. Building it and checking every
+  name costs a walk of the grammar and clones of its named patterns, so the result is cached on
+  the root tree's first reference, keyed by the root's id and name. A root moved into a bigger
+  pattern (different id) or cloned (a clone drops the cache) is readied again. Each later `exec`
+  only walks to that first reference, without allocating.
+- **Unknown names are failure as data, found before parsing.** `Pattern::check()` walks every
+  reference a parse could reach, following each into what it would resolve to with the scopes it
+  would have then, and returns `Err(PatternError::UnknownReference { name, target })`. `exec`
+  runs it (once per root, as above) and, on an error, parses nothing and returns it in
+  `ParseResult::pattern_error`. *Why not lazily, like v12, which throws only when the parse
+  reaches the name?* §3 settles unknown names as build errors; a grammar that works on one input
+  and breaks on the next is a trap; and v12 is not consistently lazy either (its choice resolves
+  its references when it builds, and after one throw a second exec quietly stops throwing). So
+  cpat-rs reports it up front, on every exec, even for empty text. Driving `parse` directly skips
+  the check: an unresolvable reference then records an ordinary error at `(pos, pos)` and puts the
+  reason on `Cursor::pattern_error()`. Never a panic.
+- **The implicit scope is for `exec`/`test` only.** A direct `parse` sees context scopes, not the
+  root's tree: a pattern has no parents to find its root from (§2). v12's `parse` on a nested
+  pattern still searches up to the root. Wrap the pattern in a `Context` to parse it directly.
+- **A context passes its name to its child when it becomes a child.** v12's composites clone
+  their children, and `Context.clone()` renames its child to the context's name, so nodes from a
+  context nested in anything are named after the context, while a context run directly keeps
+  its child's names. Rust composites take children over without cloning, so they call
+  `Pattern::adopted`, which does exactly that rename: the same names, decided at composition
+  time. `Pattern::renamed` on a context renames its child too (v12 `clone(name)`), which is why a
+  reference to a context names the nodes after the reference.
+- **`exec` on a context** names its child in the summary error, since v12's `Context.exec` runs
+  its child's exec.
+- **The end-of-text lookahead probe** keeps the cursor's scopes and ancestors, as v12's probe
+  keeps its parent chain, so `!ref` at the end resolves (`("a", "b"?, !o)` with `o` the optional:
+  the lookahead fails, as in v12).
+- **Checked against v12** by running both on 19 patterns (recursion through sequences, choices,
+  repeats and contexts; left and mutual recursion; cuts through references; context lookup
+  order; lookaheads at the end) and 62 inputs, each with a fresh pattern and again reusing one
+  instance for every input: same trees, errors and furthest errors. `a = a "b" | "b"` is
+  compared with the reference renamed in v12, because there a sequence starting with a child
+  named like the choice becomes a postfix operator (the Pratt mode, a later milestone).
+- **Deviations from v12:**
+  - Unknown names are reported up front by `exec` (above).
+  - `exec` on a pattern taken out of its tree (v12's 'Exec' test execs a reference found inside
+    `value`): Rust patterns have no parents, so the reference names nothing and says so; in v12
+    it resolves through its old parents.
+  - v12's `Expression` hides its alternatives from `findPattern` until its first parse (its
+    `children` are empty until it builds), so a reference parsed before a sibling choice can't see
+    inside it. The implicit scope here always sees every alternative.
 
 ## Behavior fixed relative to clarity-pattern-parser v11
 

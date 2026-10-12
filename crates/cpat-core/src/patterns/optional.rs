@@ -14,7 +14,7 @@ impl Optional {
     pub fn new(name: &str, child: Pattern) -> Optional {
         Optional {
             meta: Meta::new(name),
-            child: Box::new(child),
+            child: Box::new(child.adopted()),
         }
     }
 
