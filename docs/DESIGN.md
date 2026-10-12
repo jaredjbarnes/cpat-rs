@@ -6,7 +6,8 @@
 > bounded, with dividers, `trim_divider` and cut restoration) is implemented; see §10.
 > Milestone 3 (`Reference`, `Context`, the ancestor stack, recursion guards, the implicit scope)
 > is implemented; see §11, including its fix rounds (a depth limit, a check that can't blow
-> up, parse-time halts, and implicit-scope targets resolving their names at home).
+> up, parse-time halts, and implicit-scope targets resolving their names at home, including
+> references wrapped inside a choice target, a documented deviation).
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -220,9 +221,16 @@ build error naming the pattern.
   `Pattern::check` reuses the scope `exec` readied so the homes it recorded still apply.
   *Why not v12's exact rule?* There isn't one: v12's answer depends on parse history (whether
   the definition had parsed before the reference, in this or any earlier `exec`, since the
-  resolution persists on the instance). Home binding is what v12 settles on whenever the
-  definition parses first, which is source order, and it is one answer for every input.
-  Checked against v12 on sequence, choice, optional, recursive and top-level targets.
+  resolution persists on the instance), and on the target's shape: v12's `Expression.clone`
+  rebuilds a choice from its original, never-parsed alternatives, so a reference wrapped in a
+  sequence, optional or repeat beneath a choice resolves where the target is used even when the
+  definition parsed first (a reference that is itself an alternative keeps its home). Home
+  binding is the one lexical rule behind what v12 does when the definition parses first and the
+  choice clone doesn't drop it, and it gives one answer for every input and every shape. Matching
+  v12 would mean reproducing an artifact of how its choice clones, where wrapping `u` in a
+  sequence changes which `u` it means. Checked against v12 on sequence, choice (direct and
+  wrapped alternatives, with and without a cut), optional, repeat, recursive and top-level
+  targets: same results except the two deviations listed below.
 - **The implicit scope is built once per root.** `exec` needs it only when the root's tree
   holds a reference. It is v12's `findPattern(root, …)` as a table: depth first, children before
   parent, never into a reference, first valid match per name. Building it and checking every
@@ -305,6 +313,15 @@ build error naming the pattern.
     instead: `rt` before `k`'s `t` matches the outer context's `u` in v12 (or throws
     "Couldn't find 'u'" when only `k` defines it), and `k`'s `u` here. Pinned in
     `tests/reference.rs` (`deviation_a_reference_parsed_before_the_definition_…`).
+  - A reference wrapped (in a sequence, optional or repeat) beneath a choice inside an
+    implicit-scope target also resolves at home. v12 rebuilds the choice from its never-parsed
+    alternatives on every clone, so it resolves such a reference from the place the target is
+    used even after the definition has parsed: `t = ("a" u) | "ab"` in `k`, reached by `rt`
+    from outside, throws "Couldn't find 'u'" in v12 on every input, or matches an outer
+    context's `u` when one surrounds `rt`; here it means `k`'s `u`. (Found in fix round 3; the
+    second fix round's home binding introduced the difference, the version before it threw like
+    v12.) Pinned in `tests/reference.rs`
+    (`deviation_a_reference_wrapped_inside_a_choice_target_…`).
   - `exec` on a pattern taken out of its tree (v12's 'Exec' test execs a reference found inside
     `value`): Rust patterns have no parents, so the reference names nothing and says so; in v12
     it resolves through its old parents.

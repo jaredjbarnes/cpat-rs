@@ -23,6 +23,9 @@ pub(crate) struct Scope {
 /// a home resolves its own references there, not where the reference that
 /// found it sits (see `Found::home`). A context's definitions have none:
 /// they are not in any tree, so they resolve wherever they are used.
+/// Every reference inside the target uses the home, whatever wraps it;
+/// v12 drops it for references wrapped beneath a choice (its choice clones
+/// from never-parsed originals), a deviation recorded in DESIGN §11.
 #[derive(Debug)]
 struct Entry {
     master: Rc<Pattern>,

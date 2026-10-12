@@ -827,3 +827,112 @@ fn deviation_a_reference_parsed_before_the_definition_still_resolves_at_home() {
         outlined("-", "root@0..3", "u@0..0")
     );
 }
+
+/// `t = ("a" [cut] u) | "ab"`: a choice target whose sequence alternative
+/// refers to `u`, defined only in `k` around `t`.
+fn choice_with_a_sequence_alternative(with_cut: bool) -> Pattern {
+    let s = if with_cut {
+        seq("s", vec![lit("a", "a"), cut(), reference("u")])
+    } else {
+        seq("s", vec![lit("a", "a"), reference("u")])
+    };
+    choice("t", vec![s, lit("ab", "ab")])
+}
+
+#[test]
+fn deviation_a_reference_wrapped_inside_a_choice_target_still_resolves_at_home() {
+    // DEVIATION (DESIGN §11). v12's `Expression.clone` rebuilds the choice
+    // from its never-parsed original alternatives, so a reference wrapped
+    // in a sequence, optional or repeat beneath the choice loses its home
+    // even when the definition parsed first, and resolves from `rt`'s
+    // place: without `R`, v12 throws "Couldn't find 'u' pattern within
+    // tree." on every input below; with `R`, it matches "Z" and rejects
+    // "K". (A reference that IS an alternative keeps its home in v12: see
+    // `an_implicit_choice_target_resolves_where_it_is_defined`.) cpat-rs
+    // resolves at home whatever wraps the reference.
+    let mut plain = defined_in_a_context(choice_with_a_sequence_alternative(false));
+    assert_eq!(
+        exec_outline(&mut plain, "aK;aK"),
+        outlined(
+            "root@0..5[k@0..2[s@0..2[a@0..1 u@1..2]] sep@2..3 s@3..5[a@3..4 u@4..5]]",
+            "-",
+            "-"
+        )
+    );
+    assert_eq!(
+        exec_outline(&mut plain, "ab;aK"),
+        outlined(
+            "root@0..5[k@0..2[ab@0..2] sep@2..3 s@3..5[a@3..4 u@4..5]]",
+            "-",
+            "u@1..1"
+        )
+    );
+    assert_eq!(plain.check(), Ok(()));
+
+    let mut with_cut = defined_in_a_context(choice_with_a_sequence_alternative(true));
+    assert_eq!(
+        exec_outline(&mut with_cut, "aK;aK"),
+        outlined(
+            "root@0..5[k@0..2[s@0..2[a@0..1 u@1..2]] sep@2..3 s@3..5[a@3..4 u@4..5]]",
+            "-",
+            "-"
+        )
+    );
+    // The cut after "a" commits `s`, so "ab" is not tried.
+    assert_eq!(
+        exec_outline(&mut with_cut, "aK;ab"),
+        outlined("-", "root@0..5", "u@4..4")
+    );
+
+    let mut wrapped = context(
+        "R",
+        defined_in_a_context(choice_with_a_sequence_alternative(false)),
+        vec![lit("u", "Z")],
+    );
+    assert_eq!(
+        exec_outline(&mut wrapped, "aK;aK"),
+        outlined(
+            "root@0..5[k@0..2[s@0..2[a@0..1 u@1..2]] sep@2..3 s@3..5[a@3..4 u@4..5]]",
+            "-",
+            "-"
+        )
+    );
+    assert_eq!(
+        exec_outline(&mut wrapped, "aK;aZ"),
+        outlined("-", "root@0..5", "u@4..4")
+    );
+
+    let optional = choice("t", vec![opt("o", reference("u")), lit("ab", "ab")]);
+    let mut wrapped = context("R", defined_in_a_context(optional), vec![lit("u", "Z")]);
+    assert_eq!(
+        exec_outline(&mut wrapped, "K;K"),
+        outlined("root@0..3[k@0..1[u@0..1] sep@1..2 u@2..3]", "-", "-")
+    );
+    assert_eq!(
+        exec_outline(&mut wrapped, "K;Z"),
+        outlined("-", "root@0..3", "u@2..2")
+    );
+}
+
+#[test]
+fn a_choice_alternative_inside_a_sequence_target_resolves_at_home() {
+    // Agrees with v12: the reference is itself an alternative of the
+    // nested choice, which v12's rebuilt choice still binds at home.
+    let t = seq(
+        "t",
+        vec![
+            lit("x", "x"),
+            choice("c", vec![reference("u"), lit("ab", "ab")]),
+        ],
+    );
+    let mut pattern = defined_in_a_context(t);
+
+    assert_eq!(
+        exec_outline(&mut pattern, "xK;xK"),
+        outlined(
+            "root@0..5[k@0..2[t@0..2[x@0..1 u@1..2]] sep@2..3 rt@3..5[x@3..4 u@4..5]]",
+            "-",
+            "-"
+        )
+    );
+}
