@@ -24,3 +24,11 @@ pub(super) const GRAMMAR_TEXT_LIMITS: Limits = Limits { max_depth: 38 };
 /// levels is a small fraction of a 1 MB wasm stack even in a debug build,
 /// and far deeper than any real rule.
 pub(super) const MAX_BUILD_DEPTH: usize = 256;
+
+/// The most grammars that may be importing one another at once. Only a
+/// backstop: a cycle is caught by name (`GrammarError::ImportCycle`), but a
+/// resolver that gives one grammar a new name on every import would recurse
+/// until the stack overflows. Each level holds a builder's state, not the
+/// cpat grammar's parse (that has returned before imports are loaded), so
+/// 64 is cheap, and far more than any real chain of imports.
+pub(super) const MAX_IMPORT_DEPTH: usize = 64;

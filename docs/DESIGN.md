@@ -40,6 +40,11 @@
 > another) so a deep text is a `GrammarError` rather than a stack overflow or an exponential
 > build, shares each compiled regex between a pattern's clones, and builds every grammar from
 > an unparsed copy of the cpat grammar (§18).
+> Milestone 11 (imports through a synchronous `ImportResolver`, `with params` and `use params`,
+> decorators with the built-in `@tokens`, `Grammar::import`, and the `patterns` convenience) is
+> implemented; see §9 and §19. Every test in v12's `Grammar.test.ts` is ported (the checklist
+> heads `tests/grammar.rs`). A grammar that imports itself is an error here, where v12
+> overflows the stack (§19).
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -155,14 +160,15 @@ build error naming the pattern.
   builds a tree as deep as the input is long. A recursive walk aborted the process on such
   input (fix round 1 of milestone 4).
 
-## 8. The grammar *(milestone 10; imports, params and decorators next)*
+## 8. The grammar *(milestones 10 and 11)*
 
 - The cpat grammar is written by hand with the Rust API (`grammar/cpat.rs`, `cpat_grammar()`).
   As a test, cpat's own grammar is written as a `.cpat` file and built by the builder
   (`tests/fixtures/cpat.cpat`, §18). *(Implemented.)*
 - The builder walks the read-only tree and flattens nested `+`/`|` on the fly. *(Implemented:
   `syntax::flattened`.)*
-- Synchronous core with an `ImportResolver` trait; JS fetches imports ahead of time. *(Next.)*
+- Synchronous core with an `ImportResolver` trait; JS fetches imports ahead of time.
+  *(Implemented in milestone 11, §19.)*
 - Errors are values (`GrammarError`). *(Implemented, §18.)*
 - Anonymous names are counted per grammar. *(Implemented.)*
 - **One `Choice` pattern** with modes `Ordered`, `LiteralSet` and `Pratt`, picked from the
@@ -212,13 +218,15 @@ build error naming the pattern.
   search, built once at classification.
 - Shadowed literals, unknown names and alias cycles are build errors. *(Implemented, §18.)*
 
-## 9. Decorators *(next milestones)*
+## 9. Decorators *(milestone 11; JS decorators with the wasm grammar milestone)*
 
 - A decorator is `Fn(Pattern, Option<&Json>) -> Result<Pattern, String>`. It can wrap or replace
-  a pattern, for example to inject a `Custom` one.
-- Mistakes are build errors.
+  a pattern, for example to inject a `Custom` one. *(Implemented: `Decorator`, `Decorators`,
+  `cpat_core::Json` is `serde_json::Value`; §19.)*
+- Mistakes are build errors. *(Implemented: every decorator error is `[Invalid Grammar] …`.)*
 - JS decorators are fully supported. A JS custom pattern uses a minimal contract,
-  `(text, pos) => end | null`, so each attempt is one boundary call.
+  `(text, pos) => end | null`, so each attempt is one boundary call. *(With the wasm grammar
+  milestone.)*
 
 ## 10. Repeat *(milestone 2)*
 
@@ -1113,9 +1121,6 @@ build error naming the pattern.
   - A pattern that can't be constructed (an empty literal, an anchored or invalid regex) is
     `GrammarError::Pattern` with cpat-rs's own message, which names the pattern. v12 passes on
     its constructors' text ("Value Cannot be empty.", "Invalid Arguments: …").
-  - Imports fail with v12's message for a grammar built without a resolver ("No import resolver
-    supplied."), the only case there is until imports arrive. `use params` and decorators are
-    refused (`GrammarError::Unsupported`) until their milestone, rather than ignored.
   - A `\u` escape that is half of a surrogate pair with no partner decodes to U+FFFD: a Rust
     string can't hold a lone surrogate. Two `\u` escapes that form a pair are one character, as
     in v12.
@@ -1125,9 +1130,71 @@ build error naming the pattern.
   is named otherwise (`y = x + "b"`, then `x = "a"?`) names nothing in scope: v12 throws
   "Couldn't find 'x'" at first parse, and `exec` reports it up front here. Defined first, the
   rule is copied in and works. Pinned in `tests/grammar.rs`.
-- **Not ported here:** imports, `with params`, `use params`, decorators and their tests
-  (`Grammar.test.ts`'s import, param and decorator tests), the async API, and the JS `patterns`
-  template helper. The wasm layer gets grammars in a later milestone.
+- **Not ported here:** the async API (§19). The wasm layer gets grammars in a later milestone.
+
+## 19. Imports, params and decorators *(milestone 11)*
+
+- **Layout** (`src/grammar/`): `imports.rs` (the `ImportResolver` port, `GrammarFile`, and the
+  `InMemoryImports` adapter; a closure is a resolver too), `options.rs` (`GrammarOptions`:
+  `resolver`, `origin_resource`, `params`, `decorators`), `setup.rs` (what one build is given,
+  and what a build made for another shares with it), `import.rs` (imports and `use params`, in
+  statement order before any rule), `decorators.rs` (the registry), `tokens.rs` (`@tokens`),
+  `decorate.rs` (the walk back from a rule), `template.rs` and `camel_case.rs` (`patterns`,
+  `patterns_with`; `patterns!` is in `lib.rs`).
+- **One synchronous resolver.** v12 has `resolveImport` (async) and `resolveImportSync`; the core
+  has one `resolve(resource, origin)`, called while building. A host that loads grammars
+  asynchronously fetches them first and answers from memory (`InMemoryImports`). v12's async
+  tests (`Grammar.parse`, `Grammar.import`) are synchronous here. *Rejected:* an async build in
+  the core (it would put an executor below the wasm layer for no case the prefetch can't serve).
+- **v12's build, step for step.** A build is given its params, its origin, the merged decorators,
+  the anonymous count and, for a `with params` block, the importer's rule names (v12
+  `_outerNames`). Imports and `use params` run in statement order; a `with params` block is
+  built first, as a grammar of its own that sees the importer's imports and params; the
+  imported grammar is built with those params, its own origin and the same count. A name is
+  looked up in the rules built so far, then the imports, then the params (v12 `_getPattern`), so
+  a rule used before a same-named rule redefines it gets the import. An alias names one of this
+  grammar's rules only when no import or param has that name (`space = space` passes a param
+  through, it is no cycle). An imported alias is a clone under the alias name. A `use params`
+  default is what an import brought in, else a reference checked with the unknown names. Each
+  import's failure after loading (the imported grammar's error, a name taken twice, a name it
+  doesn't define) is wrapped as v12 wraps it, `Failed loading expression from: "…". Error
+  details: "…"`, so a chain of imports nests; the resolver's own error and "No import resolver
+  supplied." are passed on unwrapped, as in v12. Checked against v12 on 75 grammars (every
+  ported test's, and the edge cases above): identical results, values and messages, except the
+  import cycle below.
+- **The resolver's `origin`** is the resource the resolver answered with for the importing
+  grammar (not the name it was asked for), `origin_resource` for the top-level text, and the
+  importer's own origin for a `with params` block, as in v12. An empty origin is none (v12's
+  `originResource || null`).
+- **Decorators return the pattern to keep** (§9), where v12's change it in place. They run
+  nearest first (v12 walks back from the rule over comments and blank lines). The registry keeps
+  registration order for the unknown-decorator message, and the built-in `@tokens` is merged as
+  v12 merges it (`{ ...decorators, ...defaultDecorators }`): it can't be replaced, and one the
+  caller also registered keeps the caller's place in the list. A forward alias is decorated
+  once, when it is resolved; an export is never decorated. `@tokens` finds its target by
+  capability (`Pattern::tokenizable_mut`), so it takes a regex, a take-until or a custom pattern,
+  and names anything else by v12's `type` ("a expression" for a choice, "a context" for an
+  imported rule).
+- **A decorator must keep the pattern's name** (`GrammarError::DecoratorRenamed`). Rules are
+  found by their pattern's name (§18), so a renamed rule would silently stop resolving. v12 can't
+  reach this: its decorators can't replace the pattern.
+- **v12 quirk kept:** `@name(true)` and `@name(false)` pass no argument. The cpat grammar's
+  `jsonBoolean` is a choice of two literals, whose node is named after the literal, so v12's
+  search for a JSON node finds none. Pinned in `tests/grammar_decorators.rs`.
+- **Deviations from v12:**
+  - A grammar that imports itself, directly or through others, is `GrammarError::ImportCycle`
+    ("[Invalid Grammar] import cycle `a` -> `b` -> `a`: …"), found by the resources the resolver
+    answered with along the chain of importers. v12 recurses until the JS stack overflows and
+    wraps the `RangeError` once per level; in Rust that would be a process abort. A resolver that
+    names one grammar anew on each import hides the cycle from that check, so imports nested more
+    than 64 deep are `GrammarError::ImportsTooDeep` (`MAX_IMPORT_DEPTH`; each level holds only a
+    builder, since the cpat parse has returned before imports load). A grammar imported twice
+    along different paths is no cycle.
+  - A decorator argument that is cpat but not JSON (`"\x41"`, a leading zero) is
+    `GrammarError::DecoratorArgument` with `serde_json`'s message; v12's `JSON.parse` throws V8's
+    message, unprefixed.
+  - `patterns` returns a `HashMap`, so its keys have no order; v12's object keeps the rules'.
+    Two rule names that meet in camelCase keep the later rule, as in v12.
 
 ## Behavior fixed relative to clarity-pattern-parser v11
 

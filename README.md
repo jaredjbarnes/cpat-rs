@@ -23,7 +23,7 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 10)
+## What's in the box (milestone 11)
 
 `Literal`, `Regex`, `Sequence`, `Choice`, `Repeat` (unbounded or bounded, with an optional
 divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for recursive
@@ -116,9 +116,39 @@ let result = patterns["expr"].exec("1+2*3");
 assert_eq!(result.tree().unwrap().root().name(), "add");
 ```
 
-Still to come: imports, `use params` and decorators in grammar files (refused for now, with
-`GrammarError::NoImportResolver` or `GrammarError::Unsupported`), and autocomplete and grammars
-in JS.
+Grammars import grammars: `import { a, b as c } from "lib.cpat" with params { x = y }` loads
+`lib.cpat` through the `ImportResolver` in `GrammarOptions::resolver` (synchronously: a host that
+fetches fetches first, then answers from memory; `InMemoryImports` does that, and a closure is a
+resolver too). `use params { x, y = default }` declares what a grammar takes; `params` in the
+options supply it. `Grammar::import(resource, options)` builds a grammar the resolver finds.
+Decorators above a rule hand its pattern to a function: `@tokens(["a", "b"])` is built in, and
+`GrammarOptions::decorators` registers your own (`Fn(Pattern, Option<&Json>) -> Result<Pattern,
+String>`), which may replace the pattern, with a `Custom` one for instance. Errors are v12's,
+word for word (`Failed loading expression from: "lib.cpat". Error details: "…"`).
+
+`patterns(text)` (or `patterns!`, which formats like `format!` when given arguments) returns the
+rules keyed by camelCase name, as v12's template does; `patterns_with(options)` returns a builder
+that uses those options every time.
+
+```rust
+use cpat_core::{Grammar, GrammarOptions, InMemoryImports};
+
+let imports = InMemoryImports::new().with("names.cpat", r#"first = "John""#);
+let mut patterns = Grammar::parse_string(r#"
+    import { first } from "names.cpat"
+    @tokens([" "])
+    space = /\s+/
+    full = first + space + "Doe"
+"#, GrammarOptions::default().with_resolver(imports))?;
+
+assert!(patterns["full"].test("John Doe"));
+assert_eq!(patterns["space"].tokens(), [" "]);
+
+let rules = cpat_core::patterns!(r#"full-name = "John Doe""#)?;
+assert!(rules["fullName"].clone().test("John Doe"));
+```
+
+Still to come: autocomplete and grammars in JS.
 
 ```rust
 use cpat_core::{Block, Choice, Literal, Pattern, Reference, Regex, Sequence};

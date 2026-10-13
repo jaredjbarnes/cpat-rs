@@ -89,7 +89,7 @@ impl<'a, 't> Builder<'a, 't> {
 
     /// A part of a bigger pattern, under the next anonymous name.
     pub(super) fn build_part(&mut self, node: Node<'a, 't>) -> Result<Pattern, GrammarError> {
-        let name = self.anonymous.next();
+        let name = self.setup.anonymous.next();
         self.build_pattern(&name, node)
     }
 
@@ -162,8 +162,10 @@ mod tests {
     //! made by hand-built patterns: v12 keeps an error for each, and so do
     //! these.
 
+    use crate::grammar::GrammarOptions;
     use crate::grammar::builder::Builder;
     use crate::grammar::error::GrammarError;
+    use crate::grammar::setup::Setup;
     use crate::pattern::Pattern;
     use crate::patterns::{Literal, Regex, Sequence};
 
@@ -175,7 +177,7 @@ mod tests {
     fn build(mut pattern: Pattern, text: &str) -> Result<Pattern, GrammarError> {
         let result = pattern.exec(text);
         let root = result.tree().expect("the pattern matches").root();
-        Builder::empty(text).build_pattern("x", root)
+        Builder::empty(text, Setup::top_level(GrammarOptions::default())).build_pattern("x", root)
     }
 
     #[test]

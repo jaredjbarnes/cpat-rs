@@ -1,10 +1,171 @@
-//! Ports of v12 `grammar/Grammar.test.ts`: every test that uses no
-//! imports, params or decorators (those arrive with later milestones), and
-//! v12's `grammar/patterns.test.ts`. Error tests assert v12's message text
-//! exactly. Positions are byte offsets; the texts are ASCII.
+//! Ports of v12 `grammar/Grammar.test.ts` that use no imports, params or
+//! decorators; those are in `grammar_imports.rs` and `grammar_decorators.rs`,
+//! and v12's `grammar/patterns.test.ts` is in `grammar_template.rs`. Error
+//! tests assert v12's message text exactly. Positions are byte offsets; the
+//! texts are ASCII.
 //!
-//! Not ported: 'patterns template converts kebab-case to camelCase' (a JS
-//! template-literal helper with no Rust counterpart).
+//! Checklist: every test in v12's `Grammar.test.ts`, in its order, and the
+//! test that ports it (in this file unless another is named). Every one is
+//! ported; none is N/A. v12 names two tests "Block with inline literal
+//! content"; the first (a regex in parentheses) is
+//! `block_with_inline_regex_content_in_parens` here. v12's async variants
+//! share their sync test: the core has no async API (DESIGN §8).
+//!
+//! - Literal → `literal`
+//! - Literal With Escaped Characters → `literal_with_escaped_characters`
+//! - Literal With Escaped Quotes → `literal_with_escaped_quotes`
+//! - Regex → `regex`
+//! - an escaped backslash followed by n is a backslash and an n → `an_escaped_backslash_followed_by_n_is_a_backslash_and_an_n`
+//! - two escaped backslashes are two backslashes → `two_escaped_backslashes_are_two_backslashes`
+//! - an escaped backslash then an escaped quote → `an_escaped_backslash_then_an_escaped_quote`
+//! - each documented escape → `each_documented_escape`
+//! - mixed sequences decode left to right → `mixed_sequences_decode_left_to_right`
+//! - any other escaped character means itself → `any_other_escaped_character_means_itself`
+//! - an incomplete \x or \u escape means the letter itself → `an_incomplete_x_or_u_escape_means_the_letter_itself`
+//! - Or → `or`
+//! - And → `and`
+//! - And With Optional Pattern → `and_with_optional_pattern`
+//! - And With Not Pattern → `and_with_not_pattern`
+//! - Repeat → `repeat`
+//! - Repeat Zero Or More → `repeat_zero_or_more`
+//! - Repeat Lower Limit → `repeat_lower_limit`
+//! - Repeat Bounded → `repeat_bounded`
+//! - Repeat Upper Limit → `repeat_upper_limit`
+//! - Repeat Exact → `repeat_exact`
+//! - Repeat Divider → `repeat_divider`
+//! - Repeat Divider With Trim Divider → `repeat_divider_with_trim_divider`
+//! - Repeat Divider With Trim Divider And Bounds → `repeat_divider_with_trim_divider_and_bounds`
+//! - Reference → `reference_through_a_choice_and_a_repeat`
+//! - Alias → `alias`
+//! - Bad Grammar At Beginning → `bad_grammar_at_beginning`
+//! - Bad Grammar Further In → `bad_grammar_further_in`
+//! - Import → `grammar_imports::import`
+//! - Imports → `grammar_imports::imports`
+//! - Imports with Params → `grammar_imports::imports_with_params`
+//! - Export Name → `grammar_imports::export_name`
+//! - Import Alias → `grammar_imports::import_alias`
+//! - Default Params Resolves to Default Value → `grammar_imports::default_params_resolves_to_default_value`
+//! - Default Params Resolves to params imported → `grammar_imports::default_params_resolves_to_params_imported`
+//! - Default Params Resolves to imported default value → `grammar_imports::default_params_resolves_to_imported_default_value`
+//! - Anonymous Patterns → `anonymous_patterns`
+//! - Grammar With Spaces → `grammar_with_spaces`
+//! - Grammar Import → `grammar_imports::grammar_import`
+//! - Expression Pattern → `expression_pattern`
+//! - Expression Pattern With Right Association → `expression_pattern_with_right_association`
+//! - Decorators → `grammar_decorators::decorators`
+//! - Decorators On Take Until → `grammar_decorators::decorators_on_take_until`
+//! - @tokens on a pattern that can't take tokens is a build error → `grammar_decorators::tokens_on_a_pattern_that_cant_take_tokens_is_a_build_error`
+//! - @tokens with no argument is a build error → `grammar_decorators::tokens_with_no_argument_is_a_build_error`
+//! - @tokens with a non-array argument is a build error → `grammar_decorators::tokens_with_a_non_array_argument_is_a_build_error`
+//! - @tokens with a non-string token is a build error → `grammar_decorators::tokens_with_a_non_string_token_is_a_build_error`
+//! - an unknown decorator is a build error → `grammar_decorators::an_unknown_decorator_is_a_build_error`
+//! - Decorators On Multiple Patterns → `grammar_decorators::decorators_on_multiple_patterns`
+//! - Decorators On Multiple Patterns And Comments → `grammar_decorators::decorators_on_multiple_patterns_and_comments`
+//! - Custom Named Decorator → `grammar_decorators::custom_named_decorator`
+//! - Decorator With Empty Object Literal → `grammar_decorators::decorator_with_empty_object_literal`
+//! - Decorator With Object Literal → `grammar_decorators::decorator_with_object_literal`
+//! - Take Until → `take_until`
+//! - Import Sync → `grammar_imports::import_sync`
+//! - a reference to a name defined nowhere names the name and the rule → `a_reference_to_a_name_defined_nowhere_names_the_name_and_the_rule`
+//! - nested references are checked too → `nested_references_are_checked_too`
+//! - a forward reference to a pattern defined later is fine → `a_forward_reference_to_a_pattern_defined_later_is_fine`
+//! - an alias of an unknown name is an error → `an_alias_of_an_unknown_name_is_an_error`
+//! - exporting an unknown name is an error → `exporting_an_unknown_name_is_an_error`
+//! - a `use params` default that names nothing is an error → `grammar_imports::a_use_params_default_that_names_nothing_is_an_error`
+//! - a declared param that is neither supplied nor defaulted is an error when used → `grammar_imports::a_declared_param_that_is_neither_supplied_nor_defaulted_is_an_error_when_used`
+//! - imported and param names count as defined → `grammar_imports::imported_and_param_names_count_as_defined`
+//! - a hand-built Reference stays lazy → `a_hand_built_reference_is_checked_when_it_runs`
+//! - a literal that a shorter, earlier literal shadows → `a_literal_that_a_shorter_earlier_literal_shadows`
+//! - the longer literal first is fine → `the_longer_literal_first_is_fine`
+//! - not adjacent, and inside a nested choice → `not_adjacent_and_inside_a_nested_choice`
+//! - looks through rule names, including ones defined later → `looks_through_rule_names_including_ones_defined_later`
+//! - looks through aliases → `looks_through_aliases`
+//! - looks through imported literals → `grammar_imports::looks_through_imported_literals`
+//! - literals that are not prefixes of each other are fine → `literals_that_are_not_prefixes_of_each_other_are_fine`
+//! - a regex or sequence before a longer literal is not checked → `a_regex_or_sequence_before_a_longer_literal_is_not_checked`
+//! - two aliases naming each other → `two_aliases_naming_each_other`
+//! - a rule that aliases itself → `a_rule_that_aliases_itself`
+//! - a longer chain, entered from a rule outside the cycle → `a_longer_chain_entered_from_a_rule_outside_the_cycle`
+//! - a parenthesized alias counts → `a_parenthesized_alias_counts`
+//! - alias chains that end in a real pattern are fine → `alias_chains_that_end_in_a_real_pattern_are_fine`
+//! - a forward alias keeps its decorators → `grammar_decorators::a_forward_alias_keeps_its_decorators`
+//! - a rule may pass a same-named param through → `grammar_imports::a_rule_may_pass_a_same_named_param_through`
+//! - recursion through a real pattern is not an alias cycle → `recursion_through_a_real_pattern_is_not_an_alias_cycle`
+//! - building the same grammar twice yields identical names → `building_the_same_grammar_twice_yields_identical_names`
+//! - names are numbered from the start of each build → `names_are_numbered_from_the_start_of_each_build`
+//! - an imported grammar's anonymous names do not collide with the importer's → `grammar_imports::an_imports_anonymous_names_do_not_collide_with_the_importers`
+//! - `|` builds the same pattern regardless of definition order → `a_choice_builds_the_same_pattern_regardless_of_definition_order`
+//! - an atom-only `|` returns the matched alternative's node unwrapped → `an_atom_only_choice_returns_the_matched_alternatives_node_unwrapped`
+//! - mutually recursive choices build and parse → `mutually_recursive_choices_build_and_parse`
+//! - greedy options `<|>` are rejected with a message that teaches the fix → `greedy_options_are_rejected_with_a_message_that_teaches_the_fix`
+//! - greedy options error names the offending expression → `greedy_options_error_names_the_offending_expression`
+//! - greedy options nested in a group or sequence are rejected too → `greedy_options_nested_in_a_group_or_sequence_are_rejected_too`
+//! - greedy options error is not a generic syntax error → `greedy_options_error_is_not_a_generic_syntax_error`
+//! - `<|>` inside a literal is just text → `greedy_bar_inside_a_literal_is_just_text`
+//! - options picks the first match, in order → `options_picks_the_first_match_in_order`
+//! - default param resolves to locally defined pattern when no param supplied → `grammar_imports::default_param_resolves_to_locally_defined_pattern_when_no_param_supplied`
+//! - default param is overridden when param is supplied → `grammar_imports::default_param_is_overridden_when_param_is_supplied`
+//! - default param resolves to imported pattern → `grammar_imports::default_param_resolves_to_imported_pattern`
+//! - use params without default declares param available from options → `grammar_imports::use_params_without_default_declares_param_available_from_options`
+//! - expression respects declaration-order precedence for arithmetic → `expression_respects_declaration_order_precedence_for_arithmetic`
+//! - expression handles prefix operator → `expression_handles_prefix_operator`
+//! - expression handles postfix operator → `expression_handles_postfix_operator`
+//! - forward reference resolves pattern defined later → `forward_reference_resolves_pattern_defined_later`
+//! - duplicate import name throws → `grammar_imports::duplicate_import_name_throws`
+//! - importing nonexistent pattern throws → `grammar_imports::importing_nonexistent_pattern_throws`
+//! - nested parenthesized groups unwrap correctly → `nested_parenthesized_groups_unwrap_correctly`
+//! - alias chain resolves through multiple levels → `alias_chain_resolves_through_multiple_levels`
+//! - multiple decorators applied to same pattern → `grammar_decorators::multiple_decorators_applied_to_same_pattern`
+//! - decorator receives number argument → `grammar_decorators::decorator_receives_number_argument`
+//! - decorator receives nested array argument → `grammar_decorators::decorator_receives_nested_array_argument`
+//! - decorator receives null argument → `grammar_decorators::decorator_receives_null_argument`
+//! - decorator receives string argument → `grammar_decorators::decorator_receives_string_argument`
+//! - patterns template converts kebab-case to camelCase → `grammar_template::patterns_template_converts_kebab_case_to_camel_case`
+//! - empty grammar throws → `empty_grammar_throws`
+//! - grammar with only comments produces no patterns → `grammar_with_only_comments_produces_no_patterns`
+//! - grammar with syntax version and no patterns → `grammar_with_syntax_version_and_no_patterns`
+//! - repeat with inline literal pattern → `repeat_with_inline_literal_pattern`
+//! - repeat with inline regex pattern → `repeat_with_inline_regex_pattern`
+//! - inline literals use their value as the pattern name → `inline_literals_use_their_value_as_the_pattern_name`
+//! - five-way sequence flattens correctly → `five_way_sequence_flattens_correctly`
+//! - four-way options all reachable → `four_way_options_all_reachable`
+//! - sequence mixing references, optionals, nots, and inline patterns → `sequence_mixing_references_optionals_nots_and_inline_patterns`
+//! - recursive list with nested expressions → `recursive_list_with_nested_expressions`
+//! - sequence children reflect pattern names in AST → `sequence_children_reflect_pattern_names_in_ast`
+//! - repeat AST contains repeated children → `repeat_ast_contains_repeated_children`
+//! - options AST returns winning alternative directly → `options_ast_returns_winning_alternative_directly`
+//! - expression AST wraps in expression node → `expression_ast_wraps_in_expression_node`
+//! - import multiple patterns from same resource → `grammar_imports::import_multiple_patterns_from_same_resource`
+//! - import multiple patterns with alias from same resource → `grammar_imports::import_multiple_patterns_with_alias_from_same_resource`
+//! - repeat with inline sequence as repeated item → `repeat_with_inline_sequence_as_repeated_item`
+//! - repeat with inline options as repeated item → `repeat_with_inline_options_as_repeated_item`
+//! - take until with regex terminator → `take_until_with_regex_terminator`
+//! - inline not with literal in sequence → `inline_not_with_literal_in_sequence`
+//! - inline optional with literal in sequence → `inline_optional_with_literal_in_sequence`
+//! - syntax version followed by patterns parses correctly → `syntax_version_followed_by_patterns_parses_correctly`
+//! - empty string literal throws → `empty_string_literal_throws`
+//! - Block with wildcard content → `block_with_wildcard_content`
+//! - Block without content requires ... → `block_without_content_requires_the_wildcard`
+//! - Block with content pattern → `block_with_content_pattern`
+//! - Block with multiple content patterns → `block_with_multiple_content_patterns`
+//! - Block handles nesting → `block_handles_nesting`
+//! - Block with inline literal content → `block_with_inline_regex_content_in_parens`
+//! - Block wildcard matches any content → `block_wildcard_matches_any_content`
+//! - Block with inline regex content → `block_with_inline_regex_content`
+//! - Block with inline literal content → `block_with_inline_literal_content`
+//! - Block with pattern reference content → `block_with_pattern_reference_content`
+//! - Block with repeat content → `block_with_repeat_content`
+//! - Block with grouped options content → `block_with_grouped_options_content`
+//! - Block with inline sequence content → `block_with_inline_sequence_content`
+//! - Block with three-part inline sequence content → `block_with_three_part_inline_sequence_content`
+//! - Block with ungrouped options content → `block_with_ungrouped_options_content`
+//! - import without resolver (sync) throws → `grammar_imports::import_without_resolver_throws`
+//! - import without resolver (async) throws → `grammar_imports::import_without_resolver_throws`
+//! - sync import wraps error from bad imported grammar → `grammar_imports::import_wraps_error_from_bad_imported_grammar`
+//! - async import wraps error from bad imported grammar → `grammar_imports::import_wraps_error_from_bad_imported_grammar`
+//! - duplicate import alias throws → `grammar_imports::duplicate_import_alias_throws`
+//! - importing nonexistent pattern via alias throws → `grammar_imports::importing_nonexistent_pattern_via_alias_throws`
+//! - export pattern promotes previously defined pattern → `grammar_imports::export_pattern_promotes_previously_defined_pattern`
 
 mod common;
 
@@ -1785,133 +1946,6 @@ fn block_delimiters_are_named_open_and_close() {
         .map(|child| child.name())
         .collect();
     assert_eq!(names, ["open", "[a-z]+", "close"]);
-}
-
-// ─── Statements this milestone doesn't build ────────────────────────────
-
-#[test]
-fn import_without_resolver_throws() {
-    assert_eq!(
-        message(
-            r#"
-            import { value } from "file.cpat"
-            name = value
-        "#
-        ),
-        "No import resolver supplied."
-    );
-}
-
-#[test]
-fn params_and_decorators_are_refused_until_they_are_supported() {
-    assert_eq!(
-        build_error("use params { value }\nx = \"a\""),
-        GrammarError::Unsupported {
-            feature: "`use params` statements"
-        }
-    );
-    for decorated in [
-        "@tokens([\" \"])\nspaces = /\\s+/",
-        "@record\nspaces = /\\s+/",
-    ] {
-        assert_eq!(
-            build_error(decorated),
-            GrammarError::Unsupported {
-                feature: "decorators"
-            }
-        );
-    }
-}
-
-// ─── v12 grammar/patterns.test.ts ───────────────────────────────────────
-
-#[test]
-fn patterns_baseline() {
-    let mut patterns = build(
-        r#"
-        first-name = "John"
-        last-name = "Doe"
-        space = /\s+/
-        full-name = first-name + space + last-name
-        "#,
-    );
-    assert_eq!(
-        value(&mut patterns, "full-name", "John Doe").as_deref(),
-        Some("John Doe")
-    );
-}
-
-#[test]
-fn patterns_simple_markup() {
-    let mut patterns = build(
-        r#"
-        tag-name = /[a-zA-Z_-]+[a-zA-Z0-9_-]*/
-        space = /\s+/
-        opening-tag = "<" + tag-name + space? + ">"
-        closing-tag = "</" + tag-name + space? + ">"
-        child = space? + element + space?
-        children = (child)*
-        element = opening-tag + children + closing-tag
-        body = space? + element + space?
-        "#,
-    );
-    let text = "
-        <div>
-            <div></div>
-            <div></div>
-        </div>
-        ";
-    let result = patterns["body"].exec_recording(text);
-    let tree = result.tree().expect("the markup matches");
-    // v12 removes every node named like `space` and reads the rest.
-    let without_spaces: String = tree
-        .root()
-        .find_all(|node| node.is_leaf() && !node.name().contains("space"))
-        .iter()
-        .map(|node| node.value())
-        .collect();
-    assert_eq!(without_spaces, "<div><div></div><div></div></div>");
-}
-
-#[test]
-fn patterns_expression_pattern() {
-    let mut patterns = build(
-        r#"
-        integer = /\d+/
-        operator = "+" | "-" | "*" | "/"
-        unary-operator = "+" | "-"
-        postfix-operator = "++" | "--"
-        binary-expr = expr + operator + expr
-        unary-expr = unary-operator + expr
-        postfix-expr = expr + postfix-operator
-        expr = postfix-expr | unary-expr | binary-expr | integer
-        "#,
-    );
-    let result = patterns["expr"].exec("-10++");
-    let root = result.tree().unwrap().root();
-    assert_eq!(root.value(), "-10++");
-    assert_eq!(root.name(), "unary-expr");
-
-    let operator = root.children().next().unwrap();
-    assert_eq!(
-        (operator.kind(), operator.name(), operator.value()),
-        (NodeKind::Literal, "-", "-")
-    );
-    let operand = root.children().nth(1).unwrap();
-    assert_eq!(
-        (operand.kind(), operand.name(), operand.value()),
-        (NodeKind::Expression, "postfix-expr", "10++")
-    );
-    let integer = operand.children().next().unwrap();
-    assert_eq!(
-        (integer.kind(), integer.name(), integer.value()),
-        (NodeKind::Regex, "integer", "10")
-    );
-    let increment = operand.children().nth(1).unwrap();
-    assert_eq!(
-        (increment.kind(), increment.name(), increment.value()),
-        (NodeKind::Literal, "++", "++")
-    );
 }
 
 // ─── v12 Not.test.ts, through grammar files ─────────────────────────────

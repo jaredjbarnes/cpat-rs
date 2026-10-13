@@ -7,15 +7,24 @@ mod anonymous;
 mod block;
 mod build;
 mod builder;
+mod camel_case;
 mod checks;
 mod cpat;
+mod decorate;
+mod decorators;
 mod depth;
 mod error;
 mod escapes;
+mod import;
+mod imports;
 mod json;
+mod options;
 mod patterns;
 mod repeat;
+mod setup;
 mod syntax;
+mod template;
+mod tokens;
 
 use crate::error_message::generate_error_message;
 use crate::exec::ParseResult;
@@ -23,16 +32,15 @@ use crate::pattern::Pattern;
 use crate::tree::Node;
 
 use depth::GRAMMAR_TEXT_LIMITS;
+use setup::Setup;
 
 pub use cpat::cpat_grammar;
+pub use decorators::{Decorator, Decorators};
 pub use error::GrammarError;
+pub use imports::{GrammarFile, ImportResolver, InMemoryImports};
+pub use options::GrammarOptions;
 pub use patterns::Patterns;
-
-/// How to build a grammar. Nothing to choose yet: imports, params and
-/// decorators arrive with later milestones, and will be set here.
-#[derive(Clone, Debug, Default)]
-#[non_exhaustive]
-pub struct GrammarOptions {}
+pub use template::{patterns, patterns_with};
 
 /// Builds patterns from grammar files.
 pub struct Grammar;
@@ -44,22 +52,50 @@ impl Grammar {
     ///
     /// Mistakes are errors here, not at first parse: text that isn't cpat,
     /// a name no rule defines, rules that only rename each other in a loop,
-    /// and a literal an earlier, shorter one hides.
+    /// a literal an earlier, shorter one hides, an import that can't be
+    /// loaded or doesn't build, and a decorator that refuses its pattern.
     pub fn parse_string(text: &str, options: GrammarOptions) -> Result<Patterns, GrammarError> {
-        let GrammarOptions {} = options;
-        let mut grammar = fresh_cpat_grammar();
-        let result = grammar.exec_with(text, GRAMMAR_TEXT_LIMITS);
-        if let Some(too_deep) = result.too_deep {
-            let (line, column) = syntax::line_and_column(text, too_deep.pos);
-            return Err(GrammarError::NestedTooDeep { line, column });
-        }
-        let Some(tree) = result.tree() else {
-            return Err(syntax_error(&mut grammar, text));
-        };
-        let root = tree.root();
-        reject_removed_syntax(text, root)?;
-        builder::build(text, root)
+        build_text(text, Setup::top_level(options))
     }
+
+    /// Builds the grammar the resolver finds under `resource` (v12
+    /// `Grammar.import`), as `parse_string` builds text: its own imports are
+    /// resolved from where it was found. The resolver's error, or the
+    /// grammar's, comes back as it is.
+    pub fn import(resource: &str, options: GrammarOptions) -> Result<Patterns, GrammarError> {
+        let Some(resolver) = &options.resolver else {
+            return Err(GrammarError::NoImportResolver);
+        };
+        let file =
+            resolver
+                .resolve(resource, None)
+                .map_err(|message| GrammarError::ImportResolver {
+                    resource: resource.to_string(),
+                    message,
+                })?;
+        let options = GrammarOptions {
+            origin_resource: Some(file.resource),
+            ..options
+        };
+        Grammar::parse_string(&file.expression, options)
+    }
+}
+
+/// One grammar's text, built with what `setup` gives it: the caller's own,
+/// or one built on behalf of another (an import, a `with params` block).
+fn build_text(text: &str, setup: Setup) -> Result<Patterns, GrammarError> {
+    let mut grammar = fresh_cpat_grammar();
+    let result = grammar.exec_with(text, GRAMMAR_TEXT_LIMITS);
+    if let Some(too_deep) = result.too_deep {
+        let (line, column) = syntax::line_and_column(text, too_deep.pos);
+        return Err(GrammarError::NestedTooDeep { line, column });
+    }
+    let Some(tree) = result.tree() else {
+        return Err(syntax_error(&mut grammar, text));
+    };
+    let root = tree.root();
+    reject_removed_syntax(text, root)?;
+    builder::build(text, root, setup)
 }
 
 thread_local! {

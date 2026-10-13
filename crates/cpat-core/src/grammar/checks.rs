@@ -12,13 +12,20 @@ use super::error::GrammarError;
 
 impl Builder<'_, '_> {
     /// Every name a rule used before it was defined must be defined by the
-    /// end of the build. Otherwise the grammar could never parse, so say so
-    /// now instead of at first parse.
+    /// end of the build: in this grammar, by an import, as a param, or (in a
+    /// `with params` block) by the importing grammar. Otherwise the grammar
+    /// could never parse, so say so now instead of at first parse.
     pub(super) fn reject_unknown_names(&self) -> Result<(), GrammarError> {
+        let is_defined = |name: &String| {
+            self.rule_names.contains(name)
+                || self.imported.contains(name)
+                || self.params.contains(name)
+                || self.setup.outer_names.contains(name)
+        };
         match self
             .pending
             .iter()
-            .find(|pending| !self.rule_names.contains(&pending.name))
+            .find(|pending| !is_defined(&pending.name))
         {
             Some(unknown) => Err(GrammarError::UnknownPattern {
                 name: unknown.name.clone(),
@@ -33,16 +40,21 @@ impl Builder<'_, '_> {
     /// alias chain (`a = b`, `b = c`, `c = "x"`) could never parse. Point
     /// each such alias at the real pattern its chain ends in. A chain that
     /// loops back on itself never ends in a real pattern: that is an error.
-    pub(super) fn resolve_aliases(&mut self) -> Result<(), GrammarError> {
+    /// A resolved alias takes its decorators now, once.
+    pub(super) fn resolve_aliases(
+        &mut self,
+        statements: &[Node<'_, '_>],
+    ) -> Result<(), GrammarError> {
+        let aliases = std::mem::take(&mut self.aliases);
         // A later alias of the same name wins, as in a JS `Map`.
-        let target_of: HashMap<&str, &str> = self
-            .aliases
+        let target_of: HashMap<&str, &str> = aliases
             .iter()
             .map(|alias| (alias.name.as_str(), alias.target.as_str()))
             .collect();
 
-        let mut resolved = Vec::new();
-        for alias in &self.aliases {
+        // One alias at a time, as v12 does, so a decorator's error and a
+        // later cycle are reported in the same order.
+        for alias in &aliases {
             let mut chain = vec![alias.name.as_str()];
             let mut current = alias.target.as_str();
             while let Some(&next) = target_of.get(current) {
@@ -57,13 +69,10 @@ impl Builder<'_, '_> {
             }
 
             if matches!(self.rules.get(&alias.name), Some(Pattern::Reference(_))) {
-                resolved.push((alias.name.clone(), current.to_string()));
+                let pattern = self.pattern_named(current).clone_named(&alias.name);
+                let pattern = self.decorate(statements, alias.statement, pattern)?;
+                self.rules.set(&alias.name, pattern);
             }
-        }
-
-        for (name, end) in resolved {
-            let pattern = self.pattern_named(&end).clone_named(&name);
-            self.rules.set(&name, pattern);
         }
         Ok(())
     }
@@ -105,7 +114,12 @@ impl Builder<'_, '_> {
         if node.name() == "literal" {
             return Some(string_value(node.value()));
         }
-        match self.rules.get(alias_target(node)?)? {
+        let pattern = match self.known(alias_target(node)?)? {
+            // An imported rule arrives wrapped in its grammar's context.
+            Pattern::Context(context) => context.child(),
+            pattern => pattern,
+        };
+        match pattern {
             Pattern::Literal(literal) => Some(literal.token().to_string()),
             _ => None,
         }

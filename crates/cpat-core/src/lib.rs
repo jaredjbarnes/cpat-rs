@@ -19,6 +19,29 @@
 //! assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 //! ```
 
+/// A grammar's rules by camelCase name (`patterns`), from text that may be
+/// formatted: `patterns!(text)`, or `patterns!("x = {}", y)` as `format!`
+/// takes it. With one argument the text is used as it is, so a grammar's
+/// own braces (`with params { … }`, `["{"]`) need no escaping.
+///
+/// ```
+/// let patterns = cpat_core::patterns!(r#"
+///     first-name = "John"
+///     full-name = first-name + " Doe"
+/// "#).unwrap();
+/// let mut full_name = patterns["fullName"].clone();
+/// assert!(full_name.test("John Doe"));
+/// ```
+#[macro_export]
+macro_rules! patterns {
+    ($text:expr $(,)?) => {
+        $crate::patterns($text)
+    };
+    ($format:literal, $($args:tt)+) => {
+        $crate::patterns(&::std::format!($format, $($args)+))
+    };
+}
+
 mod ancestors;
 mod children;
 mod cursor;
@@ -51,7 +74,10 @@ pub use ancestors::Frame;
 pub use cursor::Cursor;
 pub use error_message::generate_error_message;
 pub use exec::ParseResult;
-pub use grammar::{Grammar, GrammarError, GrammarOptions, Patterns, cpat_grammar};
+pub use grammar::{
+    Decorator, Decorators, Grammar, GrammarError, GrammarFile, GrammarOptions, ImportResolver,
+    InMemoryImports, Patterns, cpat_grammar, patterns, patterns_with,
+};
 pub use halt::{DEFAULT_MAX_DEPTH, Limits, TooDeep};
 pub use history::HistoryRecord;
 pub use intellisense::{
@@ -69,5 +95,7 @@ pub use patterns::{
     Block, Choice, ChoiceMode, Context, Custom, CustomParse, Cut, Literal, Not, Optional,
     Reference, Regex, Repeat, RepeatOptions, RightAssociated, Sequence, TakeUntil,
 };
+/// The JSON a decorator's argument is (`@name(json)`).
+pub use serde_json::Value as Json;
 pub use tokenizable::Tokenizable;
 pub use tree::{Node, NodeId, NodeKind, Tree};
