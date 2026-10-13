@@ -10,6 +10,7 @@ use crate::JsPattern;
 use crate::cursor_json::cursor_json;
 use crate::exec_result::thrown_message;
 use crate::flat_tree::FlatTree;
+use crate::live::Live;
 use crate::utf16::Utf16Offsets;
 
 /// Suggests what could come next in a text, for the pattern it was built
@@ -80,6 +81,7 @@ impl JsAutoComplete {
                 .parse
                 .as_ref()
                 .map(|parse| cursor_json(parse, &offsets)),
+            _live: Live::new(),
         }
     }
 }
@@ -109,6 +111,7 @@ pub struct SuggestionResult {
     json: String,
     tree: FlatTree,
     cursor: Option<String>,
+    _live: Live,
 }
 
 #[wasm_bindgen]

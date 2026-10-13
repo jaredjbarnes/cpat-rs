@@ -47,13 +47,23 @@ use classify::{LiteralSets, Ready};
 /// **Known limitation (v12's):** a prefix operator that consumes the last
 /// token does not backtrack. With `x = "a" x | "a"`, the input `a` fails:
 /// the prefix takes `a` and no operand is left.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Choice {
     pub(crate) meta: Meta,
     // The name a self-reference has. v12's `_originalName`: a renamed clone
     // (a reference's instance) still recognises its own alternatives.
     self_name: Name,
-    pub(crate) alternatives: Vec<Pattern>,
+    // v12 `_originalPatterns`: the alternatives as given, shared by every
+    // clone. A grammar copies a rule into each later rule that names it and
+    // a reference clones its target at every level, so deep copies here
+    // multiplied: the TypeScript grammar took 1.2 GB to build and a wasm
+    // build ran out of memory (found by the conformance harness; DESIGN
+    // §8). v12's `Expression.clone` shares them the same way.
+    originals: Rc<[Pattern]>,
+    // This instance's own copies of the alternatives, made the first time
+    // something must change them: a parse (each instance keeps its own
+    // per-parse state, DESIGN §1) or a link set on a reference inside.
+    own: Option<Vec<Pattern>>,
     // `None` until classified. That is only ever the case when an
     // alternative is a reference: whether its target is an operator
     // depends on what the name resolves to, which only the scopes at parse
@@ -61,6 +71,22 @@ pub struct Choice {
     ready: Option<Ready>,
     // Fixed by the constructor; read only when classifying.
     literal_sets: LiteralSets,
+}
+
+/// A clone shares the originals and keeps the classification, but starts
+/// without copies of its own, as v12's `Expression.clone` starts from
+/// `_originalPatterns`.
+impl Clone for Choice {
+    fn clone(&self) -> Choice {
+        Choice {
+            meta: self.meta,
+            self_name: self.self_name,
+            originals: Rc::clone(&self.originals),
+            own: None,
+            ready: self.ready.clone(),
+            literal_sets: self.literal_sets,
+        }
+    }
 }
 
 /// How a choice parses, decided by classifying its alternatives.
@@ -110,11 +136,12 @@ impl Choice {
         let mut choice = Choice {
             meta,
             self_name: meta.name,
-            alternatives: alternatives.into_iter().map(Pattern::adopted).collect(),
+            originals: alternatives.into_iter().map(Pattern::adopted).collect(),
+            own: None,
             ready: None,
             literal_sets,
         };
-        if !classify::needs_scope(&choice.alternatives) {
+        if !classify::needs_scope(choice.alternatives()) {
             choice.classify_with(&|_| None)?;
         }
         Ok(choice)
@@ -127,7 +154,20 @@ impl Choice {
 
     /// The alternatives as they were given (v12 `originalPatterns`).
     pub fn original_alternatives(&self) -> &[Pattern] {
-        &self.alternatives
+        self.alternatives()
+    }
+
+    /// This instance's alternatives: its own copies once it has any, else
+    /// the shared originals.
+    pub(crate) fn alternatives(&self) -> &[Pattern] {
+        self.own.as_deref().unwrap_or(&self.originals)
+    }
+
+    /// This instance's own alternatives, copied from the originals the
+    /// first time they are asked for.
+    pub(crate) fn alternatives_mut(&mut self) -> &mut [Pattern] {
+        let originals = &self.originals;
+        self.own.get_or_insert_with(|| originals.to_vec())
     }
 
     /// `None` until the choice is classified: only a choice with a
@@ -139,7 +179,7 @@ impl Choice {
     /// The operands, in order. Empty until classified.
     pub fn atom_patterns(&self) -> impl Iterator<Item = &Pattern> {
         let atoms = self.ready.as_ref().map_or(&[][..], Ready::atoms);
-        atoms.iter().map(|&i| &self.alternatives[i])
+        atoms.iter().map(|&i| &self.alternatives()[i])
     }
 
     /// The prefix operators without their trailing self-reference, each
@@ -173,7 +213,7 @@ impl Choice {
 
     /// The classified child at `index` (`Pattern::at_path`).
     pub(crate) fn child_at(&self, index: usize) -> Option<&Pattern> {
-        self.ready.as_ref()?.child(&self.alternatives, index)
+        self.ready.as_ref()?.child(self.alternatives(), index)
     }
 
     /// Classifies the alternatives, resolving a reference alternative's
@@ -186,7 +226,7 @@ impl Choice {
         resolve: &dyn Fn(Name) -> Option<Rc<Pattern>>,
     ) -> Result<(), PatternError> {
         let ready = classify::classify(
-            &self.alternatives,
+            self.alternatives(),
             self.meta.name,
             self.self_name,
             self.literal_sets,
@@ -206,10 +246,12 @@ impl Choice {
                 return None;
             }
         }
-        let ready = self.ready.as_mut().expect("classified above");
-
         // Nothing to start an expression with: nothing can match.
-        if ready.atoms().is_empty() {
+        if self
+            .ready
+            .as_ref()
+            .is_some_and(|ready| ready.atoms().is_empty())
+        {
             cursor.record_error_at(first, first, self.meta, At::Frame);
             return None;
         }
@@ -217,7 +259,9 @@ impl Choice {
         // The loops own a cut scope: a cut inside one of the alternatives
         // commits this choice, not one further out. A literal set needs
         // none: no literal can cut.
-        let alternatives = &mut self.alternatives;
+        let originals = &self.originals;
+        let alternatives = self.own.get_or_insert_with(|| originals.to_vec());
+        let ready = self.ready.as_mut().expect("classified above");
         let (node, committed) = match ready {
             Ready::LiteralSet(set) if literal_set_applies(cursor, first) => {
                 (set.run(alternatives, first, cursor), false)
@@ -272,4 +316,41 @@ fn literal_set_applies(cursor: &Cursor<'_>, first: usize) -> bool {
 /// references' own guard has to.
 fn already_parsing_here(cursor: &Cursor<'_>, atom: &Pattern, pos: usize) -> bool {
     cursor.ancestors_at(atom.id(), pos, 1) > 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::patterns::Literal;
+
+    fn letters() -> Choice {
+        let literal = |text: &str| Literal::new(text, text).unwrap().into();
+        Choice::new("letters", vec![literal("a"), literal("b")]).unwrap()
+    }
+
+    #[test]
+    fn clones_share_the_alternatives_until_one_parses() {
+        let choice = letters();
+        let mut clone = choice.clone();
+        assert!(Rc::ptr_eq(&choice.originals, &clone.originals));
+        assert!(clone.own.is_none());
+
+        let mut cursor = Cursor::new("b");
+        assert!(clone.parse(&mut cursor).is_some());
+        // The parse made the clone its own copies; the original still has
+        // none, and still shares the originals.
+        assert!(clone.own.is_some());
+        assert!(choice.own.is_none());
+        assert!(Rc::ptr_eq(&choice.originals, &clone.originals));
+    }
+
+    #[test]
+    fn a_clone_of_a_parsed_choice_starts_from_the_originals() {
+        let mut choice = letters();
+        let mut cursor = Cursor::new("a");
+        assert!(choice.parse(&mut cursor).is_some());
+        let clone = choice.clone();
+        assert!(clone.own.is_none());
+        assert_eq!(clone.mode(), Some(ChoiceMode::LiteralSet));
+    }
 }

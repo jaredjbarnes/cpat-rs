@@ -8,4 +8,4 @@ const wasm = createRequire(import.meta.url)("../pkg-node/cpat_wasm.js");
 
 export const WasmPattern = wasm.Pattern;
 export const WasmAutoComplete = wasm.AutoComplete;
-export const { buildGrammar, importsOf, cpatGrammar } = wasm;
+export const { buildGrammar, importsOf, cpatGrammar, liveResults } = wasm;

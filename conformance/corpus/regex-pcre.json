@@ -1,0 +1,254 @@
+{
+ "name": "regex-pcre",
+ "suite": "agent-harness",
+ "file": "shell/regex/grammars/pcre.cpat",
+ "grammars": [
+  {
+   "id": "b12abd00c1b3c3ee",
+   "origin": "__tests__/datefmt.test.ts :: ",
+   "text": "# PCRE-ish regex grammar. Superset of ERE with extra group/assertion\n# forms. Unsupported PCRE features (recursive patterns `(?R)`,\n# conditionals `(?(...)...)`, atomic groups `(?>...)`, possessive\n# quantifiers, `\\K`) are REJECTED by the visitor at AST-build time\n# rather than by the grammar — the grammar accepts them syntactically\n# so the visitor can produce a clear error message.\n\npcre = pcreAlternation\n\npcreAlternation = pcreSequence + (pcreAltTail)*\npcreAltTail     = pcreAltSep + pcreSequence\npcreAltSep      = \"|\"\n\npcreSequence = (pcreAtomQ)*\n\npcreAtomQ = pcreAtom + pcreQuantSuffix?\n\n# Order matters — the more-specific group forms must precede the\n# plain capturing group so `(?:...)` etc. aren't swallowed by it.\npcreAtom = pcreNonCapturingGroup\n         | pcreNamedGroupJs\n         | pcreNamedGroupPython\n         | pcreLookahead\n         | pcreNegativeLookahead\n         | pcreLookbehind\n         | pcreNegativeLookbehind\n         | pcreUnsupportedSpecialGroup\n         | pcreGroup\n         | pcreCharClass\n         | pcreAnchorStart\n         | pcreAnchorEnd\n         | pcreDot\n         | pcreEscapedAtom\n         | pcreLiteralChar\n\n# Plain group `(...)`.\npcreGroup      = pcreGroupOpen + pcreAlternation + pcreGroupClose\npcreGroupOpen  = \"(\"\npcreGroupClose = \")\"\n\n# `(?:...)` non-capturing.\npcreNonCapturingGroup = pcreNonCapOpen + pcreAlternation + pcreGroupClose\npcreNonCapOpen        = \"(?:\"\n\n# `(?<name>...)` JS-style named group.\npcreNamedGroupJs    = pcreNamedJsOpen + pcreGroupName + \">\" + pcreAlternation + pcreGroupClose\npcreNamedJsOpen     = \"(?<\"\npcreGroupName       = /[A-Za-z_][A-Za-z0-9_]*/\n\n# `(?P<name>...)` Python-style named group — normalised by the visitor.\npcreNamedGroupPython = pcreNamedPyOpen + pcreGroupName + \">\" + pcreAlternation + pcreGroupClose\npcreNamedPyOpen      = \"(?P<\"\n\n# Lookaround: `(?=...)`, `(?!...)`, `(?<=...)`, `(?<!...)`.\npcreLookahead         = \"(?=\"  + pcreAlternation + pcreGroupClose\npcreNegativeLookahead = \"(?!\"  + pcreAlternation + pcreGroupClose\npcreLookbehind        = \"(?<=\" + pcreAlternation + pcreGroupClose\npcreNegativeLookbehind = \"(?<!\" + pcreAlternation + pcreGroupClose\n\n# Catch-all for unsupported `(?X...)` forms — listed so the grammar\n# matches them but the visitor rejects with a clear message. Avoids\n# falling through to `(` as a literal (which would be confusing) or\n# to a parse error (less helpful than naming the feature). Matches\n# from `(?X` through the next `)`. Body is any non-`)` chars so we\n# don't try to balance nested parens (the unsupported forms don't\n# nest in their common usage anyway).\npcreUnsupportedSpecialGroup = /\\(\\?[^:<=!P][^)]*\\)/\n\npcreCharClass = /\\[\\^?\\]?(?:\\[:[a-z]+:\\]|\\\\.|[^\\]])*\\]/\n\npcreAnchorStart = \"^\"\npcreAnchorEnd   = \"$\"\npcreDot         = \".\"\n\npcreEscapedAtom = pcreUnsupportedEscape\n                | pcreBackref\n                | pcreWordBoundaryAlias\n                | pcreWordBoundary\n                | pcreNonWordBoundary\n                | pcreClassDigit\n                | pcreClassWord\n                | pcreClassSpace\n                | pcreClassNotDigit\n                | pcreClassNotWord\n                | pcreClassNotSpace\n                | pcreControlEscape\n                | pcreHexEscape\n                | pcreUnicodeEscape\n                | pcreLiteralEscape\n\n# `\\K` and `\\Q` are unsupported — match them so we can throw with a\n# named error rather than swallow as `pcreLiteralEscape`.\npcreUnsupportedEscape = /\\\\[KQ]/\n\n# Multi-digit backrefs (PCRE allows \\10, \\11, etc.).\npcreBackref           = /\\\\[1-9][0-9]?/\npcreWordBoundaryAlias = /\\\\[<>]/\npcreWordBoundary      = /\\\\b/\npcreNonWordBoundary   = /\\\\B/\npcreClassDigit        = /\\\\d/\npcreClassNotDigit     = /\\\\D/\npcreClassWord         = /\\\\w/\npcreClassNotWord      = /\\\\W/\npcreClassSpace        = /\\\\s/\npcreClassNotSpace     = /\\\\S/\npcreControlEscape     = /\\\\[ntrfv0]/\npcreHexEscape         = /\\\\x[0-9a-fA-F][0-9a-fA-F]/\npcreUnicodeEscape     = /\\\\u[0-9a-fA-F]{4}/\npcreLiteralEscape     = /\\\\[^bBdDwWsSntrfv0xuKQ1-9]/\n\npcreLiteralChar = /[^.\\\\\\[\\^$()|+*?{}]/\n\npcreQuantSuffix = pcreBraceQuant\n                | pcreStarQ\n                | pcrePlusQ\n                | pcreQuestionQ\n\n# Possessive `*+`, `++`, `?+` are caught here so the visitor can\n# reject them by name. JS RegExp can't express possessive\n# quantifiers.\npcreStarQ     = /\\*[?+]?/\npcrePlusQ     = /\\+[?+]?/\npcreQuestionQ = /\\?[?+]?/\npcreBraceQuant = /\\{[0-9]+(?:,[0-9]*)?\\}[?+]?/\n",
+   "cases": [
+    {
+     "rule": "pcre",
+     "input": "(?:foo|bar)+",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — PCRE > non-capturing groups"
+    },
+    {
+     "rule": "pcre",
+     "input": "(?<=foo)bar",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — PCRE > lookbehind"
+    },
+    {
+     "rule": "pcre",
+     "input": "(?<k>\\w+)=(?<v>\\d+)",
+     "origin": "jq/__tests__/jq_phase4.test.ts :: capture > capture with multiple named groups"
+    },
+    {
+     "rule": "pcre",
+     "input": "(?<n>\\d+)",
+     "origin": "jq/__tests__/jq_phase4.test.ts :: capture > capture returns named groups as object"
+    },
+    {
+     "rule": "pcre",
+     "input": "(?<w>\\w+)",
+     "origin": "jq/__tests__/jq_phase4.test.ts :: sub > sub with named capture in replacement"
+    },
+    {
+     "rule": "pcre",
+     "input": "(?<word>\\w+)",
+     "origin": "jq/__tests__/jq_phase4.test.ts :: match > match with named capture"
+    },
+    {
+     "rule": "pcre",
+     "input": "(?<year>\\d{4})",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — PCRE > named groups (JS-style)"
+    },
+    {
+     "rule": "pcre",
+     "input": "(?P<year>\\d{4})",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — PCRE > named groups (Python-style normalised)"
+    },
+    {
+     "rule": "pcre",
+     "input": "(?R)",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — PCRE > rejects recursive pattern"
+    },
+    {
+     "rule": "pcre",
+     "input": "(?i:foo)",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — PCRE > inline flags JS can't express fall through to the parser's rejection"
+    },
+    {
+     "rule": "pcre",
+     "input": "(?x)foo",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — PCRE > inline flags JS can't express fall through to the parser's rejection"
+    },
+    {
+     "rule": "pcre",
+     "input": "(\\d+)-(\\d+)-(\\d+)",
+     "origin": "shell/__tests__/saya_regexp.test.ts :: Saya RegExp (protected engine) > /literal/ works and captures groups"
+    },
+    {
+     "rule": "pcre",
+     "input": "(\\w)=(\\d+)",
+     "origin": "jq/__tests__/jq_phase4.test.ts :: scan > scan with captures emits [cap1, cap2, ...] per match"
+    },
+    {
+     "rule": "pcre",
+     "input": "(\\w+)@(\\w+)",
+     "origin": "saya/__tests__/docs_examples.test.ts :: docs/saya-reference.md examples > line 804: runs"
+    },
+    {
+     "rule": "pcre",
+     "input": "(a+)+$",
+     "origin": "shell/__tests__/saya_regexp.test.ts :: Saya RegExp (protected engine) > an exponential (ReDoS) pattern is REFUSED, not run"
+    },
+    {
+     "rule": "pcre",
+     "input": ",\\s*",
+     "origin": "jq/__tests__/jq_phase4.test.ts :: splits > splits splits by regex, yields stream"
+    },
+    {
+     "rule": "pcre",
+     "input": "<item>.*?</item>",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — PCRE > a `(?s)` block-grab works against a single multi-line record"
+    },
+    {
+     "rule": "pcre",
+     "input": "A.B",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — PCRE > combined + chained leading modifiers"
+    },
+    {
+     "rule": "pcre",
+     "input": "HELLO",
+     "origin": "jq/__tests__/jq_phase4.test.ts :: test > test with i flag (case-insensitive)"
+    },
+    {
+     "rule": "pcre",
+     "input": "[0-9]",
+     "origin": "saya/__tests__/replace_function.test.ts :: String.replace with a function > a GLOBAL regex replaces every match, even through `replace`"
+    },
+    {
+     "rule": "pcre",
+     "input": "[0-9]+",
+     "origin": "jq/__tests__/jq_phase4.test.ts :: test > test with character class"
+    },
+    {
+     "rule": "pcre",
+     "input": "[a-z](\\d)",
+     "origin": "shell/__tests__/saya_regexp.test.ts :: Saya RegExp (protected engine) > matchAll iterates via the engine-agnostic path"
+    },
+    {
+     "rule": "pcre",
+     "input": "[ab]",
+     "origin": "saya/__tests__/replace_function.test.ts :: String.replace with a function > the callback can be a named function, not just an arrow"
+    },
+    {
+     "rule": "pcre",
+     "input": "\\d+",
+     "origin": "jq/__tests__/jq_phase4.test.ts :: scan > scan emits one match per occurrence (no captures)"
+    },
+    {
+     "rule": "pcre",
+     "input": "\\s+",
+     "origin": "saya/__tests__/docs_examples.test.ts :: docs/saya-reference.md examples > line 1193: runs"
+    },
+    {
+     "rule": "pcre",
+     "input": "\\s+([A-Za-z]{2})$",
+     "origin": "saya/__tests__/docs_examples.test.ts :: docs/saya-reference.md examples > line 804: runs"
+    },
+    {
+     "rule": "pcre",
+     "input": "^(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday),\\s+(January|February|March|April|May|June|July|August|September|October|November|December)\\s+(\\d{1,2})\\s+(\\d{4})$",
+     "origin": "jq/__tests__/jq_phase6.test.ts :: strptime > strptime full weekday + month names"
+    },
+    {
+     "rule": "pcre",
+     "input": "^([A-Z]+)([A-Z]+)([A-Z]+)([A-Z]+)([A-Z]+)([A-Z]+)([A-Z]+)([A-Z]+)([A-Z]+)([A-Z]+)([A-Z]+)([A-Z]+)$",
+     "origin": "__tests__/datefmt.test.ts :: strptimeFmt — regex goes through the protected engine > stacked %Z codes cannot backtrack exponentially"
+    },
+    {
+     "rule": "pcre",
+     "input": "^(\\d{1,2}):(\\d{1,2})\\s+(AM|PM|am|pm)$",
+     "origin": "jq/__tests__/jq_phase6.test.ts :: strptime > strptime 12-hour with AM/PM"
+    },
+    {
+     "rule": "pcre",
+     "input": "^(\\d{4})-(\\d{1,2})-(\\d{1,2})$",
+     "origin": "__tests__/datefmt.test.ts :: strptimeFmt — regex goes through the protected engine > mismatched input still reports a clean parse error"
+    },
+    {
+     "rule": "pcre",
+     "input": "^(\\d{4})-(\\d{1,2})-(\\d{1,2})T(\\d{1,2}):(\\d{1,2}):(\\d{1,2})Z$",
+     "origin": "__tests__/datefmt.test.ts :: strptimeFmt — regex goes through the protected engine > normal ISO-style format parses"
+    },
+    {
+     "rule": "pcre",
+     "input": "^(\\d{4})-(\\d{1,2})-(\\d{1,2})\\s+([A-Z]+)$",
+     "origin": "__tests__/datefmt.test.ts :: strptimeFmt — regex goes through the protected engine > a single %Z timezone code still matches"
+    },
+    {
+     "rule": "pcre",
+     "input": "^[a-z]+$",
+     "origin": "saya/__tests__/docs_examples.test.ts :: docs/saya-reference.md examples > line 1193: runs"
+    },
+    {
+     "rule": "pcre",
+     "input": "^bar$",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — PCRE > leading inline modifier `(?m)` → `^`/`$` match at line boundaries"
+    },
+    {
+     "rule": "pcre",
+     "input": "^foo",
+     "origin": "jq/__tests__/jq_phase4.test.ts :: test > test with anchor"
+    },
+    {
+     "rule": "pcre",
+     "input": "a",
+     "origin": "shell/__tests__/saya_regexp.test.ts :: Saya RegExp — mass-match result construction is budgeted > match with millions of hits trips the value budget"
+    },
+    {
+     "rule": "pcre",
+     "input": "a*+",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — PCRE > rejects unsupported possessive quantifier"
+    },
+    {
+     "rule": "pcre",
+     "input": "a.b",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — PCRE > leading inline modifier `(?s)` (dotall) → `.` matches newline"
+    },
+    {
+     "rule": "pcre",
+     "input": "ell",
+     "origin": "jq/__tests__/jq_phase4.test.ts :: match > match returns offset/length/string for first match"
+    },
+    {
+     "rule": "pcre",
+     "input": "foo",
+     "origin": "jq/__tests__/jq_phase4.test.ts :: gsub > gsub replaces all matches"
+    },
+    {
+     "rule": "pcre",
+     "input": "foo(?!bar)",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — PCRE > negative lookahead"
+    },
+    {
+     "rule": "pcre",
+     "input": "foo(?=bar)",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — PCRE > lookahead"
+    },
+    {
+     "rule": "pcre",
+     "input": "foo\\Kbar",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — PCRE > rejects unsupported \\K"
+    },
+    {
+     "rule": "pcre",
+     "input": "l",
+     "origin": "jq/__tests__/jq_phase4.test.ts :: match > match with global flag emits all matches"
+    },
+    {
+     "rule": "pcre",
+     "input": "v(\\d+)\\.(\\d+)",
+     "origin": "saya/__tests__/docs_examples.test.ts :: docs/saya-reference.md examples > line 1193: runs"
+    },
+    {
+     "rule": "pcre",
+     "input": "xyz",
+     "origin": "jq/__tests__/jq_phase4.test.ts :: sub > sub on no-match returns input unchanged"
+    },
+    {
+     "rule": "pcre",
+     "input": "z",
+     "origin": "saya/__tests__/replace_function.test.ts :: String.replace with a function > no match leaves the string untouched"
+    },
+    {
+     "rule": "pcre",
+     "input": "zzz",
+     "origin": "jq/__tests__/jq_phase4.test.ts :: match > match with no result emits nothing"
+    }
+   ]
+  }
+ ]
+}

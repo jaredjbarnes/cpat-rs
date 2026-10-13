@@ -1,0 +1,494 @@
+{
+ "name": "calc",
+ "suite": "agent-harness",
+ "file": "calc/grammar.cpat",
+ "grammars": [
+  {
+   "id": "f6a7a60454e1fde7",
+   "origin": "agent/__tests__/agent.test.ts :: ",
+   "text": "# calc — arithmetic expression grammar, bash `$(( ))` parity.\n#\n# Precedence (loosest → tightest, matches bash arithmetic / C):\n#   comma   ,\n#   assign  = += -= *= /= %= &= ^= |= <<= >>=   (right-assoc)\n#   ternary ? :                                 (right-assoc)\n#   logOr   ||\n#   logAnd  &&\n#   bitOr   |\n#   bitXor  ^\n#   bitAnd  &\n#   eq      == !=\n#   comp    < <= > >=\n#   shift   << >>\n#   add     + -\n#   mul     * / %\n#   exp     **                                  (right-assoc)\n#   unary   ! ~ +x -x ++x --x x++ x--\n#   atom    NUMBER | IDENTIFIER | ( expr )\n#\n# DIVERGENCE FROM PRIOR calc: `^` was exponent. Now `^` is BITWISE XOR\n# and `**` is exponent — matches bash. Update any old tests accordingly.\n\n# ─── Whitespace ──────────────────────────────────────────────\nws = /[ \\t\\n\\r]+/\n\n# ─── Numbers ────────────────────────────────────────────────\n# Hex first (longest prefix), then octal (only when followed by 0-7\n# digits and NOT 8/9/decimal point — disambiguates `09` as decimal,\n# not malformed octal), then decimal.\nhexNumber = /0[xX][0-9a-fA-F]+/\noctalNumber = /0[0-7]+(?![0-9.])/\ndecimalNumber = /(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:[eE][+-]?\\d+)?/\nnumber = hexNumber | octalNumber | decimalNumber\n\n# ─── Identifier (variable reference / assignment target) ────\nidentifier = /[a-zA-Z_][a-zA-Z_0-9]*/\nvarRef = identifier\n\n# ─── Operator literals ──────────────────────────────────────\n# Listed longest-first where they share a prefix so cpat's first-match\n# commits to the longer form (`<<=` before `<<` before `<=` before `<`).\nshlAssign = \"<<=\"\nshrAssign = \">>=\"\naddAssign = \"+=\"\nsubAssign = \"-=\"\nmulAssign = \"*=\"\ndivAssign = \"/=\"\nmodAssign = \"%=\"\nbitAndAssign = \"&=\"\nbitOrAssign  = \"|=\"\nbitXorAssign = \"^=\"\nexpOp        = \"**\"\nshlOp        = \"<<\"\nshrOp        = \">>\"\nlogAndOp     = \"&&\"\nlogOrOp      = \"||\"\neqOp         = \"==\"\nneOp         = \"!=\"\nleOp         = \"<=\"\ngeOp         = \">=\"\nincOp        = \"++\"\ndecOp        = \"--\"\n\n# Single-char ops use negative-lookahead so they don't accidentally\n# eat the first char of a longer operator at the same position.\n# `1 && 2` would otherwise parse as `1 & (& 2)` because `&` matches\n# greedily before the alternation reaches `&&`. Same trick the shell\n# grammar uses for `arithBitAndOp = /&(?!&|=)/`.\naddOp     = /\\+(?![+=])/\nsubOp     = /-(?![-=])/\nmulOp     = /\\*(?![*=])/\ndivOp     = /\\/(?!=)/\nmodOp     = /%(?!=)/\nbitAndOp  = /&(?![&=])/\nbitOrOp   = /\\|(?![|=])/\nbitXorOp  = /\\^(?!=)/\nltOp      = /<(?![<=])/\ngtOp      = />(?![>=])/\nnotOp     = /!(?!=)/\nbitNotOp  = \"~\"\nassignOp  = /=(?!=)/\n\nquestion  = \"?\"\ncolon     = \":\"\ncomma     = \",\"\n\n# ─── Operator groups ────────────────────────────────────────\nmulModOp  = mulOp | divOp | modOp\naddSubOp  = addOp | subOp\nshiftOp   = shlOp | shrOp\ncompOp    = leOp | geOp | ltOp | gtOp\nequalityOp = eqOp | neOp\n\ncompoundAssignOp =\n    shlAssign | shrAssign\n  | addAssign | subAssign | mulAssign | divAssign | modAssign\n  | bitAndAssign | bitOrAssign | bitXorAssign\nanyAssignOp = compoundAssignOp | assignOp\n\n# ─── Punctuation ─────────────────────────────────────────────\nopenParen  = \"(\"\ncloseParen = \")\"\n\n# ─── Group (parenthesized expression) ───────────────────────\ngroup = openParen + ws? + expr + ws? + closeParen\n\n# ─── Unary prefix ───────────────────────────────────────────\n# Each prefix binds the entire expr to its right; cpat's PEG ordered\n# alternation in `expr` resolves the precedence (these listed near\n# the top → tightest binding).\npreIncExpr   = incOp    + ws? + expr\npreDecExpr   = decOp    + ws? + expr\nunaryPlus    = addOp    + ws? + expr\nunaryMinus   = subOp    + ws? + expr\nlogNotExpr   = notOp    + ws? + expr\nbitNotExpr   = bitNotOp + ws? + expr\n\n# ─── Postfix ────────────────────────────────────────────────\npostIncExpr = expr + incOp\npostDecExpr = expr + decOp\n\n# ─── Binary expressions ─────────────────────────────────────\nexpExpr     = expr + ws? + expOp       + ws? + expr\nmulExpr     = expr + ws? + mulModOp    + ws? + expr\naddExpr     = expr + ws? + addSubOp    + ws? + expr\nshiftExpr   = expr + ws? + shiftOp     + ws? + expr\ncompExpr    = expr + ws? + compOp      + ws? + expr\neqExpr      = expr + ws? + equalityOp  + ws? + expr\nbitAndExpr  = expr + ws? + bitAndOp    + ws? + expr\nbitXorExpr  = expr + ws? + bitXorOp    + ws? + expr\nbitOrExpr   = expr + ws? + bitOrOp     + ws? + expr\nlogAndExpr  = expr + ws? + logAndOp    + ws? + expr\nlogOrExpr   = expr + ws? + logOrOp     + ws? + expr\n\n# ─── Ternary ────────────────────────────────────────────────\nternaryExpr = expr + ws? + question + ws? + expr + ws? + colon + ws? + expr\n\n# ─── Assignment ─────────────────────────────────────────────\n# Visitor verifies the LHS is a varRef (lvalue) — grammar accepts any\n# expr to mirror bash's runtime error behavior rather than a parse\n# failure when the LHS is non-assignable.\nassignExpr = expr + ws? + anyAssignOp + ws? + expr\n\n# ─── Comma ──────────────────────────────────────────────────\ncommaExpr = expr + ws? + comma + ws? + expr\n\n# ─── expr (Expression-promoted) — tightest first ───────────\n# Order matters: cpat's PEG tries alternatives left-to-right; for\n# binary operators, listing TIGHTER ones first establishes precedence\n# via expression promotion. Right-associative rules carry `right`.\nexpr = preIncExpr\n     | preDecExpr\n     | postIncExpr right\n     | postDecExpr right\n     | unaryPlus\n     | unaryMinus\n     | logNotExpr\n     | bitNotExpr\n     | expExpr right\n     | mulExpr\n     | addExpr\n     | shiftExpr\n     | compExpr\n     | eqExpr\n     | bitAndExpr\n     | bitXorExpr\n     | bitOrExpr\n     | logAndExpr\n     | logOrExpr\n     | ternaryExpr right\n     | assignExpr right\n     | commaExpr\n     | group\n     | number\n     | varRef\n\n# ─── Top level ──────────────────────────────────────────────\ncalc = ws? + expr + ws?\n",
+   "cases": [
+    {
+     "rule": "calc",
+     "input": "",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — errors > empty input"
+    },
+    {
+     "rule": "calc",
+     "input": "\t2 +\n3",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — whitespace tolerance > mixed whitespace"
+    },
+    {
+     "rule": "calc",
+     "input": "  2  +  3  ",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — whitespace tolerance > extra spaces"
+    },
+    {
+     "rule": "calc",
+     "input": "!0",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — logical > NOT zero → 1"
+    },
+    {
+     "rule": "calc",
+     "input": "!5",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — logical > NOT nonzero → 0"
+    },
+    {
+     "rule": "calc",
+     "input": "((1 + 2) * (3 + 4))",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — precedence > nested parens"
+    },
+    {
+     "rule": "calc",
+     "input": "(1 + 2",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — errors > unmatched paren"
+    },
+    {
+     "rule": "calc",
+     "input": "(1 < 2) + (3 > 2)",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — comparison > comparison results compose: (1<2)+(3>2) = 2"
+    },
+    {
+     "rule": "calc",
+     "input": "(2 + 3) * 4",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — precedence > parens override"
+    },
+    {
+     "rule": "calc",
+     "input": "++z",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — increment / decrement > increment unset variable defaults to 0 then 1"
+    },
+    {
+     "rule": "calc",
+     "input": "+5",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — unary > unary plus"
+    },
+    {
+     "rule": "calc",
+     "input": "-(-5)",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — unary > -(-5) explicitly = 5"
+    },
+    {
+     "rule": "calc",
+     "input": "-(2**2)",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — unary > -(2**2) explicitly = -4"
+    },
+    {
+     "rule": "calc",
+     "input": "--5",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — unary > --5 errors (no lvalue)"
+    },
+    {
+     "rule": "calc",
+     "input": "-2 ** 2",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — precedence across families > ** tighter than unary minus"
+    },
+    {
+     "rule": "calc",
+     "input": "-5",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — unary > unary minus"
+    },
+    {
+     "rule": "calc",
+     "input": "-5 + 3",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — unary > unary minus in expression"
+    },
+    {
+     "rule": "calc",
+     "input": ".5",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — atoms > leading-dot decimal"
+    },
+    {
+     "rule": "calc",
+     "input": "0 && 1",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — logical > AND false-left short-circuits"
+    },
+    {
+     "rule": "calc",
+     "input": "0 && 1 / 0",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — logical > short-circuit avoids div-by-zero on right"
+    },
+    {
+     "rule": "calc",
+     "input": "0 ? 1 : 0 ? 2 : 3",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — ternary > nested ternary (right-assoc)"
+    },
+    {
+     "rule": "calc",
+     "input": "0 ? 10 : 20",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — ternary > false branch"
+    },
+    {
+     "rule": "calc",
+     "input": "0 || 0",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — logical > OR false-both"
+    },
+    {
+     "rule": "calc",
+     "input": "0 || 1 && 0",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — logical > logical precedence: && tighter than ||"
+    },
+    {
+     "rule": "calc",
+     "input": "010 + 1",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — number literals > octal in arithmetic"
+    },
+    {
+     "rule": "calc",
+     "input": "0755",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — number literals > octal"
+    },
+    {
+     "rule": "calc",
+     "input": "09",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — number literals > leading-zero decimal disambiguation: 09 still works as decimal"
+    },
+    {
+     "rule": "calc",
+     "input": "0XFF",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — number literals > hex uppercase"
+    },
+    {
+     "rule": "calc",
+     "input": "0xff",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — number literals > hex lowercase"
+    },
+    {
+     "rule": "calc",
+     "input": "0xff + 1",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — number literals > hex in arithmetic"
+    },
+    {
+     "rule": "calc",
+     "input": "1 && 0",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — logical > AND false-right"
+    },
+    {
+     "rule": "calc",
+     "input": "1 && 2",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — logical > AND true"
+    },
+    {
+     "rule": "calc",
+     "input": "1 +",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — errors > trailing op"
+    },
+    {
+     "rule": "calc",
+     "input": "1 + +",
+     "origin": "tools/__tests__/calc.test.ts :: calc tool — integration with shell > parse error fails gracefully"
+    },
+    {
+     "rule": "calc",
+     "input": "1 / 0",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — multiplication / division / modulo > div by zero throws CalcError"
+    },
+    {
+     "rule": "calc",
+     "input": "1 < 2",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — comparison > less than true → 1"
+    },
+    {
+     "rule": "calc",
+     "input": "1 < 2 && 3 > 2",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — precedence across families > comparison tighter than &&"
+    },
+    {
+     "rule": "calc",
+     "input": "1 < 2 ? 10 : 20",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — precedence across families > ternary looser than comparison"
+    },
+    {
+     "rule": "calc",
+     "input": "1 << 4",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — bitwise > shift left"
+    },
+    {
+     "rule": "calc",
+     "input": "1 ? 10 : 20",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — ternary > true branch"
+    },
+    {
+     "rule": "calc",
+     "input": "1 ? 5 : 1 / 0",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — ternary > ternary skips unevaluated branch"
+    },
+    {
+     "rule": "calc",
+     "input": "1 | 2 & 3",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — bitwise > precedence: & tighter than |"
+    },
+    {
+     "rule": "calc",
+     "input": "1 | 2 == 2",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — precedence across families > equality tighter than bitwise OR"
+    },
+    {
+     "rule": "calc",
+     "input": "1 | 2 ^ 3 & 5",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — bitwise > precedence: ^ between & and |"
+    },
+    {
+     "rule": "calc",
+     "input": "1 || 0",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — logical > OR true-left short-circuits"
+    },
+    {
+     "rule": "calc",
+     "input": "1 || 1 / 0",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — logical > short-circuit OR avoids div-by-zero on right"
+    },
+    {
+     "rule": "calc",
+     "input": "1, 2, 3",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — comma > returns rightmost"
+    },
+    {
+     "rule": "calc",
+     "input": "1.5 + 2.25",
+     "origin": "tools/__tests__/calc.test.ts :: calc tool — integration with shell > decimal"
+    },
+    {
+     "rule": "calc",
+     "input": "1.5e2",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — atoms > scientific"
+    },
+    {
+     "rule": "calc",
+     "input": "10 % 3",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — multiplication / division / modulo > mod"
+    },
+    {
+     "rule": "calc",
+     "input": "10 - 4",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — addition / subtraction > sub"
+    },
+    {
+     "rule": "calc",
+     "input": "10 - 4 - 2",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — addition / subtraction > left-associative"
+    },
+    {
+     "rule": "calc",
+     "input": "12 & 10",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — bitwise > AND"
+    },
+    {
+     "rule": "calc",
+     "input": "12 ^ 10",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — bitwise > XOR"
+    },
+    {
+     "rule": "calc",
+     "input": "12 | 10",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — bitwise > OR"
+    },
+    {
+     "rule": "calc",
+     "input": "16 >> 2",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — bitwise > shift right"
+    },
+    {
+     "rule": "calc",
+     "input": "2 ** 10",
+     "origin": "tools/__tests__/calc.test.ts :: calc tool — integration with shell > exponent (bash-style **)"
+    },
+    {
+     "rule": "calc",
+     "input": "2 ** 3",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — exponent (right-associative) > simple"
+    },
+    {
+     "rule": "calc",
+     "input": "2 ** 3 ** 2",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — exponent (right-associative) > right-assoc: 2**3**2 = 2**9 = 512"
+    },
+    {
+     "rule": "calc",
+     "input": "2 + 3",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — addition / subtraction > add"
+    },
+    {
+     "rule": "calc",
+     "input": "2 + 3 * 4",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — precedence > * binds tighter than +"
+    },
+    {
+     "rule": "calc",
+     "input": "2 < 1",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — comparison > less than false → 0"
+    },
+    {
+     "rule": "calc",
+     "input": "2 <= 2",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — comparison > less-equal at boundary → 1"
+    },
+    {
+     "rule": "calc",
+     "input": "2+3*4",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — whitespace tolerance > no spaces"
+    },
+    {
+     "rule": "calc",
+     "input": "20 / 4",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — multiplication / division / modulo > div"
+    },
+    {
+     "rule": "calc",
+     "input": "2e-3",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — atoms > negative scientific exponent"
+    },
+    {
+     "rule": "calc",
+     "input": "3 * 2 ** 3",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — exponent (right-associative) > ** binds tighter than *"
+    },
+    {
+     "rule": "calc",
+     "input": "3 * 7",
+     "origin": "tools/__tests__/calc.test.ts :: calc tool — integration with shell > from stdin"
+    },
+    {
+     "rule": "calc",
+     "input": "3 > 1",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — comparison > greater than"
+    },
+    {
+     "rule": "calc",
+     "input": "3 > 2 ? 1 : 0",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — ternary > expression as condition"
+    },
+    {
+     "rule": "calc",
+     "input": "3 >= 3",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — comparison > greater-equal"
+    },
+    {
+     "rule": "calc",
+     "input": "3.14",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — atoms > decimal"
+    },
+    {
+     "rule": "calc",
+     "input": "42",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — atoms > integer"
+    },
+    {
+     "rule": "calc",
+     "input": "5 != 6",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — comparison > not equal"
+    },
+    {
+     "rule": "calc",
+     "input": "5 = 7",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — variables + assignment > assigning to literal errors"
+    },
+    {
+     "rule": "calc",
+     "input": "5 == 5",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — comparison > equal true"
+    },
+    {
+     "rule": "calc",
+     "input": "5 == 6",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — comparison > equal false"
+    },
+    {
+     "rule": "calc",
+     "input": "6 * 7",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — multiplication / division / modulo > mul"
+    },
+    {
+     "rule": "calc",
+     "input": "@@",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — errors > garbage"
+    },
+    {
+     "rule": "calc",
+     "input": "x + 1",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — variables + assignment > variable state does NOT leak across eval calls"
+    },
+    {
+     "rule": "calc",
+     "input": "x = 1 ? 10 : 20, x",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — precedence across families > assignment looser than ternary"
+    },
+    {
+     "rule": "calc",
+     "input": "x = 5",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — variables + assignment > assign returns the stored value"
+    },
+    {
+     "rule": "calc",
+     "input": "x = 5, ++x",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — increment / decrement > pre-increment returns new value"
+    },
+    {
+     "rule": "calc",
+     "input": "x = 5, --x",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — increment / decrement > pre-decrement"
+    },
+    {
+     "rule": "calc",
+     "input": "x = 5, x",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — comma > evaluates left for side effects"
+    },
+    {
+     "rule": "calc",
+     "input": "x = 5, x *= 3, x",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — variables + assignment > compound mul-assign"
+    },
+    {
+     "rule": "calc",
+     "input": "x = 5, x + 3",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — variables + assignment > assign then read in same expression"
+    },
+    {
+     "rule": "calc",
+     "input": "x = 5, x += 3, x",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — variables + assignment > compound add-assign"
+    },
+    {
+     "rule": "calc",
+     "input": "x = 5, x++",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — increment / decrement > post-increment returns old value"
+    },
+    {
+     "rule": "calc",
+     "input": "x = 5, x++, x",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — increment / decrement > post-increment side effect persists"
+    },
+    {
+     "rule": "calc",
+     "input": "x = 5, x--",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — increment / decrement > post-decrement returns old"
+    },
+    {
+     "rule": "calc",
+     "input": "x = 99",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — variables + assignment > variable state does NOT leak across eval calls"
+    },
+    {
+     "rule": "calc",
+     "input": "x = y = 7, x + y",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — variables + assignment > chained assignment (right-assoc)"
+    },
+    {
+     "rule": "calc",
+     "input": "y + 1",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — variables + assignment > unset variable reads as 0"
+    },
+    {
+     "rule": "calc",
+     "input": "~0",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — bitwise > NOT"
+    },
+    {
+     "rule": "calc",
+     "input": "~5",
+     "origin": "calc/__tests__/calc.test.ts :: Calc — bitwise > NOT 5 = -6"
+    }
+   ]
+  }
+ ]
+}

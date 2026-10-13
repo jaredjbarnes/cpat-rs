@@ -1,0 +1,269 @@
+{
+ "name": "regex-ere",
+ "suite": "agent-harness",
+ "file": "shell/regex/grammars/ere.cpat",
+ "grammars": [
+  {
+   "id": "985469fd08baf807",
+   "origin": "__tests__/datefmt.test.ts :: ",
+   "text": "# POSIX Extended Regular Expressions.\n#\n# Modern unescaped convention — `(`, `)` group; `|` alternates; `+`,\n# `?` quantify; `{n,m}` bounded. Backslash now ESCAPES specials to\n# literal meaning (`\\(` literal paren, `\\|` literal pipe, `\\+`\n# literal plus). Backreferences `\\1`-`\\9` are POSIX-2008+.\n#\n# GNU extensions accepted: `\\b`/`\\B`, `\\<`/`\\>`, `\\d`/`\\w`/`\\s` etc.\n# POSIX character classes `[[:alpha:]]` work the same as in BRE.\n\nere = ereAlternation\n\nereAlternation = ereSequence + (ereAltTail)*\nereAltTail     = ereAltSep + ereSequence\nereAltSep      = \"|\"\n\nereSequence = (ereAtomQ)*\n\nereAtomQ = ereAtom + ereQuantSuffix?\n\nereAtom = ereGroup\n        | ereCharClass\n        | ereAnchorStart\n        | ereAnchorEnd\n        | ereDot\n        | ereEscapedAtom\n        | ereLiteralChar\n\nereGroup      = ereGroupOpen + ereAlternation + ereGroupClose\nereGroupOpen  = \"(\"\nereGroupClose = \")\"\n\n# Same char-class regex shape as BRE. POSIX-class alternative listed\n# first so `[[:alpha:]]` matches through both `]`s.\nereCharClass = /\\[\\^?\\]?(?:\\[:[a-z]+:\\]|\\\\.|[^\\]])*\\]/\n\nereAnchorStart = \"^\"\nereAnchorEnd   = \"$\"\nereDot         = \".\"\n\nereEscapedAtom = ereBackref\n               | ereWordBoundaryAlias\n               | ereWordBoundary\n               | ereNonWordBoundary\n               | ereClassDigit\n               | ereClassWord\n               | ereClassSpace\n               | ereClassNotDigit\n               | ereClassNotWord\n               | ereClassNotSpace\n               | ereControlEscape\n               | ereHexEscape\n               | ereUnicodeEscape\n               | ereLiteralEscape\n\nereBackref           = /\\\\[1-9]/\nereWordBoundaryAlias = /\\\\[<>]/\nereWordBoundary      = /\\\\b/\nereNonWordBoundary   = /\\\\B/\nereClassDigit        = /\\\\d/\nereClassNotDigit     = /\\\\D/\nereClassWord         = /\\\\w/\nereClassNotWord      = /\\\\W/\nereClassSpace        = /\\\\s/\nereClassNotSpace     = /\\\\S/\nereControlEscape     = /\\\\[ntrfv0]/\nereHexEscape         = /\\\\x[0-9a-fA-F][0-9a-fA-F]/\nereUnicodeEscape     = /\\\\u[0-9a-fA-F]{4}/\n# Catch-all `\\X` for any X not already handled. Used by the model to\n# escape ERE metacharacters back to literals (e.g. `\\(` to get a\n# literal paren).\nereLiteralEscape = /\\\\[^bBdDwWsSntrfv0xu1-9]/\n\n# Literal char: anything that isn't an unescaped metacharacter or `\\`.\nereLiteralChar = /[^.\\\\\\[\\^$()|+*?{}]/\n\n# Order matters: try `{n,m}` first (longer match) before the bare\n# operators.\nereQuantSuffix = ereBraceQuant\n               | ereStarQ\n               | erePlusQ\n               | ereQuestionQ\n\nereStarQ      = /\\*\\??/\nerePlusQ      = /\\+\\??/\nereQuestionQ  = /\\?\\??/\nereBraceQuant = /\\{[0-9]+(?:,[0-9]*)?\\}\\??/\n",
+   "cases": [
+    {
+     "rule": "ere",
+     "input": "(",
+     "origin": "tools/__tests__/grep.test.ts :: grep — exit codes (bash: 0 match / 1 no-match / 2 error) > graded $? survives a pipeline (error = 2)"
+    },
+    {
+     "rule": "ere",
+     "input": "([0-9])([a-z])",
+     "origin": "tools/__tests__/sed.test.ts :: sed — s NUM flag > NUM with capture groups in replacement"
+    },
+    {
+     "rule": "ere",
+     "input": "(\\w+) (\\w+)",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool > regex pattern with capture group reference"
+    },
+    {
+     "rule": "ere",
+     "input": "(a)(b)",
+     "origin": "shell/__tests__/bash_rematch.test.ts :: [[ =~ ]] — capture groups and BASH_REMATCH > BASH_REMATCH holds the whole match and each group"
+    },
+    {
+     "rule": "ere",
+     "input": "(a*)*",
+     "origin": "shell/__tests__/regex_risk.test.ts :: ReDoS risk classifier > risky: (a*)* (ERE)"
+    },
+    {
+     "rule": "ere",
+     "input": "(a+)+",
+     "origin": "shell/__tests__/regex_engine_redos.test.ts :: risk classification gates the engine > SAFE → not flagged; QUADRATIC → flagged but compiles; worse → refused"
+    },
+    {
+     "rule": "ere",
+     "input": "(a+)+b",
+     "origin": "shell/__tests__/dbl_bracket.test.ts :: [[ ]] — regex matching > =~ refuses catastrophic-backtracking pattern instead of hanging"
+    },
+    {
+     "rule": "ere",
+     "input": "(ab)+",
+     "origin": "shell/__tests__/regex_risk.test.ts :: ReDoS risk classifier > safe: (ab)+ (ERE)"
+    },
+    {
+     "rule": "ere",
+     "input": "(a|a)*",
+     "origin": "shell/__tests__/regex_risk.test.ts :: ReDoS risk classifier > risky: (a|a)* (ERE)"
+    },
+    {
+     "rule": "ere",
+     "input": "(a|ab)*",
+     "origin": "shell/__tests__/regex_risk.test.ts :: ReDoS risk classifier > risky: (a|ab)* (ERE)"
+    },
+    {
+     "rule": "ere",
+     "input": "(a|b)*",
+     "origin": "shell/__tests__/regex_risk.test.ts :: ReDoS risk classifier > safe: (a|b)* (ERE)"
+    },
+    {
+     "rule": "ere",
+     "input": "(foo",
+     "origin": "shell/__tests__/regex.test.ts :: error messages > unclosed group"
+    },
+    {
+     "rule": "ere",
+     "input": "(foo|bar)",
+     "origin": "shell/__tests__/regex_risk.test.ts :: ReDoS risk classifier > safe: (foo|bar) (ERE)"
+    },
+    {
+     "rule": "ere",
+     "input": "(foo|bar)+",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — ERE > unescaped () | + ? mean the metachars"
+    },
+    {
+     "rule": "ere",
+     "input": ".*<h3 class=\"x\"><a href=\"([^\"]*)\">([^<]*)</a>.*",
+     "origin": "shell/__tests__/regex_risk.test.ts :: ReDoS risk classifier > risky: .*<h3 class=\"x\"><a href=\"([^\"]*)\">([^<]*)</a>.* (ERE)"
+    },
+    {
+     "rule": "ere",
+     "input": ".*x.*",
+     "origin": "shell/__tests__/regex_engine_redos.test.ts :: risk classification gates the engine > SAFE → not flagged; QUADRATIC → flagged but compiles; worse → refused"
+    },
+    {
+     "rule": "ere",
+     "input": ".*x.*y.*",
+     "origin": "shell/__tests__/regex_engine_redos.test.ts :: RE2 enabled (opt-in) > safe patterns STILL use fast V8; only risky ones go to RE2"
+    },
+    {
+     "rule": "ere",
+     "input": "2026-06-06|2026-06-07",
+     "origin": "tools/__tests__/tr.test.ts :: tr tool > the bug from production: split dates, filter via grep alternation"
+    },
+    {
+     "rule": "ere",
+     "input": "<[^>]*>",
+     "origin": "shell/__tests__/regex_engine_redos.test.ts :: RE2 enabled (opt-in) > safe patterns STILL use fast V8; only risky ones go to RE2"
+    },
+    {
+     "rule": "ere",
+     "input": "[0-9]+",
+     "origin": "shell/__tests__/regex_risk.test.ts :: ReDoS risk classifier > safe: [0-9]+ (ERE)"
+    },
+    {
+     "rule": "ere",
+     "input": "[0-9]{3,5}",
+     "origin": "shell/__tests__/regex.test.ts :: the LLM-confusion battery > ERE digit run with bounded quantifier"
+    },
+    {
+     "rule": "ere",
+     "input": "[[:digit:]]+",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — ERE > POSIX classes"
+    },
+    {
+     "rule": "ere",
+     "input": "[a-z]+@[a-z]+\\.[a-z]+",
+     "origin": "shell/__tests__/regex_risk.test.ts :: ReDoS risk classifier > safe: [a-z]+@[a-z]+\\.[a-z]+ (ERE)"
+    },
+    {
+     "rule": "ere",
+     "input": "[abc",
+     "origin": "shell/__tests__/regex.test.ts :: error messages > unterminated character class"
+    },
+    {
+     "rule": "ere",
+     "input": "\\(foo\\)",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — ERE > `\\(` is a literal paren (escape inversion vs BRE)"
+    },
+    {
+     "rule": "ere",
+     "input": "\\bword\\b",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — ERE > class shortcuts and word boundaries"
+    },
+    {
+     "rule": "ere",
+     "input": "\\d*\\d*x",
+     "origin": "shell/__tests__/regex_risk.test.ts :: ReDoS risk classifier > risky: \\d*\\d*x (ERE)"
+    },
+    {
+     "rule": "ere",
+     "input": "\\d+",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — ERE > class shortcuts and word boundaries"
+    },
+    {
+     "rule": "ere",
+     "input": "\\d+\\.\\d+",
+     "origin": "shell/__tests__/regex_risk.test.ts :: ReDoS risk classifier > safe: \\d+\\.\\d+ (ERE)"
+    },
+    {
+     "rule": "ere",
+     "input": "^(abc|def)$",
+     "origin": "shell/__tests__/bash_rematch.test.ts :: [[ =~ ]] — capture groups and BASH_REMATCH > a grouped literal pattern parses and matches"
+    },
+    {
+     "rule": "ere",
+     "input": "^[0-9]+$",
+     "origin": "shell/__tests__/dbl_bracket.test.ts :: [[ ]] — composes > inside function"
+    },
+    {
+     "rule": "ere",
+     "input": "^[a-c]+$",
+     "origin": "shell/__tests__/bash_rematch.test.ts :: [[ =~ ]] — capture groups and BASH_REMATCH > a grouped literal pattern parses and matches"
+    },
+    {
+     "rule": "ere",
+     "input": "^[a-z]+[0-9]+$",
+     "origin": "shell/__tests__/dbl_bracket.test.ts :: [[ ]] — regex matching > =~ matches anchored regex"
+    },
+    {
+     "rule": "ere",
+     "input": "^abc$",
+     "origin": "shell/__tests__/bash_rematch.test.ts :: [[ =~ ]] — capture groups and BASH_REMATCH > a non-matching pattern is still a clean false"
+    },
+    {
+     "rule": "ere",
+     "input": "^a{3}$",
+     "origin": "shell/__tests__/bash_rematch.test.ts :: [[ =~ ]] — capture groups and BASH_REMATCH > a grouped literal pattern parses and matches"
+    },
+    {
+     "rule": "ere",
+     "input": "^foo$",
+     "origin": "shell/__tests__/regex_risk.test.ts :: ReDoS risk classifier > safe: ^foo$ (ERE)"
+    },
+    {
+     "rule": "ere",
+     "input": "^q$",
+     "origin": "shell/__tests__/bash_rematch.test.ts :: [[ =~ ]] — capture groups and BASH_REMATCH > a FAILED match CLEARS it — a stale capture would read as a success"
+    },
+    {
+     "rule": "ere",
+     "input": "^v([0-9]+).([0-9]+)$",
+     "origin": "shell/__tests__/bash_rematch.test.ts :: [[ =~ ]] — capture groups and BASH_REMATCH > the version-parsing idiom reads naturally"
+    },
+    {
+     "rule": "ere",
+     "input": "a",
+     "origin": "tools/__tests__/grep.test.ts :: grep tool > -m combines with -o"
+    },
+    {
+     "rule": "ere",
+     "input": "a*",
+     "origin": "shell/__tests__/regex_risk.test.ts :: ReDoS risk classifier > safe: a* (ERE)"
+    },
+    {
+     "rule": "ere",
+     "input": "a.c",
+     "origin": "shell/__tests__/bash_rematch.test.ts :: [[ =~ ]] — capture groups and BASH_REMATCH > BASH_REMATCH holds the whole match and each group"
+    },
+    {
+     "rule": "ere",
+     "input": "a[",
+     "origin": "shell/__tests__/dbl_bracket.test.ts :: [[ ]] — regex matching > =~ invalid regex fails loudly with status 2"
+    },
+    {
+     "rule": "ere",
+     "input": "abc",
+     "origin": "shell/__tests__/regex_risk.test.ts :: ReDoS risk classifier > safe: abc (ERE)"
+    },
+    {
+     "rule": "ere",
+     "input": "a{2,4}",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — ERE > `{n,m}` unescaped quantifier"
+    },
+    {
+     "rule": "ere",
+     "input": "foo[abc",
+     "origin": "shell/__tests__/regex.test.ts :: error messages > position is reported"
+    },
+    {
+     "rule": "ere",
+     "input": "foo|bar",
+     "origin": "shell/__tests__/regex.test.ts :: the LLM-confusion battery > the prototypical ERE alternation: |"
+    },
+    {
+     "rule": "ere",
+     "input": "https?://[^ ]+",
+     "origin": "shell/__tests__/regex_risk.test.ts :: ReDoS risk classifier > safe: https?://[^ ]+ (ERE)"
+    },
+    {
+     "rule": "ere",
+     "input": "o+b",
+     "origin": "shell/__tests__/dbl_bracket.test.ts :: [[ ]] — regex matching > =~ match returns status 0"
+    },
+    {
+     "rule": "ere",
+     "input": "world",
+     "origin": "shell/__tests__/dbl_bracket.test.ts :: [[ ]] — regex matching > =~ partial-match like bash"
+    },
+    {
+     "rule": "ere",
+     "input": "z+",
+     "origin": "shell/__tests__/dbl_bracket.test.ts :: [[ ]] — regex matching > =~ non-match returns status 1 (not an error)"
+    },
+    {
+     "rule": "ere",
+     "input": "zzz",
+     "origin": "tools/__tests__/grep.test.ts :: grep tool > -o with no match exits 1, no output"
+    }
+   ]
+  }
+ ]
+}

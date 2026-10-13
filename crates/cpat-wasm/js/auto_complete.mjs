@@ -6,6 +6,7 @@
 import { WasmAutoComplete } from "./wasm.mjs";
 import { Cursor } from "./cursor.mjs";
 import { ParseError } from "./parse_error.mjs";
+import { takeSuggestionResult } from "./taken.mjs";
 import { wrap } from "./pattern.mjs";
 import { Tree } from "./tree.mjs";
 
@@ -34,7 +35,7 @@ export class AutoComplete {
    * report (errors, matches, history), so it is changed. */
   suggestForWithCursor(cursor) {
     const text = cursor.text;
-    const result = this._wasm.suggestFor(text);
+    const result = takeSuggestionResult(this._wasm.suggestFor(text));
     const suggestion = JSON.parse(result.json);
     if (suggestion.patternError != null) {
       throw new Error(suggestion.thrownMessage);

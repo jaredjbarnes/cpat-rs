@@ -1,0 +1,58 @@
+[
+  {
+    "id": "empty-literal-message",
+    "kind": "build.error",
+    "file": "v12-grammar-test",
+    "expected": "Error: Value Cannot be empty.",
+    "actualPattern": "^Error: literal `[^`]*` is empty; a literal must match at least one character$",
+    "reason": "A pattern that can't be constructed is GrammarError::Pattern in cpat-rs's own words, which name the pattern; v12 passes on its Literal constructor's text.",
+    "cites": "DESIGN.md §18, deviations: \"A pattern that can't be constructed (an empty literal, …) is GrammarError::Pattern with cpat-rs's own message\""
+  },
+  {
+    "id": "custom-tokens-prototype-key",
+    "kind": "autocomplete.threw",
+    "expected": "TypeError: customTokens is not iterable",
+    "actual": null,
+    "reason": "v12 looks a pattern's custom tokens up in a plain object (`customTokensMap[pattern.name] ?? []`), so a pattern named `constructor` (a literal in the TypeScript and saya grammars) finds Object.prototype.constructor and AutoComplete throws. cpat-rs keeps custom tokens in a map and suggests normally.",
+    "cites": "DESIGN.md §23, \"v12 bugs the harness found\": custom tokens by a prototype key"
+  },
+  {
+    "id": "depth-limit",
+    "kind": "exec.threw",
+    "expected": "RangeError: Maximum call stack size exceeded",
+    "actual": null,
+    "got": {
+      "tooDeep": true
+    },
+    "reason": "Input nested past Limits::max_depth (1024 frames) halts the parse with too_deep, where v12 recurses until the JS engine overflows its stack (jq's 3000-deep paren bomb).",
+    "cites": "DESIGN.md §11, deviations: \"Input nested past `Limits::max_depth` halts with `too_deep`; v12 recurses until the JS engine throws `RangeError`\""
+  },
+  {
+    "id": "v12-trimmed-bounded-repeat-crash",
+    "kind": "exec.threw",
+    "file": "v12-cut-test",
+    "expected": "TypeError: Cannot read properties of undefined (reading 'firstIndex')",
+    "actual": null,
+    "reason": "v12's FiniteRepeat with a trimmed divider takes \"no items\" for \"ended on a divider\" (0 % 2 === 0) when its first item fails, pops a node that isn't there and throws. cpat-rs reports the failed repeat and the choice tries its next alternative.",
+    "cites": "DESIGN.md §23, \"v12 bugs the harness found\": a trimmed bounded repeat whose first item fails"
+  },
+  {
+    "id": "ran-out-at-a-final-surrogate-pair",
+    "kind": "exec.furthest",
+    "file": "shell",
+    "rule": "script",
+    "input": "echo -n \"héllo 🌍",
+    "expected": [
+      8,
+      16,
+      "dqString"
+    ],
+    "actual": [
+      8,
+      17,
+      "dqString"
+    ],
+    "reason": "A sequence that runs out of text records its error's last index past the text's end. v12 spells that as its cursor's index + 1, and its cursor sits on the start of the last grapheme, so after a final emoji (two UTF-16 units) v12 says 16 where the text is 17 long; cpat-rs's `last` is the text's length (17). The same position, written two ways; ASCII text gives the same number in both.",
+    "cites": "DESIGN.md §17, Positions (\"an emoji's low surrogate there\"), and §23"
+  }
+]

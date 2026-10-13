@@ -1,0 +1,1175 @@
+{
+ "name": "v12-grammar-test",
+ "suite": "v12-tests",
+ "grammars": [
+  {
+   "id": "2fd1421edd6ed28c",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar @tokens on a pattern that can't take tokens is a build error",
+   "text": "\n            @tokens([\"ignored\"])\n            name = \"John\"\n        ",
+   "cases": []
+  },
+  {
+   "id": "ead8a0eb7e546ebf",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar @tokens on a pattern that can't take tokens is a build error",
+   "text": "\n            @tokens([\"x\"])\n            pair = \"a\" + \"b\"\n        ",
+   "cases": []
+  },
+  {
+   "id": "c47023eef7971dcc",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar @tokens with a non-array argument is a build error",
+   "text": "\n            @tokens(\"Bad\")\n            spaces = /\\s+/\n        ",
+   "cases": []
+  },
+  {
+   "id": "1e287b94c6a9764e",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar @tokens with a non-string token is a build error",
+   "text": "\n            @tokens([\" \", 2])\n            spaces = /\\s+/\n        ",
+   "cases": []
+  },
+  {
+   "id": "1c6e42f90d4b65f4",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar @tokens with no argument is a build error",
+   "text": "\n            @tokens()\n            spaces = /\\s+/\n        ",
+   "cases": []
+  },
+  {
+   "id": "f119b3391f7ca984",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Alias",
+   "text": "\n            name = /regex/\n            alias = name\n        ",
+   "cases": []
+  },
+  {
+   "id": "0338d0f072dca18a",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar And With Not Pattern",
+   "text": "\n            space = \" \"\n            first-name = /\\w/\n            last-name = /\\w/\n            middle-name = /\\w/\n            jack = \"Jack\"\n            middle-name-with-space = middle-name + space\n            full-name = !jack + first-name + space + middle-name-with-space? + last-name\n        ",
+   "cases": []
+  },
+  {
+   "id": "75d2d066855ee4a2",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar And With Optional Pattern",
+   "text": "\n            space = \" \"\n            first-name = /\\w/\n            last-name = /\\w/\n            middle-name = /\\w/\n            middle-name-with-space = middle-name + space\n            full-name = first-name + space + middle-name-with-space? + last-name\n        ",
+   "cases": []
+  },
+  {
+   "id": "387e465f2865c79e",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar And",
+   "text": "\n            space = \" \"\n            first-name = /\\w/\n            last-name = /\\w/\n            full-name = first-name + space + last-name\n        ",
+   "cases": []
+  },
+  {
+   "id": "eca0b99561a821c9",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Anonymous Patterns",
+   "text": "\n            complex-expression = !\"NOT_THIS\" + \"Text\"? + /regex/ + (\"Text\" | /regex/ | (pattern)+) + (pattern | pattern)\n            pattern = \"p\"\n        ",
+   "cases": []
+  },
+  {
+   "id": "ebbffb7d7ea5362a",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Bad Grammar At Beginning",
+   "text": "//",
+   "cases": []
+  },
+  {
+   "id": "f74b896019ccd20a",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Bad Grammar Further In",
+   "text": "name = /\\w/\n                age = /()\n            ",
+   "cases": []
+  },
+  {
+   "id": "52fafdb03dfa0060",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Block with content pattern",
+   "text": "\n            content = /[^{}]+/\n            braces = [\"{\"] content [\"}\"]\n        ",
+   "cases": [
+    {
+     "rule": "braces",
+     "input": "{hello}",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Block with content pattern"
+    }
+   ]
+  },
+  {
+   "id": "be1b4ea62ca4f2cd",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Block with grouped options content",
+   "text": "\n            braces = [\"{\"] (\"yes\" | \"no\") [\"}\"]\n        ",
+   "cases": [
+    {
+     "rule": "braces",
+     "input": "{no}",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Block with grouped options content"
+    },
+    {
+     "rule": "braces",
+     "input": "{yes}",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Block with grouped options content"
+    }
+   ]
+  },
+  {
+   "id": "3e3bc093c98ef610",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Block with inline literal content",
+   "text": "\n            parens = [\"(\"] \"hello\" [\")\"]\n        ",
+   "cases": [
+    {
+     "rule": "parens",
+     "input": "(hello)",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Block with inline literal content"
+    }
+   ]
+  },
+  {
+   "id": "a88bd65c5932bd34",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Block with inline literal content",
+   "text": "\n            parens = [\"(\"] /[^()]+/ [\")\"]\n        ",
+   "cases": [
+    {
+     "rule": "parens",
+     "input": "(hello)",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Block with inline literal content"
+    }
+   ]
+  },
+  {
+   "id": "dcbcc37c7992a91a",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Block with inline regex content",
+   "text": "\n            braces = [\"{\"] /[^{}]*/ [\"}\"]\n        ",
+   "cases": [
+    {
+     "rule": "braces",
+     "input": "{hello world}",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Block with inline regex content"
+    }
+   ]
+  },
+  {
+   "id": "46725e3115fb74b9",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Block with inline sequence content",
+   "text": "\n            key = /[a-z]+/\n            value = /[0-9]+/\n            braces = [\"{\"] key + \"=\" + value [\"}\"]\n        ",
+   "cases": [
+    {
+     "rule": "braces",
+     "input": "{x=42}",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Block with inline sequence content"
+    }
+   ]
+  },
+  {
+   "id": "f123324e44f7ae32",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Block with multiple content patterns",
+   "text": "\n            key = /[a-z]+/\n            value = /[a-z]+/\n            pair = [\"{\"] key + \":\" + value [\"}\"]\n        ",
+   "cases": [
+    {
+     "rule": "pair",
+     "input": "{foo:bar}",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Block with multiple content patterns"
+    }
+   ]
+  },
+  {
+   "id": "1160ed8d89355ebe",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Block with pattern reference content",
+   "text": "\n            word = /[a-z]+/\n            braces = [\"{\"] word [\"}\"]\n        ",
+   "cases": [
+    {
+     "rule": "braces",
+     "input": "{hello}",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Block with pattern reference content"
+    }
+   ]
+  },
+  {
+   "id": "7a92ae281d85755d",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Block with repeat content",
+   "text": "\n            item = /[a-z]+/\n            braces = [\"{\"] (item, \",\")+ [\"}\"]\n        ",
+   "cases": [
+    {
+     "rule": "braces",
+     "input": "{a,b,c}",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Block with repeat content"
+    }
+   ]
+  },
+  {
+   "id": "0211cb4bcc5cdca7",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Block with three-part inline sequence content",
+   "text": "\n            a = \"a\"\n            b = \"b\"\n            c = \"c\"\n            braces = [\"{\"] a + b + c [\"}\"]\n        ",
+   "cases": [
+    {
+     "rule": "braces",
+     "input": "{abc}",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Block with three-part inline sequence content"
+    }
+   ]
+  },
+  {
+   "id": "3e3f01674fc4c2bb",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Block with ungrouped options content",
+   "text": "\n            braces = [\"{\"] \"yes\" | \"no\" [\"}\"]\n        ",
+   "cases": [
+    {
+     "rule": "braces",
+     "input": "{no}",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Block with ungrouped options content"
+    },
+    {
+     "rule": "braces",
+     "input": "{yes}",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Block with ungrouped options content"
+    }
+   ]
+  },
+  {
+   "id": "0cd444981bb51e33",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Block with wildcard content",
+   "text": "\n            braces = [\"{\"] ... [\"}\"]\n        ",
+   "cases": [
+    {
+     "rule": "braces",
+     "input": "{anything goes here}",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Block wildcard matches any content"
+    },
+    {
+     "rule": "braces",
+     "input": "{}",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Block with wildcard content"
+    }
+   ]
+  },
+  {
+   "id": "3eefe1a653ae55d9",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Block without content requires ...",
+   "text": "\n            braces = [\"{\"] [\"}\"]\n        ",
+   "cases": []
+  },
+  {
+   "id": "28c5254e0894578c",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Decorators On Multiple Patterns And Comments",
+   "text": "\n            #Comment\n            @tokens([\" \"])\n            spaces = /\\s+/\n\n            #Comment\n            @tokens([\"0\", \"1\", \"2\", \"3\", \"4\", \"5\", \"6\", \"7\", \"8\", \"9\"])\n            #Comment\n            digits = /\\d+/\n        ",
+   "cases": []
+  },
+  {
+   "id": "fdf1455af31b567d",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Decorators On Multiple Patterns",
+   "text": "\n            @tokens([\" \"])\n            spaces = /\\s+/\n\n            @tokens([\"0\", \"1\", \"2\", \"3\", \"4\", \"5\", \"6\", \"7\", \"8\", \"9\"])\n            digits = /\\d+/\n        ",
+   "cases": []
+  },
+  {
+   "id": "01d1dbe9579606dc",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Decorators On Take Until",
+   "text": "\n            @tokens([\"</script\"])\n            script-text = ?->| \"</script\"\n        ",
+   "cases": []
+  },
+  {
+   "id": "5c54574d18449568",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Decorators",
+   "text": "\n            @tokens([\" \"])\n            spaces = /\\s+/\n        ",
+   "cases": []
+  },
+  {
+   "id": "f9269c822623942c",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Expression Pattern With Right Association",
+   "text": "\n            variables = \"a\" | \"b\" | \"c\" | \"d\" | \"e\"\n            ternary = expression + \" ? \" + expression + \" : \" + expression\n            expression = ternary right | variables\n        ",
+   "cases": [
+    {
+     "rule": "expression",
+     "input": "a ? b : c ? d : e",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Expression Pattern With Right Association"
+    }
+   ]
+  },
+  {
+   "id": "85f24a884e7b9828",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Expression Pattern",
+   "text": "\n            variables = \"a\" | \"b\" | \"c\"\n            ternary = expression + \" ? \" + expression + \" : \" + expression\n            expression = ternary | variables\n\n            bad-ternary = bad-expression + \" ? \" + bad-expression + \" : \" + bad-expression\n            bad-expression = bad-ternary | bad-ternary\n        ",
+   "cases": [
+    {
+     "rule": "expression",
+     "input": "a ? b : c",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Expression Pattern"
+    }
+   ]
+  },
+  {
+   "id": "301a2f2cbd546091",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Grammar With Spaces",
+   "text": "\n        john = \"John\"\n            \n        jane = \"Jane\"\n        ",
+   "cases": []
+  },
+  {
+   "id": "d9d4408e67f2eb96",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Literal With Escaped Characters",
+   "text": "\n            chars = \"\\n\\r\\t\\b\\f\\v\\0\\x00\\u0000\\\"\\\\\"\n        ",
+   "cases": []
+  },
+  {
+   "id": "351035b1ac87fc29",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Literal With Escaped Quotes",
+   "text": "\n            content = \"With Con\\\"tent\"\n        ",
+   "cases": []
+  },
+  {
+   "id": "be550223c3d80b71",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Literal",
+   "text": "\n            name = \"John\"\n        ",
+   "cases": []
+  },
+  {
+   "id": "77e6a486b066cfa2",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Or",
+   "text": "\n            john = \"John\"\n            jane = \"Jane\"\n            names = john | jane\n        ",
+   "cases": []
+  },
+  {
+   "id": "4b809d16b2cab5c8",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Reference",
+   "text": "\n            digit = /\\d+/\n            divider = /\\s*,\\s*/\n            open-bracket = \"[\"\n            close-bracket = \"]\"\n            spaces = /\\s+/\n            items = digit | array\n            array-items = (items, divider trim)*\n            array = open-bracket + spaces? + array-items + spaces? + close-bracket\n        ",
+   "cases": [
+    {
+     "rule": "array",
+     "input": "[1, []]",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Reference"
+    }
+   ]
+  },
+  {
+   "id": "9fc163a1459fc25b",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Regex",
+   "text": "\n            name = /\\w/\n        ",
+   "cases": []
+  },
+  {
+   "id": "bb18931436d36385",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Repeat Bounded",
+   "text": "\n            digit = /\\d+/\n            digits = (digit){1,3}\n        ",
+   "cases": []
+  },
+  {
+   "id": "a49b1af56b36219c",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Repeat Divider With Trim Divider And Bounds",
+   "text": "\n            digit = /\\d+/\n            comma = \",\"\n            digits = (digit, comma trim){3, 3}\n        ",
+   "cases": []
+  },
+  {
+   "id": "89e9787e2dc133bc",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Repeat Divider With Trim Divider",
+   "text": "\n            digit = /\\d+/\n            comma = \",\"\n            digits = (digit, comma trim)+\n        ",
+   "cases": []
+  },
+  {
+   "id": "ccfb47953ad1dce4",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Repeat Divider",
+   "text": "\n            digit = /\\d+/\n            comma = \",\"\n            digits = (digit, comma){3}\n        ",
+   "cases": []
+  },
+  {
+   "id": "5d274c52beb81e91",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Repeat Exact",
+   "text": "\n            digit = /\\d+/\n            digits = (digit){3}\n        ",
+   "cases": []
+  },
+  {
+   "id": "36c0800e968a1f60",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Repeat Lower Limit",
+   "text": "\n            digit = /\\d+/\n            digits = (digit){1,}\n        ",
+   "cases": []
+  },
+  {
+   "id": "8cce97995987725f",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Repeat Upper Limit",
+   "text": "\n            digit = /\\d+/\n            digits = (digit){,3}\n        ",
+   "cases": []
+  },
+  {
+   "id": "51e4ebbeee8e1d15",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Repeat Zero Or More",
+   "text": "\n            digit = /\\d/\n            digits = (digit)*\n        ",
+   "cases": []
+  },
+  {
+   "id": "3eb31f4d80b931f4",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Repeat",
+   "text": "\n            digit = /\\d/\n            digits = (digit)+\n        ",
+   "cases": [
+    {
+     "rule": "digits",
+     "input": "123",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar repeat AST contains repeated children"
+    }
+   ]
+  },
+  {
+   "id": "3f2bea9f8c14fdba",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Take Until",
+   "text": "\n            script-text = ?->| \"</script\"\n        ",
+   "cases": []
+  },
+  {
+   "id": "b79ed6349ff66c14",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar `<|>` inside a literal is just text",
+   "text": "arrow = \"<|>\"",
+   "cases": [
+    {
+     "rule": "arrow",
+     "input": "<|>",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar `<|>` inside a literal is just text"
+    }
+   ]
+  },
+  {
+   "id": "4fdba480313e7295",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar `|` builds the same pattern regardless of definition order",
+   "text": "\n            a = \"a\"\n            b = \"b\"\n            x = a | b\n        ",
+   "cases": [
+    {
+     "rule": "x",
+     "input": "",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar `|` builds the same pattern regardless of definition order"
+    },
+    {
+     "rule": "x",
+     "input": "a",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar `|` builds the same pattern regardless of definition order"
+    },
+    {
+     "rule": "x",
+     "input": "ab",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar `|` builds the same pattern regardless of definition order"
+    },
+    {
+     "rule": "x",
+     "input": "b",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar `|` builds the same pattern regardless of definition order"
+    },
+    {
+     "rule": "x",
+     "input": "c",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar `|` builds the same pattern regardless of definition order"
+    }
+   ]
+  },
+  {
+   "id": "726f2b60a04c9ad3",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar `|` builds the same pattern regardless of definition order",
+   "text": "\n            a = \"a\"\n            x = a | b\n            b = \"b\"\n        ",
+   "cases": [
+    {
+     "rule": "x",
+     "input": "",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar `|` builds the same pattern regardless of definition order"
+    },
+    {
+     "rule": "x",
+     "input": "a",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar `|` builds the same pattern regardless of definition order"
+    },
+    {
+     "rule": "x",
+     "input": "ab",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar `|` builds the same pattern regardless of definition order"
+    },
+    {
+     "rule": "x",
+     "input": "b",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar `|` builds the same pattern regardless of definition order"
+    },
+    {
+     "rule": "x",
+     "input": "c",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar `|` builds the same pattern regardless of definition order"
+    }
+   ]
+  },
+  {
+   "id": "2ad82792cfd087d6",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar alias chain resolves through multiple levels",
+   "text": "\n            original = \"value\"\n            alias1 = original\n            alias2 = alias1\n        ",
+   "cases": [
+    {
+     "rule": "alias2",
+     "input": "value",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar alias chain resolves through multiple levels"
+    }
+   ]
+  },
+  {
+   "id": "ed12b4e0e69521f7",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar alias cycles are build errors a forward alias keeps its decorators",
+   "text": "\n            @tokens([\"xx\"])\n            a = b\n            b = /x+/\n        ",
+   "cases": [
+    {
+     "rule": "a",
+     "input": "xxx",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar alias cycles are build errors a forward alias keeps its decorators"
+    }
+   ]
+  },
+  {
+   "id": "1682dfbcbdb4d2a2",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar alias cycles are build errors a longer chain, entered from a rule outside the cycle",
+   "text": "\n            entry = a\n            a = b\n            b = c\n            c = a\n        ",
+   "cases": []
+  },
+  {
+   "id": "a5293771fadf0417",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar alias cycles are build errors a parenthesized alias counts",
+   "text": "\n            a = (b)\n            b = a\n        ",
+   "cases": []
+  },
+  {
+   "id": "bdfc97a228379246",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar alias cycles are build errors a rule that aliases itself",
+   "text": "a = a",
+   "cases": []
+  },
+  {
+   "id": "701db3a55232f356",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar alias cycles are build errors alias chains that end in a real pattern are fine",
+   "text": "\n            a = b\n            b = c\n            c = \"x\"\n        ",
+   "cases": [
+    {
+     "rule": "a",
+     "input": "x",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar alias cycles are build errors alias chains that end in a real pattern are fine"
+    }
+   ]
+  },
+  {
+   "id": "7684a5301879fb75",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar alias cycles are build errors recursion through a real pattern is not an alias cycle",
+   "text": "\n            a = b\n            b = \"(\" + a + \")\" | \"x\"\n        ",
+   "cases": [
+    {
+     "rule": "a",
+     "input": "((x))",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar alias cycles are build errors recursion through a real pattern is not an alias cycle"
+    }
+   ]
+  },
+  {
+   "id": "9bf40286f494a46d",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar alias cycles are build errors two aliases naming each other",
+   "text": "\n            a = b\n            b = a\n        ",
+   "cases": []
+  },
+  {
+   "id": "37608eb7b6fcb4fe",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar an atom-only `|` returns the matched alternative's node unwrapped",
+   "text": "\n            x = \"a\" | \"b\"\n        ",
+   "cases": [
+    {
+     "rule": "x",
+     "input": "b",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar an atom-only `|` returns the matched alternative's node unwrapped"
+    }
+   ]
+  },
+  {
+   "id": "2abd8e2150e932a6",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar an unknown decorator is a build error",
+   "text": "\n            @bad-decorator()\n            spaces = /\\s+/\n        ",
+   "cases": []
+  },
+  {
+   "id": "944ae3f8c647ff29",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar an unknown decorator is a build error",
+   "text": "\n            @tokn\n            keyword = /[a-z]+/\n        ",
+   "cases": []
+  },
+  {
+   "id": "07c5db6660fa45b1",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar anonymous pattern names building the same grammar twice yields identical names",
+   "text": "\n            x = (\"a\" | \"b\") + (\"c\" + \"d\") + (\"e\" | \"f\")\n        ",
+   "cases": [
+    {
+     "rule": "x",
+     "input": "acde",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar anonymous pattern names building the same grammar twice yields identical names"
+    }
+   ]
+  },
+  {
+   "id": "24fd6e51ad65eec9",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar anonymous pattern names building the same grammar twice yields identical names",
+   "text": "other = (\"q\" + \"r\") | (\"s\" + \"t\")",
+   "cases": []
+  },
+  {
+   "id": "ce1ae5ab62044481",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar default param resolves to locally defined pattern when no param supplied",
+   "text": "\n            use params { value = default-value }\n            default-value = \"DefaultValue\"\n            alias = value\n        ",
+   "cases": [
+    {
+     "rule": "alias",
+     "input": "DefaultValue",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar default param resolves to locally defined pattern when no param supplied"
+    }
+   ]
+  },
+  {
+   "id": "da39a3ee5e6b4b0d",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar empty grammar throws",
+   "text": "",
+   "cases": []
+  },
+  {
+   "id": "5896162fd024587c",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar empty string literal throws",
+   "text": "empty = \"\"",
+   "cases": []
+  },
+  {
+   "id": "603f3be4f19c8d53",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar expression AST wraps in expression node",
+   "text": "\n            num = /\\d+/\n            add = expr + \" + \" + expr\n            expr = add | num\n        ",
+   "cases": [
+    {
+     "rule": "expr",
+     "input": "1 + 2",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar expression AST wraps in expression node"
+    }
+   ]
+  },
+  {
+   "id": "7cb955cc4d3a8225",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar expression handles postfix operator",
+   "text": "\n            number = /\\d+/\n            factorial = expr + \"!\"\n            expr = factorial | number\n        ",
+   "cases": [
+    {
+     "rule": "expr",
+     "input": "5!",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar expression handles postfix operator"
+    }
+   ]
+  },
+  {
+   "id": "9ff11d41be3f0da6",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar expression handles prefix operator",
+   "text": "\n            number = /\\d+/\n            neg = \"-\" + expr\n            expr = neg | number\n        ",
+   "cases": [
+    {
+     "rule": "expr",
+     "input": "-42",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar expression handles prefix operator"
+    }
+   ]
+  },
+  {
+   "id": "8ddd5cff1ec63505",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar expression respects declaration-order precedence for arithmetic",
+   "text": "\n            number = /\\d+/\n            mul-expr = expr + \" * \" + expr\n            add-expr = expr + \" + \" + expr\n            expr = mul-expr | add-expr | number\n        ",
+   "cases": [
+    {
+     "rule": "expr",
+     "input": "1 + 2 * 3",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar expression respects declaration-order precedence for arithmetic"
+    }
+   ]
+  },
+  {
+   "id": "6d36a9a42a8146d8",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar five-way sequence flattens correctly",
+   "text": "result = \"a\" + \"b\" + \"c\" + \"d\" + \"e\"",
+   "cases": [
+    {
+     "rule": "result",
+     "input": "abcde",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar five-way sequence flattens correctly"
+    }
+   ]
+  },
+  {
+   "id": "7995ba0f2e5daaa9",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar forward reference resolves pattern defined later",
+   "text": "\n            greeting = \"Hello \" + name\n            name = /\\w+/\n        ",
+   "cases": [
+    {
+     "rule": "greeting",
+     "input": "Hello World",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar forward reference resolves pattern defined later"
+    }
+   ]
+  },
+  {
+   "id": "687edaa9c5d7126e",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar four-way options all reachable",
+   "text": "letter = \"a\" | \"b\" | \"c\" | \"d\"",
+   "cases": [
+    {
+     "rule": "letter",
+     "input": "a",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar four-way options all reachable"
+    },
+    {
+     "rule": "letter",
+     "input": "d",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar four-way options all reachable"
+    }
+   ]
+  },
+  {
+   "id": "51de464d25044524",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar grammar with only comments produces no patterns",
+   "text": "# just a comment",
+   "cases": []
+  },
+  {
+   "id": "cac9830cbd49c54d",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar grammar with syntax version and no patterns",
+   "text": "syntax 1.0",
+   "cases": []
+  },
+  {
+   "id": "bfef49c9fe1324b0",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar greedy options `<|>` are rejected with a message that teaches the fix",
+   "text": "\n            hi = \"hi\"\n            hiya = \"hiya\"\n            greeting = hi <|> hiya\n        ",
+   "cases": []
+  },
+  {
+   "id": "042b28f44c85c71d",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar greedy options error is not a generic syntax error",
+   "text": "item = \"ab\" <|> \"abc\"",
+   "cases": []
+  },
+  {
+   "id": "346f8438f02134ca",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar greedy options error names the offending expression",
+   "text": "item = \"ab\" <|> \"abc\" <|> \"a\"",
+   "cases": []
+  },
+  {
+   "id": "54cd46c7ef8e80ea",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar greedy options nested in a group or sequence are rejected too",
+   "text": "item = (\"ab\" <|> \"abc\")+",
+   "cases": []
+  },
+  {
+   "id": "d9418d7092cd06b3",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar greedy options nested in a group or sequence are rejected too",
+   "text": "item = \"x\" + (\"ab\" <|> \"abc\")",
+   "cases": []
+  },
+  {
+   "id": "0b5f589384a72783",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar import without resolver (sync) throws",
+   "text": "\n            import { value } from \"file.cpat\"\n            name = value\n        ",
+   "cases": []
+  },
+  {
+   "id": "12eb753229a8637f",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar inline literals use their value as the pattern name",
+   "text": "greeting = \"Hello\" + \" \" + /\\w+/",
+   "cases": [
+    {
+     "rule": "greeting",
+     "input": "Hello World",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar inline literals use their value as the pattern name"
+    }
+   ]
+  },
+  {
+   "id": "660d13b42cbcfb98",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar inline not with literal in sequence",
+   "text": "\n            word = /\\w+/\n            not-hello = !\"hello\" + word\n        ",
+   "cases": [
+    {
+     "rule": "not-hello",
+     "input": "hello",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar inline not with literal in sequence"
+    },
+    {
+     "rule": "not-hello",
+     "input": "world",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar inline not with literal in sequence"
+    }
+   ]
+  },
+  {
+   "id": "2862a58afc92c794",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar inline optional with literal in sequence",
+   "text": "\n            greeting = \"hello\" + \" world\"?\n        ",
+   "cases": [
+    {
+     "rule": "greeting",
+     "input": "hello",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar inline optional with literal in sequence"
+    },
+    {
+     "rule": "greeting",
+     "input": "hello world",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar inline optional with literal in sequence"
+    }
+   ]
+  },
+  {
+   "id": "4b800b2f40398ca8",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar literal escape decoding an escaped backslash followed by n is a backslash and an n",
+   "text": "x = \"\\\\n\"",
+   "cases": []
+  },
+  {
+   "id": "277ddfe3f96e4f29",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar literal escape decoding an escaped backslash then an escaped quote",
+   "text": "x = \"\\\\\\\"\"",
+   "cases": []
+  },
+  {
+   "id": "486c5aa00ceda136",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar literal escape decoding an incomplete \\x or \\u escape means the letter itself",
+   "text": "x = \"\\u12\"",
+   "cases": []
+  },
+  {
+   "id": "8a3a1844fc1c1e72",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar literal escape decoding an incomplete \\x or \\u escape means the letter itself",
+   "text": "x = \"\\xZZ\"",
+   "cases": []
+  },
+  {
+   "id": "90a23e008937e8ec",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar literal escape decoding any other escaped character means itself",
+   "text": "x = \"\\q\\/\\-\"",
+   "cases": []
+  },
+  {
+   "id": "3019a343d980a97e",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar literal escape decoding each documented escape",
+   "text": "x = \"\\x41\\x7a\"",
+   "cases": []
+  },
+  {
+   "id": "ad6f98f0daff3645",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar literal escape decoding each documented escape",
+   "text": "x = \"\\n\\r\\t\\b\\f\\v\\0\"",
+   "cases": []
+  },
+  {
+   "id": "cff37fb492caa50b",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar literal escape decoding each documented escape",
+   "text": "x = \"\\\"quoted\\\"\"",
+   "cases": []
+  },
+  {
+   "id": "f06c91149de292b7",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar literal escape decoding each documented escape",
+   "text": "x = \"\\u00e9\\u2603\"",
+   "cases": []
+  },
+  {
+   "id": "715b1e1391b02641",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar literal escape decoding mixed sequences decode left to right",
+   "text": "x = \"\\\\u0041\\u0041\"",
+   "cases": []
+  },
+  {
+   "id": "8817663acfa6f6e0",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar literal escape decoding mixed sequences decode left to right",
+   "text": "x = \"a\\\\tb\\tc\\\\\\nd\"",
+   "cases": []
+  },
+  {
+   "id": "f2e7e0f4928a531e",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar literal escape decoding mixed sequences decode left to right",
+   "text": "x = \"\\\\x41\\x41\"",
+   "cases": []
+  },
+  {
+   "id": "60946011e8cfe9e7",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar literal escape decoding two escaped backslashes are two backslashes",
+   "text": "x = \"\\\\\\\\\"",
+   "cases": []
+  },
+  {
+   "id": "cb364f7cd19807e6",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar mutually recursive choices build and parse",
+   "text": "\n            a = b | \"c\"\n            b = a | \"d\"\n        ",
+   "cases": [
+    {
+     "rule": "a",
+     "input": "c",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar mutually recursive choices build and parse"
+    },
+    {
+     "rule": "a",
+     "input": "d",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar mutually recursive choices build and parse"
+    },
+    {
+     "rule": "a",
+     "input": "e",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar mutually recursive choices build and parse"
+    }
+   ]
+  },
+  {
+   "id": "2bae7b261946cbe4",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar nested parenthesized groups unwrap correctly",
+   "text": "\n            word = \"hello\"\n            inner = ((word))\n        ",
+   "cases": [
+    {
+     "rule": "inner",
+     "input": "hello",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar nested parenthesized groups unwrap correctly"
+    }
+   ]
+  },
+  {
+   "id": "ddee95631415c388",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar options AST returns winning alternative directly",
+   "text": "\n            a = \"aaa\"\n            b = \"bbb\"\n            choice = a | b\n        ",
+   "cases": [
+    {
+     "rule": "choice",
+     "input": "bbb",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar options AST returns winning alternative directly"
+    }
+   ]
+  },
+  {
+   "id": "6d3d329b4c3a9ec6",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar options picks the first match, in order",
+   "text": "\n            hi = \"hi\"\n            hiya = \"hiya\"\n            greeting = hiya | hi\n        ",
+   "cases": [
+    {
+     "rule": "greeting",
+     "input": "hi",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar options picks the first match, in order"
+    },
+    {
+     "rule": "greeting",
+     "input": "hiya",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar options picks the first match, in order"
+    }
+   ]
+  },
+  {
+   "id": "5bf9043c333e42de",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar patterns template converts kebab-case to camelCase",
+   "text": "my-long-name = \"hello\"",
+   "cases": [
+    {
+     "rule": "my-long-name",
+     "input": "hello",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar patterns template converts kebab-case to camelCase"
+    }
+   ]
+  },
+  {
+   "id": "3c4e775b211511dd",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar recursive list with nested expressions",
+   "text": "\n            digit = /\\d+/\n            comma = \", \"\n            open = \"(\"\n            close = \")\"\n            item = digit | list\n            items = (item, comma trim)+\n            list = open + items + close\n        ",
+   "cases": [
+    {
+     "rule": "list",
+     "input": "(1, (2, 3), 4)",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar recursive list with nested expressions"
+    }
+   ]
+  },
+  {
+   "id": "419ed4bf73ab7a4a",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar repeat with inline literal pattern",
+   "text": "items = (\"item\")+",
+   "cases": [
+    {
+     "rule": "items",
+     "input": "itemitemitem",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar repeat with inline literal pattern"
+    }
+   ]
+  },
+  {
+   "id": "2a87e8f141af7408",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar repeat with inline options as repeated item",
+   "text": "\n            bits = (\"0\" | \"1\")+\n        ",
+   "cases": [
+    {
+     "rule": "bits",
+     "input": "1010",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar repeat with inline options as repeated item"
+    }
+   ]
+  },
+  {
+   "id": "d40ac12e891fb521",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar repeat with inline regex pattern",
+   "text": "digits = (/\\d/)+",
+   "cases": [
+    {
+     "rule": "digits",
+     "input": "123",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar repeat with inline regex pattern"
+    }
+   ]
+  },
+  {
+   "id": "7c1de400b3f25dd6",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar repeat with inline sequence as repeated item",
+   "text": "\n            pairs = (\"(\" + /\\w+/ + \")\")+\n        ",
+   "cases": [
+    {
+     "rule": "pairs",
+     "input": "(a)(b)(c)",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar repeat with inline sequence as repeated item"
+    }
+   ]
+  },
+  {
+   "id": "b31203a1a9a51a47",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar sequence children reflect pattern names in AST",
+   "text": "\n            first = /[A-Z][a-z]+/\n            space = \" \"\n            last = /[A-Z][a-z]+/\n            full-name = first + space + last\n        ",
+   "cases": [
+    {
+     "rule": "full-name",
+     "input": "John Doe",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar sequence children reflect pattern names in AST"
+    }
+   ]
+  },
+  {
+   "id": "1fa8ca9e48fdc86a",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar sequence mixing references, optionals, nots, and inline patterns",
+   "text": "\n            keyword = \"let\"\n            ws = /\\s+/\n            ident = /[a-z]+/\n            eq = \"=\"\n            digit = /\\d+/\n            let-stmt = keyword + ws + !digit + ident + ws? + eq + ws? + digit\n        ",
+   "cases": [
+    {
+     "rule": "let-stmt",
+     "input": "let 9=42",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar sequence mixing references, optionals, nots, and inline patterns"
+    },
+    {
+     "rule": "let-stmt",
+     "input": "let x=42",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar sequence mixing references, optionals, nots, and inline patterns"
+    }
+   ]
+  },
+  {
+   "id": "f2e47fa5be7c5642",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar shadowed literals are build errors a literal that a shorter, earlier literal shadows",
+   "text": "x = \"=\" | \"==\"",
+   "cases": []
+  },
+  {
+   "id": "60d591db5bb20ff5",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar shadowed literals are build errors a regex or sequence before a longer literal is not checked",
+   "text": "x = /</ | \"<=\" | \"<\" + \"!\"",
+   "cases": [
+    {
+     "rule": "x",
+     "input": "<",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar shadowed literals are build errors a regex or sequence before a longer literal is not checked"
+    }
+   ]
+  },
+  {
+   "id": "e95bccd9a57c3af6",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar shadowed literals are build errors literals that are not prefixes of each other are fine",
+   "text": "x = \"ab\" | \"ac\" | \"b\"",
+   "cases": [
+    {
+     "rule": "x",
+     "input": "ac",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar shadowed literals are build errors literals that are not prefixes of each other are fine"
+    }
+   ]
+  },
+  {
+   "id": "ed0bdd6cb7b4e8f4",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar shadowed literals are build errors looks through aliases",
+   "text": "\n            less = \"<\"\n            lt = less\n            op = lt | \"<=\"\n        ",
+   "cases": []
+  },
+  {
+   "id": "a7678cc2c7b153e0",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar shadowed literals are build errors looks through rule names, including ones defined later",
+   "text": "\n            lt = \"<\"\n            op = lt | le\n            le = \"<=\"\n        ",
+   "cases": []
+  },
+  {
+   "id": "92a49cac48889cf7",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar shadowed literals are build errors not adjacent, and inside a nested choice",
+   "text": "x = \"a\" + (\"<\" | \">\" | \"<=\")",
+   "cases": []
+  },
+  {
+   "id": "0a480f9ba8d87b1c",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar shadowed literals are build errors the longer literal first is fine",
+   "text": "x = \"==\" | \"=\"",
+   "cases": [
+    {
+     "rule": "x",
+     "input": "=",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar shadowed literals are build errors the longer literal first is fine"
+    },
+    {
+     "rule": "x",
+     "input": "==",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar shadowed literals are build errors the longer literal first is fine"
+    }
+   ]
+  },
+  {
+   "id": "4a358a65af0518f1",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar syntax version followed by patterns parses correctly",
+   "text": "\n            syntax 1.0\n            name = \"hello\"\n        ",
+   "cases": [
+    {
+     "rule": "name",
+     "input": "hello",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar syntax version followed by patterns parses correctly"
+    }
+   ]
+  },
+  {
+   "id": "6da1ff818a228cb4",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar take until with regex terminator",
+   "text": "\n            content = ?->| /[<]/\n        ",
+   "cases": []
+  },
+  {
+   "id": "721c7b56c68c82f1",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar unknown pattern names are build errors a `use params` default that names nothing is an error",
+   "text": "\n            use params { value = nowhere }\n            x = value\n        ",
+   "cases": []
+  },
+  {
+   "id": "1c07c60c5c42f8fa",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar unknown pattern names are build errors a declared param that is neither supplied nor defaulted is an error when used",
+   "text": "\n            use params { value }\n            x = value + \"!\"\n        ",
+   "cases": []
+  },
+  {
+   "id": "7d00babf595062ff",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar unknown pattern names are build errors a forward reference to a pattern defined later is fine",
+   "text": "\n            x = later + \"!\"\n            later = \"a\"\n        ",
+   "cases": [
+    {
+     "rule": "x",
+     "input": "a!",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar unknown pattern names are build errors a forward reference to a pattern defined later is fine"
+    }
+   ]
+  },
+  {
+   "id": "029293b9658a68b0",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar unknown pattern names are build errors a reference to a name defined nowhere names the name and the rule",
+   "text": "x = missing + \"b\"",
+   "cases": []
+  },
+  {
+   "id": "70a572c913226ba7",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar unknown pattern names are build errors an alias of an unknown name is an error",
+   "text": "x = missing",
+   "cases": []
+  },
+  {
+   "id": "5a013c49508291c6",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar unknown pattern names are build errors exporting an unknown name is an error",
+   "text": "missing",
+   "cases": []
+  },
+  {
+   "id": "4670d078378ae2e5",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar unknown pattern names are build errors nested references are checked too",
+   "text": "\n            a = \"a\"\n            x = a + (\"b\" | (nope)+)\n        ",
+   "cases": []
+  }
+ ]
+}

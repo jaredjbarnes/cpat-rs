@@ -1,0 +1,439 @@
+{
+ "name": "regex-bre",
+ "suite": "agent-harness",
+ "file": "shell/regex/grammars/bre.cpat",
+ "grammars": [
+  {
+   "id": "136a6119ea0456b6",
+   "origin": "__tests__/datefmt.test.ts :: ",
+   "text": "# POSIX Basic Regular Expressions, with GNU extensions.\n#\n# Defining property: most metacharacters are LITERAL unless preceded\n# by `\\`. Group is `\\(...\\)`, alternation is `\\|`, one-or-more is\n# `\\+`, zero-or-one is `\\?`, bounded quantifier is `\\{n,m\\}`. `*`,\n# `.`, `^`, `$`, and `[...]` work the same as in ERE/PCRE.\n#\n# Char classes (`[...]`) are tokenised as one opaque match — the\n# visitor parses the body using the shared char-class helper rather\n# than expressing it in the grammar. The internal rules of `[...]`\n# (POSIX classes, ranges, leading-`]` literal) are stateful in a way\n# that's awkward to express declaratively; one regex literal + a\n# focused visitor is cleaner.\n#\n# Rule names are stable — the visitor dispatches on them — so don't\n# rename without updating `src/shell/regex/visitors/bre.ts`.\n\n# ─── Top level ─────────────────────────────────────────────\nbre = breAlternation\n\n# ─── Alternation ───────────────────────────────────────────\n# `\\|` separates sequences. Empty alternatives are allowed (matches\n# real BRE behaviour) by making breSequence's atom list optional.\nbreAlternation = breSequence + (breAltTail)*\nbreAltTail     = breAltSep + breSequence\nbreAltSep      = /\\\\\\|/\n\n# ─── Sequence ──────────────────────────────────────────────\n# One sequence is zero or more atom-with-quantifier slots. The `*`\n# (zero-or-more) is what lets `\\|\\|` parse as three empty\n# alternatives, matching real BRE.\nbreSequence = (breAtomQ)*\n\n# ─── Atom + optional quantifier suffix ─────────────────────\n# Anchors aren't quantifier-eligible in real BRE (a quantifier after\n# `^` is a syntax error / undefined); we accept the quantifier\n# grammatically and let the visitor decide whether to attach it. In\n# practice no quantifier sneaks past `^`/`$` because the visitor\n# treats anchors as atoms and ignores any following quantifier slot.\nbreAtomQ = breAtom + breQuantSuffix?\n\n# Order matters — most-specific first. Group (`\\(`) must beat the\n# generic backslash-escape rule, brackets must be tried before the\n# bare literal-char fallback.\nbreAtom = breGroup\n        | breCharClass\n        | breAnchorStart\n        | breAnchorEnd\n        | breDot\n        | breEscapedAtom\n        | breLiteralChar\n\n# ─── Group ─────────────────────────────────────────────────\nbreGroup      = breGroupOpen + breAlternation + breGroupClose\nbreGroupOpen  = /\\\\\\(/\nbreGroupClose = /\\\\\\)/\n\n# ─── Char class — opaque token, visitor parses the body ────\n# Regex anatomy:\n#   \\[                                  opening bracket\n#   \\^?                                 optional negation\n#   \\]?                                 optional literal `]` at position 0 (POSIX rule)\n#   (?:\\[:[a-z]+:\\]|\\\\.|[^\\]])*         body: POSIX class OR `\\X` OR non-`]`\n#   \\]                                  closing bracket\n# The POSIX-class alternative `\\[:name:\\]` is listed FIRST so the\n# inner `]` of `[:alpha:]` doesn't terminate the outer class — without\n# this special case, `[[:alpha:]]` would match only `[[:alpha:]` and\n# leave the trailing `]` dangling.\nbreCharClass = /\\[\\^?\\]?(?:\\[:[a-z]+:\\]|\\\\.|[^\\]])*\\]/\n\n# ─── Anchors ───────────────────────────────────────────────\nbreAnchorStart = \"^\"\nbreAnchorEnd   = \"$\"\n\n# ─── Dot ───────────────────────────────────────────────────\nbreDot = \".\"\n\n# ─── Backslash-led atoms ───────────────────────────────────\n# Listed most-specific first. The visitor dispatches on the matched\n# leaf node's name so it knows which kind of escape this is.\nbreEscapedAtom = breBackref\n               | breWordBoundaryAlias\n               | breWordBoundary\n               | breNonWordBoundary\n               | breClassDigit\n               | breClassWord\n               | breClassSpace\n               | breClassNotDigit\n               | breClassNotWord\n               | breClassNotSpace\n               | breControlEscape\n               | breHexEscape\n               | breUnicodeEscape\n               | breLiteralEscape\n\nbreBackref           = /\\\\[1-9]/\nbreWordBoundaryAlias = /\\\\[<>]/\nbreWordBoundary      = /\\\\b/\nbreNonWordBoundary   = /\\\\B/\nbreClassDigit        = /\\\\d/\nbreClassNotDigit     = /\\\\D/\nbreClassWord         = /\\\\w/\nbreClassNotWord      = /\\\\W/\nbreClassSpace        = /\\\\s/\nbreClassNotSpace     = /\\\\S/\nbreControlEscape     = /\\\\[ntrfv0]/\nbreHexEscape         = /\\\\x[0-9a-fA-F][0-9a-fA-F]/\nbreUnicodeEscape     = /\\\\u[0-9a-fA-F]{4}/\n# Catch-all: `\\X` for any non-special X. The exclusion list mirrors\n# the rules above plus the structural escapes (`\\(`, `\\)`, `\\|`,\n# `\\+`, `\\?`, `\\{`, `\\}`) which must not be swallowed here — they're\n# matched at a higher level by breGroup / breAltSep / breQuant*.\nbreLiteralEscape = /\\\\[^()|+?{}<>bBdDwWsSntrfv0xu1-9]/\n\n# ─── Literal char ──────────────────────────────────────────\n# Anything that's not a metacharacter consumed elsewhere. In BRE the\n# unescaped metacharacters reduce to `.`, `*`, `^`, `$`, `[`, `\\` —\n# everything else is a literal. We exclude `\\` so the escape rules\n# above can claim it.\nbreLiteralChar = /[^.\\\\\\[\\^$*]/\n\n# ─── Quantifier suffix ─────────────────────────────────────\n# Order matters — `\\{n,m\\}` and `\\{n\\}` must be tried before bare\n# `\\+`/`\\?` so the brace form isn't mis-tokenised mid-stream.\nbreQuantSuffix = breBraceQuant\n               | breStarQ\n               | breBackslashPlusQ\n               | breBackslashQuestionQ\n\nbreStarQ              = \"*\"\nbreBackslashPlusQ     = /\\\\\\+\\??/\nbreBackslashQuestionQ = /\\\\\\?\\??/\n# `\\{n\\}` or `\\{n,m\\}` or `\\{n,\\}`. Trailing `?` for non-greedy.\nbreBraceQuant         = /\\\\\\{[0-9]+(?:,[0-9]*)?\\\\\\}\\??/\n",
+   "cases": [
+    {
+     "rule": "bre",
+     "input": "  ",
+     "origin": "sed/__tests__/branch_budget.test.ts :: sed branch-loop hardening > terminating branch loop collapsing repeats still works"
+    },
+    {
+     "rule": "bre",
+     "input": "-foo",
+     "origin": "tools/__tests__/grep.test.ts :: grep tool > -e= lets a pattern start with a dash"
+    },
+    {
+     "rule": "bre",
+     "input": ".",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — BRE > `.` and `[...]` work as expected"
+    },
+    {
+     "rule": "bre",
+     "input": ".*<h3 class=\"cd__headline\"><a href=\"\\([^\"]*\\)\"[^>]*>\\([^<]*\\)<\\/a>.*",
+     "origin": "shell/__tests__/regex_engine_redos.test.ts :: RE2 enabled (opt-in) > a risky pattern on a huge line no longer errors (runs on RE2)"
+    },
+    {
+     "rule": "bre",
+     "input": ".*ALPHA.*",
+     "origin": "tools/__tests__/find.test.ts :: find — -regex / -iregex > -iregex matches case-insensitively"
+    },
+    {
+     "rule": "bre",
+     "input": ".*\\.md",
+     "origin": "tools/__tests__/find.test.ts :: find — -regex / -iregex > -regex matches full path as BRE"
+    },
+    {
+     "rule": "bre",
+     "input": ".*x.*y.*z.*",
+     "origin": "shell/__tests__/regex_engine_redos.test.ts :: default JS engine, no RE2 > DEGREE-3 polynomial is refused too (O(n^3) locks the CPU below any cap)"
+    },
+    {
+     "rule": "bre",
+     "input": "/usr",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool > custom delimiter |"
+    },
+    {
+     "rule": "bre",
+     "input": "2026-06-06\\|2026-06-07",
+     "origin": "tools/__tests__/tr.test.ts :: tr tool > the bug from production: split dates, filter via grep alternation"
+    },
+    {
+     "rule": "bre",
+     "input": "<[^>]*>",
+     "origin": "shell/__tests__/regex_engine_redos.test.ts :: default JS engine, no RE2 > SAFE tag-strip on a >256KB line runs fine (the regression we fixed)"
+    },
+    {
+     "rule": "bre",
+     "input": "BEGIN",
+     "origin": "tools/__tests__/sed.test.ts :: sed — regex ranges > range fires multiple times if pattern re-appears"
+    },
+    {
+     "rule": "bre",
+     "input": "DIAGNOSIS",
+     "origin": "tools/__tests__/grep.test.ts :: grep tool — context flags > the motivating idiom from the chart-review session"
+    },
+    {
+     "rule": "bre",
+     "input": "DROP",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c / a / i > c with regex address"
+    },
+    {
+     "rule": "bre",
+     "input": "END",
+     "origin": "tools/__tests__/sed.test.ts :: sed — regex ranges > /START/,/END/d deletes from START through END inclusive"
+    },
+    {
+     "rule": "bre",
+     "input": "ERROR",
+     "origin": "tools/__tests__/sed.test.ts :: sed — w FILE > w FILE writes matching pattern spaces to file"
+    },
+    {
+     "rule": "bre",
+     "input": "F",
+     "origin": "tools/__tests__/sed.test.ts :: sed — blocks { ... } > address with block applies multiple substitutions"
+    },
+    {
+     "rule": "bre",
+     "input": "FOO",
+     "origin": "tools/__tests__/sed.test.ts :: sed — blocks { ... } > address with block applies multiple substitutions"
+    },
+    {
+     "rule": "bre",
+     "input": "I",
+     "origin": "tools/__tests__/sed.test.ts :: sed — blocks { ... } > block with multi-line script (newline-separated)"
+    },
+    {
+     "rule": "bre",
+     "input": "K",
+     "origin": "tools/__tests__/sed.test.ts :: sed — blocks { ... } > block with multi-line script (newline-separated)"
+    },
+    {
+     "rule": "bre",
+     "input": "KILL",
+     "origin": "tools/__tests__/sed.test.ts :: sed — blocks { ... } > block with multi-line script (newline-separated)"
+    },
+    {
+     "rule": "bre",
+     "input": "MATCH",
+     "origin": "tools/__tests__/grep.test.ts :: grep tool — context flags > -A 0 behaves like no -A"
+    },
+    {
+     "rule": "bre",
+     "input": "MISS",
+     "origin": "tools/__tests__/sed.test.ts :: sed — branching (b/t/:LABEL) > T branches if NO substitute succeeded"
+    },
+    {
+     "rule": "bre",
+     "input": "O",
+     "origin": "tools/__tests__/sed.test.ts :: sed — blocks { ... } > address with block applies multiple substitutions"
+    },
+    {
+     "rule": "bre",
+     "input": "START",
+     "origin": "tools/__tests__/sed.test.ts :: sed — regex ranges > /START/,/END/d deletes from START through END inclusive"
+    },
+    {
+     "rule": "bre",
+     "input": "STOP",
+     "origin": "tools/__tests__/sed.test.ts :: sed — regex ranges > range from line N to /PAT/"
+    },
+    {
+     "rule": "bre",
+     "input": "X",
+     "origin": "tools/__tests__/sed.test.ts :: sed — -f script-file > -f and -e combine in order (-e first, then -f file contents)"
+    },
+    {
+     "rule": "bre",
+     "input": "Y",
+     "origin": "tools/__tests__/sed.test.ts :: sed — -f script-file > -f and -e combine in order (-e first, then -f file contents)"
+    },
+    {
+     "rule": "bre",
+     "input": "[",
+     "origin": "tools/__tests__/grep.test.ts :: grep tool > invalid regex fails"
+    },
+    {
+     "rule": "bre",
+     "input": "[[:alpha:]]\\+",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — BRE > POSIX character classes [[:alpha:]]"
+    },
+    {
+     "rule": "bre",
+     "input": "[^a-z]",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — BRE > `.` and `[...]` work as expected"
+    },
+    {
+     "rule": "bre",
+     "input": "[a-z]",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — BRE > `.` and `[...]` work as expected"
+    },
+    {
+     "rule": "bre",
+     "input": "[abc",
+     "origin": "tools/__tests__/find.test.ts :: find — -regex / -iregex > invalid regex fails cleanly"
+    },
+    {
+     "rule": "bre",
+     "input": "\\(.*\\)\\1.*",
+     "origin": "shell/__tests__/regex_engine_redos.test.ts :: RE2 enabled (opt-in) > backreference patterns fall back to JS and stay guarded"
+    },
+    {
+     "rule": "bre",
+     "input": "\\(a\\+\\)\\+b",
+     "origin": "shell/__tests__/regex_engine_redos.test.ts :: default JS engine, no RE2 > EXPONENTIAL pattern is refused regardless of size (length-independent)"
+    },
+    {
+     "rule": "bre",
+     "input": "\\(foo",
+     "origin": "shell/__tests__/regex.test.ts :: error messages > BRE: unclosed \\("
+    },
+    {
+     "rule": "bre",
+     "input": "\\(foo\\)\\1",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — BRE > backreferences \\1..\\9"
+    },
+    {
+     "rule": "bre",
+     "input": "\\<the\\>",
+     "origin": "shell/__tests__/regex.test.ts :: the LLM-confusion battery > BRE word search idiom: \\<word\\>"
+    },
+    {
+     "rule": "bre",
+     "input": "\\<word\\>",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — BRE > word boundary aliases \\< \\>"
+    },
+    {
+     "rule": "bre",
+     "input": "\\d\\d\\d",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — BRE > PCRE shortcut classes \\d \\w \\s as GNU extensions"
+    },
+    {
+     "rule": "bre",
+     "input": "\\n",
+     "origin": "tools/__tests__/sed.test.ts :: sed — n / N / D / P > N: appends next line with embedded \\n"
+    },
+    {
+     "rule": "bre",
+     "input": "^#",
+     "origin": "tools/__tests__/sed.test.ts :: sed — regex addresses > regex address with custom regex chars (anchors)"
+    },
+    {
+     "rule": "bre",
+     "input": "^(foo)$",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — BRE > `(`, `)`, `|`, `+`, `?` are LITERAL in BRE"
+    },
+    {
+     "rule": "bre",
+     "input": "^Sources:",
+     "origin": "tools/__tests__/grep.test.ts :: grep tool > --quiet drives an if-test (the verify-script use case)"
+    },
+    {
+     "rule": "bre",
+     "input": "^\\(.*\\)\\n\\1$",
+     "origin": "tools/__tests__/sed.test.ts :: sed — n / N / D / P > D: deletes up to first embedded newline, restarts cycle"
+    },
+    {
+     "rule": "bre",
+     "input": "^\\(foo\\)$",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — BRE > `\\(`, `\\)`, `\\|`, `\\+`, `\\?` ARE the metacharacters"
+    },
+    {
+     "rule": "bre",
+     "input": "^a+$",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — BRE > `(`, `)`, `|`, `+`, `?` are LITERAL in BRE"
+    },
+    {
+     "rule": "bre",
+     "input": "^a\\+$",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — BRE > `\\(`, `\\)`, `\\|`, `\\+`, `\\?` ARE the metacharacters"
+    },
+    {
+     "rule": "bre",
+     "input": "^a|b$",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — BRE > `(`, `)`, `|`, `+`, `?` are LITERAL in BRE"
+    },
+    {
+     "rule": "bre",
+     "input": "^colou\\?r$",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — BRE > `\\(`, `\\)`, `\\|`, `\\+`, `\\?` ARE the metacharacters"
+    },
+    {
+     "rule": "bre",
+     "input": "^foo",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — BRE > anchors ^ and $"
+    },
+    {
+     "rule": "bre",
+     "input": "^foo\\|bar$",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — BRE > `\\(`, `\\)`, `\\|`, `\\+`, `\\?` ARE the metacharacters"
+    },
+    {
+     "rule": "bre",
+     "input": "a",
+     "origin": "sed/__tests__/branch_budget.test.ts :: sed branch-loop hardening > branch-to-end (`b` with no label) still exits the cycle normally"
+    },
+    {
+     "rule": "bre",
+     "input": "a*",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — BRE > `*` is the only unescaped quantifier"
+    },
+    {
+     "rule": "bre",
+     "input": "a\\{2,3\\}",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — BRE > `\\{n,m\\}` bounded quantifier"
+    },
+    {
+     "rule": "bre",
+     "input": "abc[0-9]",
+     "origin": "tools/__tests__/grep.test.ts :: grep tool > regex pattern"
+    },
+    {
+     "rule": "bre",
+     "input": "alpha",
+     "origin": "tools/__tests__/file_args.test.ts :: grep — FILE args > --no-filename suppresses FILE: prefix on multi-file (short -h reserved for --help)"
+    },
+    {
+     "rule": "bre",
+     "input": "an",
+     "origin": "tools/__tests__/grep.test.ts :: grep tool > -q match: no output, exit 0"
+    },
+    {
+     "rule": "bre",
+     "input": "ap",
+     "origin": "tools/__tests__/grep.test.ts :: grep tool > -i case-insensitive"
+    },
+    {
+     "rule": "bre",
+     "input": "apple",
+     "origin": "tools/__tests__/grep.test.ts :: grep tool > -e adds multiple patterns (OR semantics)"
+    },
+    {
+     "rule": "bre",
+     "input": "b",
+     "origin": "shell/__tests__/tool_call.test.ts :: Shell — onToolCall event > stdin reflects the upstream pipe output for downstream stages"
+    },
+    {
+     "rule": "bre",
+     "input": "bad",
+     "origin": "tools/__tests__/sed.test.ts :: sed — multi-command scripts > substitute then delete"
+    },
+    {
+     "rule": "bre",
+     "input": "banana",
+     "origin": "tools/__tests__/grep.test.ts :: grep tool > -c count"
+    },
+    {
+     "rule": "bre",
+     "input": "bar",
+     "origin": "shell/__tests__/tool_call.test.ts :: Shell — onToolCall event > fires for failed tool calls (success=false)"
+    },
+    {
+     "rule": "bre",
+     "input": "beta",
+     "origin": "tools/__tests__/sed.test.ts :: sed — regex addresses > /PAT/p prints lines matching PAT"
+    },
+    {
+     "rule": "bre",
+     "input": "c",
+     "origin": "tools/__tests__/sed.test.ts :: sed — multiple -e scripts > three -e scripts"
+    },
+    {
+     "rule": "bre",
+     "input": "cat",
+     "origin": "tools/__tests__/grep.test.ts :: grep tool > -w matches whole words only"
+    },
+    {
+     "rule": "bre",
+     "input": "cherry",
+     "origin": "tools/__tests__/grep.test.ts :: grep tool > -e adds multiple patterns (OR semantics)"
+    },
+    {
+     "rule": "bre",
+     "input": "end",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c / a / i > c over a regex range"
+    },
+    {
+     "rule": "bre",
+     "input": "foo",
+     "origin": "chat/__tests__/tool_call.test.ts :: Chat — AgentExecResult records the graded exit code > a real grep error records exitCode=2"
+    },
+    {
+     "rule": "bre",
+     "input": "foo$",
+     "origin": "shell/__tests__/regex.test.ts :: compileRegex — BRE > anchors ^ and $"
+    },
+    {
+     "rule": "bre",
+     "input": "foo\\",
+     "origin": "shell/__tests__/regex.test.ts :: error messages > trailing backslash"
+    },
+    {
+     "rule": "bre",
+     "input": "foo\\|bar",
+     "origin": "shell/__tests__/regex.test.ts :: the LLM-confusion battery > the prototypical BRE alternation: \\|"
+    },
+    {
+     "rule": "bre",
+     "input": "hello",
+     "origin": "chat/__tests__/tool_call.test.ts :: Chat — onToolCall (forwards Shell.onToolCall) > forwards each pipeline stage with chat attached"
+    },
+    {
+     "rule": "bre",
+     "input": "keep",
+     "origin": "tools/__tests__/sed.test.ts :: sed — multi-command scripts > substitute then delete"
+    },
+    {
+     "rule": "bre",
+     "input": "line",
+     "origin": "shell/__tests__/cooperative.test.ts :: sed honours the abort flag on big input > bails (throws) instead of grinding through every line"
+    },
+    {
+     "rule": "bre",
+     "input": "localhost",
+     "origin": "tools/__tests__/sed.test.ts :: sed — -i in-place edit > -i writes the substitution result back to the file"
+    },
+    {
+     "rule": "bre",
+     "input": "no",
+     "origin": "tools/__tests__/sed.test.ts :: sed — branching (b/t/:LABEL) > t does NOT branch when no substitute matched"
+    },
+    {
+     "rule": "bre",
+     "input": "nothing",
+     "origin": "tools/__tests__/grep.test.ts :: grep tool — -l / -r / --include > -l with no matches anywhere → success:false"
+    },
+    {
+     "rule": "bre",
+     "input": "o",
+     "origin": "tools/__tests__/sed.test.ts :: sed — branching (b/t/:LABEL) > T branches if NO substitute succeeded"
+    },
+    {
+     "rule": "bre",
+     "input": "start",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c / a / i > c over a regex range"
+    },
+    {
+     "rule": "bre",
+     "input": "x",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool > multi-line input"
+    },
+    {
+     "rule": "bre",
+     "input": "xyz",
+     "origin": "tools/__tests__/sed.test.ts :: sed — s flag p (print on successful substitution) > p flag doesn't fire when pattern doesn't match"
+    },
+    {
+     "rule": "bre",
+     "input": "xyznopenope",
+     "origin": "tools/__tests__/file_args.test.ts :: grep — FILE args > zero matches across all files → success: false, silent"
+    },
+    {
+     "rule": "bre",
+     "input": "z",
+     "origin": "sed/__tests__/branch_budget.test.ts :: sed branch-loop hardening > no-progress conditional loop `:a; s/z/z/; t a` terminates with a bounded error"
+    },
+    {
+     "rule": "bre",
+     "input": "zzz",
+     "origin": "chat/__tests__/tool_call.test.ts :: Chat — AgentExecResult records the graded exit code > a no-match grep records success=false, exitCode=1"
+    }
+   ]
+  }
+ ]
+}

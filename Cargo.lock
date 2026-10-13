@@ -39,6 +39,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
+name = "cpat-conformance"
+version = "0.1.0"
+dependencies = [
+ "cpat-core",
+ "serde_json",
+]
+
+[[package]]
 name = "cpat-core"
 version = "0.1.0"
 dependencies = [

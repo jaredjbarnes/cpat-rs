@@ -28,6 +28,15 @@ enum Matcher {
     Fancy(Rc<fancy_regex::Regex>),
 }
 
+/// How many backtracking steps `fancy-regex` may take on one match before
+/// it gives up (and the regex doesn't match). JS has no limit; fancy-regex's
+/// default (one million) is about two steps a character for a repeated
+/// alternation with a lookahead, so the shell grammar's `dqLiteral` gave up
+/// on a 500 KB string that v12 matches (found by the conformance harness,
+/// DESIGN §6). A hundred million covers linear patterns over inputs of tens
+/// of megabytes, and still ends a catastrophic one, where JS would hang.
+const BACKTRACK_LIMIT: usize = 100_000_000;
+
 impl Matcher {
     fn compile(name: &str, source: &str) -> Result<Matcher, PatternError> {
         // Anchored at the start of the slice it runs on. The slice starts at
@@ -39,7 +48,9 @@ impl Matcher {
             return Ok(Matcher::Fast(Rc::new(fast)));
         }
 
-        fancy_regex::Regex::new(&anchored(Dialect::Fancy))
+        fancy_regex::RegexBuilder::new(&anchored(Dialect::Fancy))
+            .backtrack_limit(BACKTRACK_LIMIT)
+            .build()
             .map(|fancy| Matcher::Fancy(Rc::new(fancy)))
             .map_err(|error| PatternError::InvalidRegex {
                 name: name.to_string(),

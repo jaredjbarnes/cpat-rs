@@ -1,0 +1,1728 @@
+{
+ "name": "v12-typescript",
+ "suite": "v12-tests",
+ "grammars": [
+  {
+   "id": "4918bfd92f7bc63c",
+   "origin": "src/grammars/typescript/typescript.test.ts :: ",
+   "text": "\n\n# ===================================================\n# TYPESCRIPT GRAMMAR\n# ===================================================\n\n# ---------------------------------------------------\n# SECTION 1: Whitespace & Comments\n# ---------------------------------------------------\n_ = /(?:[ \\t\\n\\r\\f\\v]+|\\/\\/[^\\n]*(?:\\n|$)|\\/\\*[\\s\\S]*?\\*\\/)+/\nws = _?\nsemi = ws + \";\"\n\n# ---------------------------------------------------\n# SECTION 2: Identifiers & Keywords\n# ---------------------------------------------------\nreserved = /(?:break|case|catch|class|const|continue|debugger|default|delete|do|else|enum|export|extends|false|finally|for|function|if|import|in|instanceof|let|new|null|return|super|switch|this|throw|true|try|typeof|var|void|while|with|yield|async|await|undefined)(?![a-zA-Z0-9_$])/\nidentifier-name = /[a-zA-Z_$][a-zA-Z0-9_$]*/\nidentifier = !reserved + identifier-name\n\n# ---------------------------------------------------\n# SECTION 3: Literals\n# ---------------------------------------------------\n\n# Numeric literals: decimal, hex, octal, binary, bigint, separators\nnumber-literal = /(?:0[xX][\\da-fA-F][\\da-fA-F_]*|0[oO][0-7][0-7_]*|0[bB][01][01_]*|(?:(?:0|[1-9][\\d_]*)(?:\\.[\\d_]*)?|\\.[\\d][\\d_]*)(?:[eE][+-]?[\\d][\\d_]*)?)n?/\n\n# String literals\nsingle-string = /'(?:[^'\\\\]|\\\\.)*'/\ndouble-string = /\"(?:[^\"\\\\]|\\\\.)*\"/\nstring-literal = single-string | double-string\n\n# Template literals\ntemplate-chars = /(?:[^`$\\\\]|\\\\.|\\$(?!\\{))+/\ntemplate-span = \"${\" + ws + expr + ws + \"}\"\ntemplate-literal = \"`\" + template-chars? + (template-span + template-chars?)* + \"`\"\n\n# Regular expression literals\nregex-literal = /\\/(?![*\\/])(?:[^\\/\\\\\\[\\n]|\\\\.|\\[(?:[^\\]\\\\]|\\\\.)*\\])+\\/[dgimsuy]*/\n\n# Keyword literals\ntrue-literal = /true(?![a-zA-Z0-9_$])/\nfalse-literal = /false(?![a-zA-Z0-9_$])/\nnull-literal = /null(?![a-zA-Z0-9_$])/\nundefined-literal = /undefined(?![a-zA-Z0-9_$])/\nthis-literal = /this(?![a-zA-Z0-9_$])/\nsuper-literal = /super(?![a-zA-Z0-9_$])/\n\n# ---------------------------------------------------\n# SECTION 4: Property Names\n# ---------------------------------------------------\ncomputed-property-name = \"[\" + ws + expr + ws + \"]\"\nproperty-name = identifier-name | string-literal | number-literal | computed-property-name\n\n# ---------------------------------------------------\n# SECTION 5: Type Parameters & Annotations\n# ---------------------------------------------------\ntype-variance = (\"in\" | \"out\") + _\ntype-constraint = \"extends\" + _ + type-expr\ntype-default = \"=\" + ws + type-expr\ntype-param = (\"const\" + _)? + type-variance? + identifier + (ws + type-constraint)? + (ws + type-default)?\ntype-params = \"<\" + ws + (type-param, ws + \",\" + ws)+ + ws + \">\"\ntype-args = (type-expr, ws + \",\" + ws)+\ntype-annotation = \":\" + ws + type-expr\n\n# ---------------------------------------------------\n# SECTION 6: Parameters & Destructuring\n# ---------------------------------------------------\n\n# Binding patterns (destructuring)\narray-binding-element = (\"...\" + ws)? + (identifier | binding-pattern) + (ws + type-annotation)? + (ws + \"=\" + ws + expr)?\ncomma-sep = ws + \",\" + ws\ntrailing-comma = ws + \",\"\narray-pattern = \"[\" + ws + (array-binding-element, comma-sep)* + trailing-comma? + ws + \"]\"\n\nobject-binding-prop = (\"...\" + ws + identifier) | (property-name + ws + \":\" + ws + (identifier | binding-pattern) + (ws + type-annotation)? + (ws + \"=\" + ws + expr)?) | (identifier + (ws + type-annotation)? + (ws + \"=\" + ws + expr)?)\nobject-pattern = \"{\" + ws + (object-binding-prop, comma-sep)* + trailing-comma? + ws + \"}\"\n\nbinding-pattern = array-pattern | object-pattern\n\n# Function parameters\nrest-param = \"...\" + ws + (identifier | binding-pattern) + (ws + type-annotation)?\nparam = (identifier | binding-pattern) + ws + \"?\"? + (ws + type-annotation)? + (ws + \"=\" + ws + expr)?\nparam-list = (param | rest-param, comma-sep)+ + trailing-comma?\n\n# Constructor parameters (with access modifiers)\naccess-modifier = /(?:public|private|protected)(?![a-zA-Z0-9_$])/\nconstructor-param = (access-modifier + _)? + (\"readonly\" + _)? + (identifier | binding-pattern) + ws + \"?\"? + (ws + type-annotation)? + (ws + \"=\" + ws + expr)?\nconstructor-param-list = (constructor-param | rest-param, comma-sep)+ + trailing-comma?\n\n# ---------------------------------------------------\n# SECTION 7: Type Expressions\n# ---------------------------------------------------\n\n# Primitive types\nany-type = /any(?![a-zA-Z0-9_$])/\nunknown-type = /unknown(?![a-zA-Z0-9_$])/\nnever-type = /never(?![a-zA-Z0-9_$])/\nvoid-type = /void(?![a-zA-Z0-9_$])/\nstring-type = /string(?![a-zA-Z0-9_$])/\nnumber-type = /number(?![a-zA-Z0-9_$])/\nboolean-type = /boolean(?![a-zA-Z0-9_$])/\nsymbol-type = /symbol(?![a-zA-Z0-9_$])/\nbigint-type = /bigint(?![a-zA-Z0-9_$])/\nobject-type-keyword = /object(?![a-zA-Z0-9_$])/\nprimitive-type = any-type | unknown-type | never-type | void-type | string-type | number-type | boolean-type | symbol-type | bigint-type | object-type-keyword | undefined-literal | null-literal\n\n# Type reference: SomeType or Qualified.Name with optional generics\nqualified-type-name = (identifier-name, \".\")+\ntype-reference = qualified-type-name + (ws + \"<\" + ws + type-args + ws + \">\")?\n\n# Literal types\nliteral-type = string-literal | number-literal | true-literal | false-literal\n\n# Typeof type (uses value-level qualified name)\nqualified-name = (identifier-name, \".\")+\ntypeof-type = \"typeof\" + _ + qualified-name\n\n# Infer type\ninfer-type = \"infer\" + _ + identifier + (_ + \"extends\" + _ + type-expr)?\n\n# This type\nthis-type = /this(?![a-zA-Z0-9_$])/\n\n# Parenthesized type\nparen-type = \"(\" + ws + type-expr + ws + \")\"\n\n# Tuple type\ntuple-label = identifier + ws + \"?\"? + ws + \":\" + ws\ntuple-element = (\"...\" + ws)? + tuple-label? + type-expr + (ws + \"?\")?\ntuple-type = \"[\" + ws + (tuple-element, comma-sep)* + trailing-comma? + ws + \"]\"\n\n# Object type literal\nreadonly-mod = \"readonly\" + _\ntype-property-sig = readonly-mod? + property-name + ws + \"?\"? + ws + \":\" + ws + type-expr\ntype-method-sig = property-name + ws + \"?\"? + ws + type-params? + ws + \"(\" + ws + param-list? + ws + \")\" + ws + \":\" + ws + type-expr\ntype-index-sig = readonly-mod? + \"[\" + ws + identifier + ws + \":\" + ws + type-expr + ws + \"]\" + ws + \":\" + ws + type-expr\ntype-call-sig = type-params? + ws + \"(\" + ws + param-list? + ws + \")\" + ws + \":\" + ws + type-expr\ntype-construct-sig = \"new\" + ws + type-params? + ws + \"(\" + ws + param-list? + ws + \")\" + ws + \":\" + ws + type-expr\ntype-member = type-construct-sig | type-call-sig | type-index-sig | type-method-sig | type-property-sig\ntype-member-sep = ws + (\";\" | \",\") + ws\ntype-member-list = (type-member, type-member-sep)* + (ws + (\";\" | \",\"))?\nobject-type-literal = \"{\" + ws + type-member-list? + ws + \"}\"\n\n# Mapped type: { [K in keyof T as NewK]+?: V }\nmapped-readonly-mod = (\"+\" | \"-\")? + \"readonly\" + _\nmapped-optional-mod = (\"+\" | \"-\")? + \"?\"\nmapped-type = \"{\" + ws + mapped-readonly-mod? + \"[\" + ws + identifier + _ + \"in\" + _ + type-expr + (_ + \"as\" + _ + type-expr)? + ws + \"]\" + ws + mapped-optional-mod? + ws + \":\" + ws + type-expr + ws + semi? + ws + \"}\"\n\n# Template literal type\ntemplate-type-chars = /(?:[^`$\\\\]|\\\\.|\\$(?!\\{))+/\ntemplate-type-span = \"${\" + ws + type-expr + ws + \"}\"\ntemplate-literal-type = \"`\" + template-type-chars? + (template-type-span + template-type-chars?)* + \"`\"\n\n# Function type: (params) => ReturnType\n# Uses function-return alias to avoid being classified as prefix\nfunction-return = type-expr\nfunction-type = type-params? + ws + \"(\" + ws + param-list? + ws + \")\" + ws + \"=>\" + ws + function-return\nconstructor-type = \"new\" + ws + type-params? + ws + \"(\" + ws + param-list? + ws + \")\" + ws + \"=>\" + ws + function-return\n\n# --- Type Expression (auto-converts to Expression pattern) ---\n# Precedence order: first listed = highest binding power\n\n# Postfix types\narray-type-postfix = type-expr + \"[\" + ws + \"]\"\ntype-expr-inner = type-expr\nindexed-access-postfix = type-expr + \"[\" + ws + type-expr-inner + ws + \"]\"\n\n# Prefix types\nkeyof-type-prefix = \"keyof\" + _ + type-expr\nreadonly-type-prefix = \"readonly\" + _ + type-expr\nunique-type-prefix = \"unique\" + _ + type-expr\n\n# Infix types\nintersection-type = type-expr + ws + \"&\" + ws + type-expr\nunion-type = type-expr + ws + \"|\" + ws + type-expr\n\n# Conditional type (right-associative, lowest precedence infix)\nconditional-type = type-expr + _ + \"extends\" + _ + type-expr + ws + \"?\" + ws + type-expr + ws + \":\" + ws + type-expr\n\n# The type expression pattern\ntype-expr = array-type-postfix | indexed-access-postfix | keyof-type-prefix | readonly-type-prefix | unique-type-prefix | intersection-type | union-type | conditional-type right | function-type | constructor-type | mapped-type | object-type-literal | tuple-type | template-literal-type | paren-type | literal-type | primitive-type | typeof-type | infer-type | this-type | type-reference\n\n# ---------------------------------------------------\n# SECTION 8: Value Expressions\n# ---------------------------------------------------\n\n# Argument list for function calls\narg = (\"...\" + ws)? + expr\narg-list = (arg, comma-sep)+ + trailing-comma?\n\n# Arrow function\narrow-params = identifier | \"(\" + ws + param-list? + ws + \")\"\narrow-body = block | expr\narrow-function = (\"async\" + _)? + type-params? + ws + arrow-params + (ws + type-annotation)? + ws + \"=>\" + ws + arrow-body\n\n# Function expression\nfunction-expr = (\"async\" + _)? + \"function\" + ws + (\"*\" + ws)? + identifier? + ws + type-params? + ws + \"(\" + ws + param-list? + ws + \")\" + (ws + type-annotation)? + ws + block\n\n# Class expression (anonymous allowed)\nclass-expr = (\"abstract\" + _)? + \"class\" + (_ + identifier)? + (ws + type-params)? + (ws + extends-clause)? + (ws + implements-clause)? + ws + class-body\n\n# New expression\nnew-expr = \"new\" + _ + expr + ws + \"(\" + ws + arg-list? + ws + \")\"\nnew-no-args = \"new\" + _ + expr\n\n# Dynamic import\ndynamic-import = \"import\" + ws + \"(\" + ws + expr + ws + \")\"\n\n# Parenthesized expression\nparen-expr = \"(\" + ws + expr + ws + \")\"\n\n# Array literal\narray-element = (\"...\" + ws)? + expr\narray-literal = \"[\" + ws + (array-element, comma-sep)* + trailing-comma? + ws + \"]\"\n\n# Object literal\nshorthand-property = identifier\nspread-property = \"...\" + ws + expr\nproperty-assignment = property-name + ws + \":\" + ws + expr\nmethod-definition = (\"async\" + _)? + (\"*\" + ws)? + property-name + ws + type-params? + ws + \"(\" + ws + param-list? + ws + \")\" + (ws + type-annotation)? + ws + block\ngetter-definition = \"get\" + _ + property-name + ws + \"(\" + ws + \")\" + (ws + type-annotation)? + ws + block\nsetter-definition = \"set\" + _ + property-name + ws + \"(\" + ws + param + ws + \")\" + ws + block\nobject-property = getter-definition | setter-definition | method-definition | spread-property | property-assignment | shorthand-property\nobject-literal = \"{\" + ws + (object-property, comma-sep)* + trailing-comma? + ws + \"}\"\n\n# --- Expression Pattern (auto-converts to Expression) ---\n# Precedence order: first listed = highest binding power\n\n# Postfix operators\nmember-access = expr + ws + \".\" + ws + identifier-name\noptional-chain = expr + \"?.\" + identifier-name\nexpr-inner = expr\ncomputed-access = expr + \"[\" + ws + expr-inner + ws + \"]\"\noptional-computed = expr + \"?.[\" + ws + expr-inner + ws + \"]\"\ngeneric-call = expr + ws + \"<\" + ws + type-args + ws + \">\" + ws + \"(\" + ws + arg-list? + ws + \")\"\ncall-expr = expr + ws + \"(\" + ws + arg-list? + ws + \")\"\noptional-call = expr + \"?.(\" + ws + arg-list? + ws + \")\"\ntagged-template = expr + ws + template-literal\nnon-null-assert = expr + /!(?!=)/\npostfix-increment = expr + \"++\"\npostfix-decrement = expr + \"--\"\nas-const-expr = expr + _ + \"as\" + _ + \"const\"\nas-expr = expr + _ + \"as\" + _ + type-expr\nsatisfies-expr = expr + _ + \"satisfies\" + _ + type-expr\n\n# Prefix operators\nprefix-increment = \"++\" + ws + expr\nprefix-decrement = \"--\" + ws + expr\nunary-plus = \"+\" + ws + expr\nunary-minus = \"-\" + ws + expr\nlogical-not = /!(?!=)/ + ws + expr\nbitwise-not = \"~\" + ws + expr\ntypeof-expr = \"typeof\" + _ + expr\nvoid-expr = \"void\" + _ + expr\ndelete-expr = \"delete\" + _ + expr\nawait-expr = \"await\" + _ + expr\n\n# Infix operators (highest to lowest precedence)\n# Regex negative lookahead prevents matching prefixes of compound operators\nexp-expr = expr + ws + /\\*\\*(?!=)/ + ws + expr\nmul-div-mod = expr + ws + /\\*(?![*=])|\\/(?!=)|%(?!=)/ + ws + expr\nadd-sub = expr + ws + /\\+(?![+=])|-(?![-=])/ + ws + expr\nshift-expr = expr + ws + />>>(?!=)|>>(?![>=])|<<(?!=)/ + ws + expr\nrelational-expr = expr + _ + (/instanceof(?![a-zA-Z0-9_$])/ | /in(?![a-zA-Z0-9_$])/ | \"<=\" | \">=\" | /<(?![<=])/ | />(?![>=])/) + _ + expr\nequality-expr = expr + ws + /===|!==|==(?!=)|!=(?!=)/ + ws + expr\nbitwise-and = expr + ws + /&(?![&=])/ + ws + expr\nbitwise-xor = expr + ws + /\\^(?!=)/ + ws + expr\nbitwise-or = expr + ws + /\\|(?![|=])/ + ws + expr\nlogical-and = expr + ws + /&&(?!=)/ + ws + expr\nlogical-or = expr + ws + /\\|\\|(?!=)/ + ws + expr\nnullish-coalesce = expr + ws + /\\?\\?(?!=)/ + ws + expr\nternary-expr = expr + ws + /\\?(?!\\?|\\.)/ + ws + expr + ws + \":\" + ws + expr\nassignment-expr = expr + ws + (\">>>=\" | \">>=\" | \"<<=\" | \"**=\" | \"&&=\" | \"||=\" | \"??=\" | \"+=\" | \"-=\" | \"*=\" | \"/=\" | \"%=\" | \"&=\" | \"|=\" | \"^=\" | \"=\") + ws + expr\n\n# The value expression pattern\nexpr = member-access | optional-chain | computed-access | optional-computed | generic-call | call-expr | optional-call | tagged-template | non-null-assert | postfix-increment | postfix-decrement | as-const-expr | as-expr | satisfies-expr | prefix-increment | prefix-decrement | unary-plus | unary-minus | logical-not | bitwise-not | typeof-expr | void-expr | delete-expr | await-expr | exp-expr right | mul-div-mod | add-sub | shift-expr | relational-expr | equality-expr | bitwise-and | bitwise-xor | bitwise-or | logical-and | logical-or | nullish-coalesce | ternary-expr right | assignment-expr right | arrow-function | function-expr | class-expr | new-expr | new-no-args | dynamic-import | paren-expr | array-literal | object-literal | template-literal | regex-literal | number-literal | string-literal | true-literal | false-literal | null-literal | undefined-literal | this-literal | super-literal | identifier\n\n# ---------------------------------------------------\n# SECTION 9: Statements\n# ---------------------------------------------------\n\n# Block\nblock = \"{\" + ws + statement-list? + ws + \"}\"\n\n# Variable declaration\nvar-keyword = /(?:let|const|var|using)(?![a-zA-Z0-9_$])/\ndefinite-assign = ws + \"!\"\nvariable-declarator = (identifier | binding-pattern) + definite-assign? + (ws + type-annotation)? + (ws + \"=\" + ws + expr)?\nvariable-declaration = var-keyword + _ + (variable-declarator, ws + \",\" + ws)+ + semi?\n\n# Expression statement\nexpression-statement = expr + semi?\n\n# If statement\nif-statement = \"if\" + ws + \"(\" + ws + expr + ws + \")\" + ws + statement + (ws + \"else\" + ws + statement)?\n\n# For statement\nfor-var-decl = var-keyword + _ + (variable-declarator, comma-sep)+\nfor-init = for-var-decl | expr\nfor-statement = \"for\" + ws + \"(\" + ws + for-init? + ws + \";\" + ws + expr? + ws + \";\" + ws + expr? + ws + \")\" + ws + statement\n\n# For-in statement\nfor-binding = (var-keyword + _)? + (identifier | binding-pattern)\nfor-in-statement = \"for\" + ws + \"(\" + ws + for-binding + _ + \"in\" + _ + expr + ws + \")\" + ws + statement\n\n# For-of statement\nfor-of-statement = \"for\" + ws + (\"await\" + _)? + \"(\" + ws + for-binding + _ + \"of\" + _ + expr + ws + \")\" + ws + statement\n\n# While statement\nwhile-statement = \"while\" + ws + \"(\" + ws + expr + ws + \")\" + ws + statement\n\n# Do-while statement\ndo-while-statement = \"do\" + ws + statement + ws + \"while\" + ws + \"(\" + ws + expr + ws + \")\" + semi?\n\n# Switch statement\ncase-clause = \"case\" + _ + expr + ws + \":\" + (ws + statement-list)?\ndefault-clause = \"default\" + ws + \":\" + (ws + statement-list)?\nswitch-clause = case-clause | default-clause\nswitch-statement = \"switch\" + ws + \"(\" + ws + expr + ws + \")\" + ws + \"{\" + ws + (switch-clause, ws)* + ws + \"}\"\n\n# Try-catch-finally\ncatch-binding = \"(\" + ws + (identifier | binding-pattern) + (ws + type-annotation)? + ws + \")\"\ncatch-clause = \"catch\" + ws + catch-binding? + ws + block\nfinally-clause = \"finally\" + ws + block\ntry-statement = \"try\" + ws + block + (ws + catch-clause)? + (ws + finally-clause)?\n\n# Return statement\nreturn-statement = \"return\" + (_ + expr)? + semi?\n\n# Throw statement\nthrow-statement = \"throw\" + _ + expr + semi?\n\n# Break and continue\nbreak-statement = \"break\" + (_ + identifier)? + semi?\ncontinue-statement = \"continue\" + (_ + identifier)? + semi?\n\n# Labeled statement\nlabeled-statement = identifier + ws + \":\" + ws + statement\n\n# Debugger statement\ndebugger-statement = \"debugger\" + semi?\n\n# Empty statement\nempty-statement = \";\"\n\n# ---------------------------------------------------\n# SECTION 10: Declarations\n# ---------------------------------------------------\n\n# Decorators\ndecorator = \"@\" + ws + expr\ndecorator-list = (decorator, ws)+\n\n# Function declaration\nfunction-declaration = (\"async\" + _)? + \"function\" + ws + (\"*\" + ws)? + identifier + ws + type-params? + ws + \"(\" + ws + param-list? + ws + \")\" + (ws + type-annotation)? + ws + block\n\n# Class declaration\nclass-member-modifier = access-modifier | /(?:static|abstract|override|readonly|accessor|declare)(?![a-zA-Z0-9_$])/\nclass-modifiers = (class-member-modifier, _)*\n\nclass-property = class-modifiers + ws + property-name + ws + \"?\"? + ws + \"!\"? + (ws + type-annotation)? + (ws + \"=\" + ws + expr)? + semi?\nclass-method = class-modifiers + ws + (\"async\" + _)? + (\"*\" + ws)? + property-name + ws + type-params? + ws + \"(\" + ws + param-list? + ws + \")\" + (ws + type-annotation)? + (ws + block | semi)?\nclass-constructor = class-modifiers + ws + \"constructor\" + ws + \"(\" + ws + constructor-param-list? + ws + \")\" + ws + block\nclass-getter = class-modifiers + ws + \"get\" + _ + property-name + ws + \"(\" + ws + \")\" + (ws + type-annotation)? + ws + block\nclass-setter = class-modifiers + ws + \"set\" + _ + property-name + ws + \"(\" + ws + param + ws + \")\" + ws + block\nclass-index-sig = class-modifiers + ws + \"[\" + ws + identifier + ws + \":\" + ws + type-expr + ws + \"]\" + ws + \":\" + ws + type-expr + semi?\nclass-static-block = \"static\" + ws + block\n\nclass-member = decorator-list? + ws + (class-static-block | class-constructor | class-getter | class-setter | class-method | class-index-sig | class-property)\nclass-body = \"{\" + ws + (class-member, ws)* + ws + \"}\"\n\nextends-clause = \"extends\" + _ + type-expr\nimplements-clause = \"implements\" + _ + (type-expr, ws + \",\" + ws)+\nclass-declaration = decorator-list? + ws + (\"abstract\" + _)? + \"class\" + _ + identifier + (ws + type-params)? + (ws + extends-clause)? + (ws + implements-clause)? + ws + class-body\n\n# Interface declaration\ninterface-extends = \"extends\" + _ + (type-expr, ws + \",\" + ws)+\ninterface-body = \"{\" + ws + type-member-list? + ws + \"}\"\ninterface-declaration = \"interface\" + _ + identifier + (ws + type-params)? + (ws + interface-extends)? + ws + interface-body\n\n# Type alias\ntype-alias = \"type\" + _ + identifier + (ws + type-params)? + ws + \"=\" + ws + type-expr + semi?\n\n# Enum declaration\nenum-member-init = \"=\" + ws + expr\nenum-member = property-name + (ws + enum-member-init)?\nenum-body = \"{\" + ws + (enum-member, comma-sep)* + trailing-comma? + ws + \"}\"\nenum-declaration = (\"const\" + _)? + \"enum\" + _ + identifier + ws + enum-body\n\n# Namespace / module declaration\nnamespace-body = \"{\" + ws + statement-list? + ws + \"}\"\nnamespace-declaration = (\"namespace\" | \"module\") + _ + (identifier | string-literal) + ws + namespace-body\n\n# Ambient declarations\ndeclare-declaration = \"declare\" + _ + (variable-declaration | function-declaration | class-declaration | interface-declaration | type-alias | enum-declaration | namespace-declaration)\n\n# ---------------------------------------------------\n# SECTION 11: Module System (Import / Export)\n# ---------------------------------------------------\n\n# Import\nimport-specifier = (identifier-name + _ + \"as\" + _)? + identifier\nnamed-imports = \"{\" + ws + (import-specifier, comma-sep)* + trailing-comma? + ws + \"}\"\nnamespace-import = \"*\" + _ + \"as\" + _ + identifier\ndefault-and-named = identifier + ws + \",\" + ws + (named-imports | namespace-import)\nimport-clause = default-and-named | namespace-import | named-imports | identifier\nfrom-clause = \"from\" + _ + string-literal\nimport-attr-entry = identifier-name + ws + \":\" + ws + string-literal\nimport-attributes = (\"with\" | \"assert\") + ws + \"{\" + ws + (import-attr-entry, comma-sep)+ + trailing-comma? + ws + \"}\"\nimport-declaration = \"import\" + _ + (\"type\" + _)? + import-clause + _ + from-clause + (ws + import-attributes)? + semi?\nimport-side-effect = \"import\" + _ + string-literal + semi?\n\n# Export\nexport-specifier = (identifier-name + _ + \"as\" + _)? + identifier-name\nnamed-exports = \"{\" + ws + (export-specifier, comma-sep)* + trailing-comma? + ws + \"}\"\nexport-named = \"export\" + _ + (\"type\" + _)? + named-exports + (_ + from-clause)? + semi?\nexport-default-expr = \"export\" + _ + \"default\" + _ + expr + semi?\nexport-default-decl = \"export\" + _ + \"default\" + _ + (function-declaration | class-declaration)\nexport-declaration = \"export\" + _ + (variable-declaration | function-declaration | class-declaration | interface-declaration | type-alias | enum-declaration | namespace-declaration)\nexport-all = \"export\" + _ + (\"type\" + _)? + \"*\" + (_ + \"as\" + _ + identifier-name)? + _ + from-clause + semi?\nexport-equals = \"export\" + ws + \"=\" + ws + expr + semi?\n\n# ---------------------------------------------------\n# SECTION 12: Statements & Program\n# ---------------------------------------------------\n\n# Statement: union of all statement types\n# Order matters: more specific patterns first, expression-statement last\nstatement = import-declaration | import-side-effect | export-all | export-named | export-default-decl | export-default-expr | export-declaration | export-equals | declare-declaration | decorator-list + ws + (class-declaration | function-declaration) | function-declaration | class-declaration | interface-declaration | type-alias | enum-declaration | namespace-declaration | variable-declaration | if-statement | for-of-statement | for-in-statement | for-statement | while-statement | do-while-statement | switch-statement | try-statement | return-statement | throw-statement | break-statement | continue-statement | labeled-statement | block | debugger-statement | empty-statement | expression-statement\n\n# Statement list\nstatement-list = (statement, ws)+\n\n# Program (top-level)\nprogram = ws + statement-list? + ws\n\n",
+   "cases": [
+    {
+     "rule": "expr",
+     "input": "!a",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Logical Operators not"
+    },
+    {
+     "rule": "expr",
+     "input": "\"hello\"",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primary Expressions string"
+    },
+    {
+     "rule": "expr",
+     "input": "() => 42",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Arrow Functions no params"
+    },
+    {
+     "rule": "expr",
+     "input": "() => { return 1 }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Arrow Functions block body"
+    },
+    {
+     "rule": "expr",
+     "input": "(a + b) * c",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Operator Precedence parentheses override"
+    },
+    {
+     "rule": "expr",
+     "input": "(x)",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primary Expressions parenthesized"
+    },
+    {
+     "rule": "expr",
+     "input": "(x) => x",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Arrow Functions single param with parens"
+    },
+    {
+     "rule": "expr",
+     "input": "(x, y) => x + y",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Arrow Functions multiple params"
+    },
+    {
+     "rule": "expr",
+     "input": "(x: number) => x",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Arrow Functions typed params"
+    },
+    {
+     "rule": "expr",
+     "input": "(x: number): number => x",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Arrow Functions return type"
+    },
+    {
+     "rule": "expr",
+     "input": "++a",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Unary Operators prefix increment"
+    },
+    {
+     "rule": "expr",
+     "input": "+a",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Unary Operators unary plus"
+    },
+    {
+     "rule": "expr",
+     "input": "--a",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Unary Operators prefix decrement"
+    },
+    {
+     "rule": "expr",
+     "input": "-a",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Unary Operators unary minus"
+    },
+    {
+     "rule": "expr",
+     "input": "/test/g",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primary Expressions regex"
+    },
+    {
+     "rule": "expr",
+     "input": "42",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primary Expressions number"
+    },
+    {
+     "rule": "expr",
+     "input": "<T>(x: T) => x",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Arrow Functions generic"
+    },
+    {
+     "rule": "expr",
+     "input": "[...arr]",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Array Expressions spread"
+    },
+    {
+     "rule": "expr",
+     "input": "[1, ...arr, 3]",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Array Expressions mixed"
+    },
+    {
+     "rule": "expr",
+     "input": "[1, 2, 3]",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Array Expressions simple"
+    },
+    {
+     "rule": "expr",
+     "input": "[1, 2,]",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Array Expressions trailing comma"
+    },
+    {
+     "rule": "expr",
+     "input": "[]",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Array Expressions empty"
+    },
+    {
+     "rule": "expr",
+     "input": "`hello ${x}`",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primary Expressions template literal"
+    },
+    {
+     "rule": "expr",
+     "input": "a !== b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Comparison Operators strict not equal"
+    },
+    {
+     "rule": "expr",
+     "input": "a % b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Arithmetic Operators modulo"
+    },
+    {
+     "rule": "expr",
+     "input": "a %= b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Assignment Operators mod assign"
+    },
+    {
+     "rule": "expr",
+     "input": "a & b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Bitwise Operators and"
+    },
+    {
+     "rule": "expr",
+     "input": "a && b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Logical Operators and"
+    },
+    {
+     "rule": "expr",
+     "input": "a &&= b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Assignment Operators and assign"
+    },
+    {
+     "rule": "expr",
+     "input": "a * b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Arithmetic Operators multiplication"
+    },
+    {
+     "rule": "expr",
+     "input": "a ** b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Arithmetic Operators exponentiation"
+    },
+    {
+     "rule": "expr",
+     "input": "a *= b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Assignment Operators mul assign"
+    },
+    {
+     "rule": "expr",
+     "input": "a + b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Arithmetic Operators addition"
+    },
+    {
+     "rule": "expr",
+     "input": "a + b * c",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Operator Precedence mul before add"
+    },
+    {
+     "rule": "expr",
+     "input": "a + b * c - d / e",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Operator Precedence complex precedence"
+    },
+    {
+     "rule": "expr",
+     "input": "a + b * c > d && e || f",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Edge Cases complex expression"
+    },
+    {
+     "rule": "expr",
+     "input": "a += b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Assignment Operators add assign"
+    },
+    {
+     "rule": "expr",
+     "input": "a - b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Arithmetic Operators subtraction"
+    },
+    {
+     "rule": "expr",
+     "input": "a -= b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Assignment Operators sub assign"
+    },
+    {
+     "rule": "expr",
+     "input": "a / b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Arithmetic Operators division"
+    },
+    {
+     "rule": "expr",
+     "input": "a /= b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Assignment Operators div assign"
+    },
+    {
+     "rule": "expr",
+     "input": "a < b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Comparison Operators less than"
+    },
+    {
+     "rule": "expr",
+     "input": "a << b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Bitwise Operators left shift"
+    },
+    {
+     "rule": "expr",
+     "input": "a <= b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Comparison Operators less equal"
+    },
+    {
+     "rule": "expr",
+     "input": "a = b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Assignment Operators assign"
+    },
+    {
+     "rule": "expr",
+     "input": "a === b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Comparison Operators strict equal"
+    },
+    {
+     "rule": "expr",
+     "input": "a > b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Comparison Operators greater than"
+    },
+    {
+     "rule": "expr",
+     "input": "a >= b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Comparison Operators greater equal"
+    },
+    {
+     "rule": "expr",
+     "input": "a >> b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Bitwise Operators right shift"
+    },
+    {
+     "rule": "expr",
+     "input": "a >>> b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Bitwise Operators unsigned right shift"
+    },
+    {
+     "rule": "expr",
+     "input": "a ? b : c",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Ternary Operator simple"
+    },
+    {
+     "rule": "expr",
+     "input": "a ? b : c ? d : e",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Ternary Operator nested (right-associative)"
+    },
+    {
+     "rule": "expr",
+     "input": "a ? b ? c : d : e",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Edge Cases nested ternary"
+    },
+    {
+     "rule": "expr",
+     "input": "a ?? b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Logical Operators nullish coalescing"
+    },
+    {
+     "rule": "expr",
+     "input": "a ??= b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Assignment Operators nullish assign"
+    },
+    {
+     "rule": "expr",
+     "input": "a ^ b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Bitwise Operators xor"
+    },
+    {
+     "rule": "expr",
+     "input": "a in b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Comparison Operators in"
+    },
+    {
+     "rule": "expr",
+     "input": "a instanceof B",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Comparison Operators instanceof"
+    },
+    {
+     "rule": "expr",
+     "input": "a | b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Bitwise Operators or"
+    },
+    {
+     "rule": "expr",
+     "input": "a || b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Logical Operators or"
+    },
+    {
+     "rule": "expr",
+     "input": "a ||= b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Assignment Operators or assign"
+    },
+    {
+     "rule": "expr",
+     "input": "a++",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Unary Operators postfix increment"
+    },
+    {
+     "rule": "expr",
+     "input": "a--",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Unary Operators postfix decrement"
+    },
+    {
+     "rule": "expr",
+     "input": "a.b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Member Access dot access"
+    },
+    {
+     "rule": "expr",
+     "input": "a.b().c[0].d",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Edge Cases chained member access and calls"
+    },
+    {
+     "rule": "expr",
+     "input": "a.b.c",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Member Access chained"
+    },
+    {
+     "rule": "expr",
+     "input": "a?.[0]",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Member Access optional computed"
+    },
+    {
+     "rule": "expr",
+     "input": "a?.b",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Member Access optional chain"
+    },
+    {
+     "rule": "expr",
+     "input": "a?.b.c?.d",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Edge Cases optional chaining mixed"
+    },
+    {
+     "rule": "expr",
+     "input": "a[0]",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Member Access computed"
+    },
+    {
+     "rule": "expr",
+     "input": "async () => await fetch()",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Arrow Functions async"
+    },
+    {
+     "rule": "expr",
+     "input": "async function() { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Function Expressions async"
+    },
+    {
+     "rule": "expr",
+     "input": "await promise",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Unary Operators await"
+    },
+    {
+     "rule": "expr",
+     "input": "delete obj.prop",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Unary Operators delete"
+    },
+    {
+     "rule": "expr",
+     "input": "false",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primary Expressions false"
+    },
+    {
+     "rule": "expr",
+     "input": "foo",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primary Expressions identifier"
+    },
+    {
+     "rule": "expr",
+     "input": "foo()",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Call Expressions simple call"
+    },
+    {
+     "rule": "expr",
+     "input": "foo()()",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Call Expressions chained"
+    },
+    {
+     "rule": "expr",
+     "input": "foo(a, b)",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Call Expressions with args"
+    },
+    {
+     "rule": "expr",
+     "input": "foo<string>(x)",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Call Expressions generic call"
+    },
+    {
+     "rule": "expr",
+     "input": "foo?.()",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Call Expressions optional call"
+    },
+    {
+     "rule": "expr",
+     "input": "function foo() { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Function Expressions named"
+    },
+    {
+     "rule": "expr",
+     "input": "function() { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Function Expressions anonymous"
+    },
+    {
+     "rule": "expr",
+     "input": "function(a, b) { return a + b }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Function Expressions with params"
+    },
+    {
+     "rule": "expr",
+     "input": "function(x: number): number { return x }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Function Expressions typed"
+    },
+    {
+     "rule": "expr",
+     "input": "function*() { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Function Expressions generator"
+    },
+    {
+     "rule": "expr",
+     "input": "html`<div>${x}</div>`",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Edge Cases tagged template"
+    },
+    {
+     "rule": "expr",
+     "input": "import(\"module\")",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Dynamic Import simple"
+    },
+    {
+     "rule": "expr",
+     "input": "new Foo()",
+     "origin": "src/grammars/typescript/typescript.test.ts :: New Expressions simple"
+    },
+    {
+     "rule": "expr",
+     "input": "new Foo(1, 2)",
+     "origin": "src/grammars/typescript/typescript.test.ts :: New Expressions with args"
+    },
+    {
+     "rule": "expr",
+     "input": "new a.B()",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Edge Cases new with member access"
+    },
+    {
+     "rule": "expr",
+     "input": "new a.b.Foo()",
+     "origin": "src/grammars/typescript/typescript.test.ts :: New Expressions member new"
+    },
+    {
+     "rule": "expr",
+     "input": "null",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primary Expressions null"
+    },
+    {
+     "rule": "expr",
+     "input": "obj.method()",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Call Expressions method call"
+    },
+    {
+     "rule": "expr",
+     "input": "this",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primary Expressions this"
+    },
+    {
+     "rule": "expr",
+     "input": "true",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primary Expressions true"
+    },
+    {
+     "rule": "expr",
+     "input": "typeof x",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Unary Operators typeof"
+    },
+    {
+     "rule": "expr",
+     "input": "undefined",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primary Expressions undefined"
+    },
+    {
+     "rule": "expr",
+     "input": "void 0",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Unary Operators void"
+    },
+    {
+     "rule": "expr",
+     "input": "x = () => y",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Edge Cases arrow in assignment"
+    },
+    {
+     "rule": "expr",
+     "input": "x => x",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Arrow Functions single param no parens"
+    },
+    {
+     "rule": "expr",
+     "input": "x > 0 ? x : -x",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Ternary Operator with complex operands"
+    },
+    {
+     "rule": "expr",
+     "input": "x as any as string",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Edge Cases type assertion chain"
+    },
+    {
+     "rule": "expr",
+     "input": "x as const",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type Assertions as const"
+    },
+    {
+     "rule": "expr",
+     "input": "x as string",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type Assertions as expression"
+    },
+    {
+     "rule": "expr",
+     "input": "x satisfies Type",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type Assertions satisfies"
+    },
+    {
+     "rule": "expr",
+     "input": "x!",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type Assertions non-null assertion"
+    },
+    {
+     "rule": "expr",
+     "input": "{ ...other }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Object Expressions spread"
+    },
+    {
+     "rule": "expr",
+     "input": "{ [key]: value }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Object Expressions computed"
+    },
+    {
+     "rule": "expr",
+     "input": "{ a: 1, b: 2 }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Object Expressions properties"
+    },
+    {
+     "rule": "expr",
+     "input": "{ a: 1, }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Object Expressions trailing comma"
+    },
+    {
+     "rule": "expr",
+     "input": "{ foo() { } }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Object Expressions method"
+    },
+    {
+     "rule": "expr",
+     "input": "{ get x() { return 1 } }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Object Expressions getter"
+    },
+    {
+     "rule": "expr",
+     "input": "{ set x(v) { } }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Object Expressions setter"
+    },
+    {
+     "rule": "expr",
+     "input": "{ x, y }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Object Expressions shorthand"
+    },
+    {
+     "rule": "expr",
+     "input": "{}",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Object Expressions empty"
+    },
+    {
+     "rule": "expr",
+     "input": "~a",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Bitwise Operators not"
+    },
+    {
+     "rule": "false-literal",
+     "input": "false",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Keyword Literals false"
+    },
+    {
+     "rule": "identifier",
+     "input": "$element",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Identifiers with dollar"
+    },
+    {
+     "rule": "identifier",
+     "input": "_private",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Identifiers with underscore"
+    },
+    {
+     "rule": "identifier",
+     "input": "as",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Identifiers allows 'as'"
+    },
+    {
+     "rule": "identifier",
+     "input": "class",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Identifiers rejects reserved words"
+    },
+    {
+     "rule": "identifier",
+     "input": "foo",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Identifiers simple"
+    },
+    {
+     "rule": "identifier",
+     "input": "from",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Identifiers allows 'from'"
+    },
+    {
+     "rule": "identifier",
+     "input": "if",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Identifiers rejects if"
+    },
+    {
+     "rule": "identifier",
+     "input": "myVariable",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Identifiers camelCase"
+    },
+    {
+     "rule": "identifier",
+     "input": "type",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Identifiers allows contextual keywords"
+    },
+    {
+     "rule": "null-literal",
+     "input": "null",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Keyword Literals null"
+    },
+    {
+     "rule": "number-literal",
+     "input": ".5",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Number Literals leading dot"
+    },
+    {
+     "rule": "number-literal",
+     "input": "0b1010",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Number Literals binary"
+    },
+    {
+     "rule": "number-literal",
+     "input": "0o77",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Number Literals octal"
+    },
+    {
+     "rule": "number-literal",
+     "input": "0xFF",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Number Literals hex"
+    },
+    {
+     "rule": "number-literal",
+     "input": "1.2e10",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Number Literals scientific"
+    },
+    {
+     "rule": "number-literal",
+     "input": "100n",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Number Literals bigint"
+    },
+    {
+     "rule": "number-literal",
+     "input": "1_000_000",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Number Literals separator"
+    },
+    {
+     "rule": "number-literal",
+     "input": "1e-3",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Number Literals scientific negative"
+    },
+    {
+     "rule": "number-literal",
+     "input": "3.14",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Number Literals float"
+    },
+    {
+     "rule": "number-literal",
+     "input": "42",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Number Literals integer"
+    },
+    {
+     "rule": "program",
+     "input": "",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Program empty program"
+    },
+    {
+     "rule": "program",
+     "input": "async function fetchData() {\n  const response = await fetch(\"url\")\n  return response\n}",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Program async/await"
+    },
+    {
+     "rule": "program",
+     "input": "const x = 1",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Program single statement"
+    },
+    {
+     "rule": "program",
+     "input": "const { a, b, ...rest } = obj\nconst [first, ...remaining] = arr",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Program destructuring and spread"
+    },
+    {
+     "rule": "program",
+     "input": "enum Status {\n  Active,\n  Inactive\n}\n\ntype UserStatus = Status.Active | Status.Inactive",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Program enum and type alias"
+    },
+    {
+     "rule": "program",
+     "input": "function identity<T>(arg: T): T {\n  return arg\n}\n\nconst result = identity<string>(\"hello\")",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Program function with generics"
+    },
+    {
+     "rule": "program",
+     "input": "import { Component } from \"react\"\n\ninterface Props {\n  name: string;\n  age?: number\n}\n\nclass App extends Component {\n  render() { return null }\n}",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Program realistic program"
+    },
+    {
+     "rule": "program",
+     "input": "let x = 1\nlet y = 2",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Program multiple statements"
+    },
+    {
+     "rule": "program",
+     "input": "type DeepPartial<T> = T extends object ? { [K in keyof T]?: DeepPartial<T[K]> } : T",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Program complex type operations"
+    },
+    {
+     "rule": "regex-literal",
+     "input": "/[a-z]+/",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Regex Literals with character class"
+    },
+    {
+     "rule": "regex-literal",
+     "input": "/\\d+/",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Regex Literals with escape"
+    },
+    {
+     "rule": "regex-literal",
+     "input": "/abc/",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Regex Literals simple"
+    },
+    {
+     "rule": "regex-literal",
+     "input": "/abc/gi",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Regex Literals with flags"
+    },
+    {
+     "rule": "statement",
+     "input": ";",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Other Statements empty"
+    },
+    {
+     "rule": "statement",
+     "input": "@A @B class Foo { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Decorators multiple decorators"
+    },
+    {
+     "rule": "statement",
+     "input": "@Component class Foo { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Decorators class decorator"
+    },
+    {
+     "rule": "statement",
+     "input": "@Component({ selector: \"app\" }) class Foo { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Decorators decorator with args"
+    },
+    {
+     "rule": "statement",
+     "input": "abstract class Shape { abstract area(): number }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Class Declarations abstract class"
+    },
+    {
+     "rule": "statement",
+     "input": "async function fetch() { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Function Declarations async"
+    },
+    {
+     "rule": "statement",
+     "input": "break",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Jump Statements break"
+    },
+    {
+     "rule": "statement",
+     "input": "break outer",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Jump Statements break label"
+    },
+    {
+     "rule": "statement",
+     "input": "class Bar extends Foo { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Class Declarations extends"
+    },
+    {
+     "rule": "statement",
+     "input": "class Bar implements IFoo { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Class Declarations implements"
+    },
+    {
+     "rule": "statement",
+     "input": "class Box<T> { value: T }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Class Declarations generic class"
+    },
+    {
+     "rule": "statement",
+     "input": "class Foo { @Log method() { } }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Decorators member decorator"
+    },
+    {
+     "rule": "statement",
+     "input": "class Foo { bar() { } }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Class Declarations with method"
+    },
+    {
+     "rule": "statement",
+     "input": "class Foo { constructor(public readonly name: string) { } }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Class Declarations parameter property"
+    },
+    {
+     "rule": "statement",
+     "input": "class Foo { constructor(x: number) { } }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Class Declarations with constructor"
+    },
+    {
+     "rule": "statement",
+     "input": "class Foo { get x() { return 1 } set x(v) { } }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Class Declarations getter/setter"
+    },
+    {
+     "rule": "statement",
+     "input": "class Foo { public x: number; private y: string; protected z: boolean }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Class Declarations access modifiers"
+    },
+    {
+     "rule": "statement",
+     "input": "class Foo { readonly x: number }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Class Declarations readonly property"
+    },
+    {
+     "rule": "statement",
+     "input": "class Foo { static count: number; static create() { } }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Class Declarations static members"
+    },
+    {
+     "rule": "statement",
+     "input": "class Foo { static { init() } }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Class Declarations static block"
+    },
+    {
+     "rule": "statement",
+     "input": "class Foo { x!: number }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Class Declarations definite assignment"
+    },
+    {
+     "rule": "statement",
+     "input": "class Foo { x: number }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Class Declarations with property"
+    },
+    {
+     "rule": "statement",
+     "input": "class Foo { x?: number }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Class Declarations optional property"
+    },
+    {
+     "rule": "statement",
+     "input": "class Foo { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Class Declarations empty class"
+    },
+    {
+     "rule": "statement",
+     "input": "const [a, b] = arr",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Variable Declarations destructure array"
+    },
+    {
+     "rule": "statement",
+     "input": "const enum Flags { A = 1, B = 2, C = 4 }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Enum Declarations const enum"
+    },
+    {
+     "rule": "statement",
+     "input": "const y = 2",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Variable Declarations const"
+    },
+    {
+     "rule": "statement",
+     "input": "const { x, y } = obj",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Variable Declarations destructure object"
+    },
+    {
+     "rule": "statement",
+     "input": "continue",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Jump Statements continue"
+    },
+    {
+     "rule": "statement",
+     "input": "continue loop",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Jump Statements continue label"
+    },
+    {
+     "rule": "statement",
+     "input": "debugger",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Other Statements debugger"
+    },
+    {
+     "rule": "statement",
+     "input": "declare class Foo { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Declare Statements declare class"
+    },
+    {
+     "rule": "statement",
+     "input": "declare enum Color { Red, Green, Blue }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Declare Statements declare enum"
+    },
+    {
+     "rule": "statement",
+     "input": "declare function foo(): void { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Declare Statements declare function"
+    },
+    {
+     "rule": "statement",
+     "input": "declare namespace MyLib { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Declare Statements declare namespace"
+    },
+    {
+     "rule": "statement",
+     "input": "declare var x: number",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Declare Statements declare var"
+    },
+    {
+     "rule": "statement",
+     "input": "do { } while (true)",
+     "origin": "src/grammars/typescript/typescript.test.ts :: While Statements do-while"
+    },
+    {
+     "rule": "statement",
+     "input": "enum Color { Red, Green, Blue }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Enum Declarations simple"
+    },
+    {
+     "rule": "statement",
+     "input": "enum Direction { Up = \"UP\", Down = \"DOWN\" }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Enum Declarations with values"
+    },
+    {
+     "rule": "statement",
+     "input": "enum Foo { A = 1 + 2 }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Enum Declarations computed value"
+    },
+    {
+     "rule": "statement",
+     "input": "export * as utils from \"module\"",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Export Declarations export all as"
+    },
+    {
+     "rule": "statement",
+     "input": "export * from \"module\"",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Export Declarations export all"
+    },
+    {
+     "rule": "statement",
+     "input": "export class Foo { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Export Declarations export class"
+    },
+    {
+     "rule": "statement",
+     "input": "export const x = 1",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Export Declarations export variable"
+    },
+    {
+     "rule": "statement",
+     "input": "export default 42",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Export Declarations export default expression"
+    },
+    {
+     "rule": "statement",
+     "input": "export default class Foo { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Export Declarations export default class"
+    },
+    {
+     "rule": "statement",
+     "input": "export default function foo() { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Export Declarations export default function"
+    },
+    {
+     "rule": "statement",
+     "input": "export enum Color { Red }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Export Declarations export enum"
+    },
+    {
+     "rule": "statement",
+     "input": "export function foo() { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Export Declarations export function"
+    },
+    {
+     "rule": "statement",
+     "input": "export interface Foo { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Export Declarations export interface"
+    },
+    {
+     "rule": "statement",
+     "input": "export type Foo = string",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Export Declarations export type"
+    },
+    {
+     "rule": "statement",
+     "input": "export type { Foo } from \"module\"",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Export Declarations export type"
+    },
+    {
+     "rule": "statement",
+     "input": "export { foo } from \"module\"",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Export Declarations re-export"
+    },
+    {
+     "rule": "statement",
+     "input": "export { foo, bar }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Export Declarations named exports"
+    },
+    {
+     "rule": "statement",
+     "input": "foo()",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Other Statements expression statement"
+    },
+    {
+     "rule": "statement",
+     "input": "for (;;) { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: For Statements for with empty clauses"
+    },
+    {
+     "rule": "statement",
+     "input": "for (const item of arr) { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: For Statements for-of"
+    },
+    {
+     "rule": "statement",
+     "input": "for (const key in obj) { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: For Statements for-in"
+    },
+    {
+     "rule": "statement",
+     "input": "for (let i = 0; i < 10; i++) { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: For Statements classic for"
+    },
+    {
+     "rule": "statement",
+     "input": "for await (const item of stream) { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: For Statements for-await-of"
+    },
+    {
+     "rule": "statement",
+     "input": "function add(a: number, b: number): number { return a + b }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Function Declarations with params"
+    },
+    {
+     "rule": "statement",
+     "input": "function foo() { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Function Declarations simple"
+    },
+    {
+     "rule": "statement",
+     "input": "function foo(...args: string[]) { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Function Declarations rest param"
+    },
+    {
+     "rule": "statement",
+     "input": "function foo(x = 10) { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Function Declarations default param"
+    },
+    {
+     "rule": "statement",
+     "input": "function foo(x?: number) { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Function Declarations optional param"
+    },
+    {
+     "rule": "statement",
+     "input": "function identity<T>(x: T): T { return x }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Function Declarations generic"
+    },
+    {
+     "rule": "statement",
+     "input": "function* gen() { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Function Declarations generator"
+    },
+    {
+     "rule": "statement",
+     "input": "if (a) x(); else if (b) y(); else z()",
+     "origin": "src/grammars/typescript/typescript.test.ts :: If Statements if-else if-else"
+    },
+    {
+     "rule": "statement",
+     "input": "if (x) foo()",
+     "origin": "src/grammars/typescript/typescript.test.ts :: If Statements simple if"
+    },
+    {
+     "rule": "statement",
+     "input": "if (x) foo(); else bar()",
+     "origin": "src/grammars/typescript/typescript.test.ts :: If Statements if-else"
+    },
+    {
+     "rule": "statement",
+     "input": "if (x) { foo() }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: If Statements if with block"
+    },
+    {
+     "rule": "statement",
+     "input": "import \"polyfill\"",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Import Declarations side-effect import"
+    },
+    {
+     "rule": "statement",
+     "input": "import * as mod from \"module\"",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Import Declarations namespace import"
+    },
+    {
+     "rule": "statement",
+     "input": "import React, { useState } from \"react\"",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Import Declarations default and named"
+    },
+    {
+     "rule": "statement",
+     "input": "import foo from \"module\"",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Import Declarations default import"
+    },
+    {
+     "rule": "statement",
+     "input": "import type { Foo } from \"module\"",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Import Declarations type import"
+    },
+    {
+     "rule": "statement",
+     "input": "import { foo as bar } from \"module\"",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Import Declarations aliased import"
+    },
+    {
+     "rule": "statement",
+     "input": "import { foo } from \"module\"",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Import Declarations named import"
+    },
+    {
+     "rule": "statement",
+     "input": "import { foo, bar } from \"module\"",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Import Declarations multiple named"
+    },
+    {
+     "rule": "statement",
+     "input": "import { x } from \"y\";",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Import Declarations with semicolon"
+    },
+    {
+     "rule": "statement",
+     "input": "interface Bar extends Foo { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Interface Declarations extends"
+    },
+    {
+     "rule": "statement",
+     "input": "interface Bar extends Foo, Baz { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Interface Declarations extends multiple"
+    },
+    {
+     "rule": "statement",
+     "input": "interface Box<T> { value: T }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Interface Declarations generic"
+    },
+    {
+     "rule": "statement",
+     "input": "interface Callable { (x: string): number }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Interface Declarations call signature"
+    },
+    {
+     "rule": "statement",
+     "input": "interface Dict { [key: string]: number }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Interface Declarations index signature"
+    },
+    {
+     "rule": "statement",
+     "input": "interface Foo { bar(x: number): string }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Interface Declarations methods"
+    },
+    {
+     "rule": "statement",
+     "input": "interface Foo { readonly x: number }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Interface Declarations readonly"
+    },
+    {
+     "rule": "statement",
+     "input": "interface Foo { x: number; y: string }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Interface Declarations with properties"
+    },
+    {
+     "rule": "statement",
+     "input": "interface Foo { x?: number }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Interface Declarations optional properties"
+    },
+    {
+     "rule": "statement",
+     "input": "interface Foo { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Interface Declarations empty"
+    },
+    {
+     "rule": "statement",
+     "input": "let a = 1, b = 2",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Variable Declarations multiple"
+    },
+    {
+     "rule": "statement",
+     "input": "let x = 1",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Variable Declarations let"
+    },
+    {
+     "rule": "statement",
+     "input": "let x = 1;",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Variable Declarations with semicolon"
+    },
+    {
+     "rule": "statement",
+     "input": "let x: number = 1",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Variable Declarations with type"
+    },
+    {
+     "rule": "statement",
+     "input": "loop: while (true) { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Other Statements labeled"
+    },
+    {
+     "rule": "statement",
+     "input": "module \"my-module\" { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Namespace Declarations module"
+    },
+    {
+     "rule": "statement",
+     "input": "namespace MyLib { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Namespace Declarations namespace"
+    },
+    {
+     "rule": "statement",
+     "input": "namespace Outer { namespace Inner { } }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Namespace Declarations nested namespace"
+    },
+    {
+     "rule": "statement",
+     "input": "return",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Jump Statements return"
+    },
+    {
+     "rule": "statement",
+     "input": "return x",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Jump Statements return value"
+    },
+    {
+     "rule": "statement",
+     "input": "switch (x) { case 1: a(); case 2: b(); default: c() }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Switch Statements multiple cases"
+    },
+    {
+     "rule": "statement",
+     "input": "switch (x) { case 1: break; default: break }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Switch Statements simple switch"
+    },
+    {
+     "rule": "statement",
+     "input": "throw new Error()",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Jump Statements throw"
+    },
+    {
+     "rule": "statement",
+     "input": "try { } catch (e) { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Try-Catch-Finally try-catch"
+    },
+    {
+     "rule": "statement",
+     "input": "try { } catch (e) { } finally { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Try-Catch-Finally try-catch-finally"
+    },
+    {
+     "rule": "statement",
+     "input": "try { } catch (e: unknown) { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Try-Catch-Finally typed catch"
+    },
+    {
+     "rule": "statement",
+     "input": "try { } catch { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Try-Catch-Finally catch without binding"
+    },
+    {
+     "rule": "statement",
+     "input": "try { } finally { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Try-Catch-Finally try-finally"
+    },
+    {
+     "rule": "statement",
+     "input": "type Box<T> = { value: T }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type Aliases generic"
+    },
+    {
+     "rule": "statement",
+     "input": "type Greeting = `hello ${string}`",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type Aliases template literal"
+    },
+    {
+     "rule": "statement",
+     "input": "type IsString<T> = T extends string ? true : false",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type Aliases conditional"
+    },
+    {
+     "rule": "statement",
+     "input": "type Name = string",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type Aliases simple"
+    },
+    {
+     "rule": "statement",
+     "input": "type Readonly<T> = { readonly [K in keyof T]: T[K] }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type Aliases mapped"
+    },
+    {
+     "rule": "statement",
+     "input": "type StringOrNumber = string | number",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type Aliases union"
+    },
+    {
+     "rule": "statement",
+     "input": "using handle = getHandle()",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Variable Declarations using"
+    },
+    {
+     "rule": "statement",
+     "input": "var z = 3",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Variable Declarations var"
+    },
+    {
+     "rule": "statement",
+     "input": "while (true) { }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: While Statements while"
+    },
+    {
+     "rule": "statement",
+     "input": "{ let x = 1 }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Other Statements block"
+    },
+    {
+     "rule": "string-literal",
+     "input": "\"\"",
+     "origin": "src/grammars/typescript/typescript.test.ts :: String Literals empty"
+    },
+    {
+     "rule": "string-literal",
+     "input": "\"hello\"",
+     "origin": "src/grammars/typescript/typescript.test.ts :: String Literals double-quoted"
+    },
+    {
+     "rule": "string-literal",
+     "input": "\"line\\n\"",
+     "origin": "src/grammars/typescript/typescript.test.ts :: String Literals escape sequences"
+    },
+    {
+     "rule": "string-literal",
+     "input": "'world'",
+     "origin": "src/grammars/typescript/typescript.test.ts :: String Literals single-quoted"
+    },
+    {
+     "rule": "template-literal",
+     "input": "`${a + b}`",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Template Literals nested expression"
+    },
+    {
+     "rule": "template-literal",
+     "input": "`${a} and ${b}`",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Template Literals multiple spans"
+    },
+    {
+     "rule": "template-literal",
+     "input": "`hello ${name}`",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Template Literals with interpolation"
+    },
+    {
+     "rule": "template-literal",
+     "input": "`hello`",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Template Literals simple"
+    },
+    {
+     "rule": "this-literal",
+     "input": "this",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Keyword Literals this"
+    },
+    {
+     "rule": "true-literal",
+     "input": "true",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Keyword Literals true"
+    },
+    {
+     "rule": "type-expr",
+     "input": "\"hello\"",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Literal Types string literal type"
+    },
+    {
+     "rule": "type-expr",
+     "input": "(() => void)",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Parenthesized Types function in parens"
+    },
+    {
+     "rule": "type-expr",
+     "input": "() => string | undefined",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Function Types return type is union"
+    },
+    {
+     "rule": "type-expr",
+     "input": "() => void",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Function Types simple"
+    },
+    {
+     "rule": "type-expr",
+     "input": "(string | number)",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Parenthesized Types union in parens"
+    },
+    {
+     "rule": "type-expr",
+     "input": "(string)",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Parenthesized Types simple"
+    },
+    {
+     "rule": "type-expr",
+     "input": "(x: string) => number",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Function Types with params"
+    },
+    {
+     "rule": "type-expr",
+     "input": "42",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Literal Types number literal type"
+    },
+    {
+     "rule": "type-expr",
+     "input": "<T>(x: T) => T",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Function Types generic function type"
+    },
+    {
+     "rule": "type-expr",
+     "input": "A & B",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Union & Intersection Types intersection"
+    },
+    {
+     "rule": "type-expr",
+     "input": "A & B | C",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Union & Intersection Types intersection binds tighter"
+    },
+    {
+     "rule": "type-expr",
+     "input": "A | B extends C ? D : E",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Conditional Types with union checked type"
+    },
+    {
+     "rule": "type-expr",
+     "input": "A.B.C",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type References qualified"
+    },
+    {
+     "rule": "type-expr",
+     "input": "Array<string>",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type References generic"
+    },
+    {
+     "rule": "type-expr",
+     "input": "Foo",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type References simple"
+    },
+    {
+     "rule": "type-expr",
+     "input": "Map<string, number>",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type References multiple generics"
+    },
+    {
+     "rule": "type-expr",
+     "input": "Promise<Array<string>>",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type References nested generics"
+    },
+    {
+     "rule": "type-expr",
+     "input": "T extends string ? true : false",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Conditional Types simple"
+    },
+    {
+     "rule": "type-expr",
+     "input": "T[\"key\"]",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Indexed Access Types nested"
+    },
+    {
+     "rule": "type-expr",
+     "input": "T[K]",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Indexed Access Types simple"
+    },
+    {
+     "rule": "type-expr",
+     "input": "[]",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Tuple Types empty tuple"
+    },
+    {
+     "rule": "type-expr",
+     "input": "[string, ...number[]]",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Tuple Types rest element"
+    },
+    {
+     "rule": "type-expr",
+     "input": "[string, number?]",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Tuple Types optional element"
+    },
+    {
+     "rule": "type-expr",
+     "input": "[string, number]",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Tuple Types simple tuple"
+    },
+    {
+     "rule": "type-expr",
+     "input": "[x: string, y: number]",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Tuple Types labeled"
+    },
+    {
+     "rule": "type-expr",
+     "input": "any",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primitive Types any"
+    },
+    {
+     "rule": "type-expr",
+     "input": "bigint",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primitive Types bigint"
+    },
+    {
+     "rule": "type-expr",
+     "input": "boolean",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primitive Types boolean"
+    },
+    {
+     "rule": "type-expr",
+     "input": "false",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Literal Types false type"
+    },
+    {
+     "rule": "type-expr",
+     "input": "infer T",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Infer Types simple infer"
+    },
+    {
+     "rule": "type-expr",
+     "input": "infer T extends string",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Infer Types constrained infer"
+    },
+    {
+     "rule": "type-expr",
+     "input": "keyof T",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Keyof & Typeof Types keyof"
+    },
+    {
+     "rule": "type-expr",
+     "input": "keyof typeof x",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Keyof & Typeof Types keyof typeof"
+    },
+    {
+     "rule": "type-expr",
+     "input": "never",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primitive Types never"
+    },
+    {
+     "rule": "type-expr",
+     "input": "null",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primitive Types null"
+    },
+    {
+     "rule": "type-expr",
+     "input": "number",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primitive Types number"
+    },
+    {
+     "rule": "type-expr",
+     "input": "number[][]",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Array Types nested array"
+    },
+    {
+     "rule": "type-expr",
+     "input": "object",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primitive Types object"
+    },
+    {
+     "rule": "type-expr",
+     "input": "string",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primitive Types string"
+    },
+    {
+     "rule": "type-expr",
+     "input": "string | number",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Union & Intersection Types union"
+    },
+    {
+     "rule": "type-expr",
+     "input": "string | number | boolean",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Union & Intersection Types triple union"
+    },
+    {
+     "rule": "type-expr",
+     "input": "string[]",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Array Types simple array"
+    },
+    {
+     "rule": "type-expr",
+     "input": "symbol",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primitive Types symbol"
+    },
+    {
+     "rule": "type-expr",
+     "input": "true",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Literal Types true type"
+    },
+    {
+     "rule": "type-expr",
+     "input": "typeof x",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Keyof & Typeof Types typeof"
+    },
+    {
+     "rule": "type-expr",
+     "input": "typeof x.y.z",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Keyof & Typeof Types typeof qualified"
+    },
+    {
+     "rule": "type-expr",
+     "input": "undefined",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primitive Types undefined"
+    },
+    {
+     "rule": "type-expr",
+     "input": "unknown",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primitive Types unknown"
+    },
+    {
+     "rule": "type-expr",
+     "input": "void",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Primitive Types void"
+    },
+    {
+     "rule": "type-expr",
+     "input": "{ [K in keyof T as string]: T[K] }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Mapped Types with as clause"
+    },
+    {
+     "rule": "type-expr",
+     "input": "{ [K in keyof T]: T[K] }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Mapped Types simple mapped"
+    },
+    {
+     "rule": "type-expr",
+     "input": "{ [K in keyof T]?: T[K] }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Mapped Types with optional modifier"
+    },
+    {
+     "rule": "type-expr",
+     "input": "{ [key: string]: number }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Object Type Literals index signature"
+    },
+    {
+     "rule": "type-expr",
+     "input": "{ readonly [K in keyof T]: T[K] }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Mapped Types with readonly modifier"
+    },
+    {
+     "rule": "type-expr",
+     "input": "{ readonly x: number }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Object Type Literals readonly property"
+    },
+    {
+     "rule": "type-expr",
+     "input": "{ x: number; y: string }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Object Type Literals simple"
+    },
+    {
+     "rule": "type-expr",
+     "input": "{ x?: number }",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Object Type Literals optional property"
+    },
+    {
+     "rule": "type-expr",
+     "input": "{}",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Object Type Literals empty"
+    },
+    {
+     "rule": "type-params",
+     "input": "<T = string>",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type Parameters with default"
+    },
+    {
+     "rule": "type-params",
+     "input": "<T extends object, U = T>",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type Parameters complex"
+    },
+    {
+     "rule": "type-params",
+     "input": "<T extends string>",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type Parameters with constraint"
+    },
+    {
+     "rule": "type-params",
+     "input": "<T, U>",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type Parameters multiple"
+    },
+    {
+     "rule": "type-params",
+     "input": "<T>",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Type Parameters simple"
+    },
+    {
+     "rule": "undefined-literal",
+     "input": "undefined",
+     "origin": "src/grammars/typescript/typescript.test.ts :: Keyword Literals undefined"
+    }
+   ]
+  }
+ ]
+}

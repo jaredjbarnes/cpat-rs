@@ -68,6 +68,18 @@
 > with grammar-built AutoComplete on non-ASCII text compared with v12. A `Suggestion` now keeps
 > its recording parse (§17), and a custom pattern whose code fails halts the parse
 > (`Cursor::halt_custom`, §22).
+> Milestone 16 (the differential conformance harness and the speed report) is implemented; see
+> §23. **Full parity:** `node conformance/run.mjs` runs 140 349 cases (the inputs agent-harness's
+> own tests run through its 11 grammars, the inputs v12's `typescript.test.ts`,
+> `Grammar.test.ts` and `Cut.test.ts` run through their 150 grammars, and every truncation and
+> some single-character deletions of each) through TS v12, cpat-rs native and cpat-wasm, and
+> compares builds, matches, 61 497 trees, errors, furthest errors, error messages and 87 520
+> AutoComplete answers. Zero unexplained differences; the 240 explained ones come from five
+> allowlist entries, each a decision recorded here (two of them v12 bugs, §23). The harness
+> found and this milestone fixed four things in cpat-rs: a choice's clones now share its
+> alternatives (§8; the TypeScript grammar took 1.2 GB to build), the backtracking regex engine
+> may take 100 million steps (§6), wasm results are freed as soon as JS has read them (§22),
+> and `AutoComplete::new` readies its pattern (§17).
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -163,6 +175,13 @@ build error naming the pattern.
 
 - **Rejected:** calling JS `RegExp` from wasm. It would make native and browser results differ
   and cost a boundary crossing per call.
+- **The backtracking engine may take 100 million steps per match** *(milestone 16)*. fancy-regex
+  gives up after one million by default, and a regex that gives up doesn't match. A repeated
+  alternation with a lookahead takes about two steps a character, so the shell grammar's
+  `dqLiteral` gave up on the 500 KB string an agent-harness test parses, where v12 (JS has no
+  limit) matches it; the conformance harness found it (§23). A hundred million covers linear
+  patterns over tens of megabytes and still ends a catastrophic pattern, where JS would hang.
+  Pinned in `tests/regex.rs`.
 - **The cost we're accepting:** wasm size. The milestone-1 release build is 1.3 MB, mostly the
   two engines' Unicode tables. Measure before trimming features.
 
@@ -218,6 +237,19 @@ build error naming the pattern.
   so the result is the same, and re-deriving it per clone only costs. *The cost we're
   accepting:* a master with reference alternatives (masters never parse) is classified again by
   each recursion level's instance on its first parse, as v12 builds each clone.
+- **Clones share the alternatives until they parse** *(decided in milestone 16)*. A choice keeps
+  the alternatives it was built with in an `Rc<[Pattern]>` (v12's `_originalPatterns`) that
+  every clone shares, and makes its own copies (`own`) the first time something must change
+  them: its first parse, or a link set on a reference inside (`Pattern::child_patterns_mut`).
+  A clone keeps the classification and starts without copies, as v12's `Expression.clone`
+  starts from `_originalPatterns`. *Why:* the builder copies a rule into each later rule that
+  names it, and a reference clones its target at every level, so deep copies multiplied along
+  every chain of rules: building v12's TypeScript grammar took 1.2 GB and 157 ms natively, and
+  the wasm build ran out of memory and aborted partway through the conformance corpus (§23).
+  Sharing brings it to 42 MB and 10 ms (v12: about 30 ms). Only choices share: v12's other
+  composites copy their children too, and a choice is where rules branch, so sharing there
+  stops the multiplication. *The cost we're accepting:* a choice that has parsed holds the
+  originals and its own copies. Pinned by unit tests in `patterns/choice/mod.rs`.
 - **`RightAssociated` is a pattern, not a flag** *(decided in milestone 4)*: a
   `Pattern::RightAssociated` variant wrapping one child, as in v12. It has no name (`""`),
   pushes no ancestor frame (v12 doesn't make it its child's parent), ignores renames (v12's
@@ -1032,6 +1064,11 @@ build error naming the pattern.
   it costs nothing: the result was built anyway and used to be taken apart. *Rejected:* a second
   recording parse in wasm when the cursor is read (twice the work for the same answer).
   `suggestForWithCursor` is not ported to Rust: it is `suggest_for` on the cursor's text.
+- **`AutoComplete::new` readies its pattern as `exec` would** *(milestone 16)*: it builds and
+  checks the implicit scope and keeps it on the pattern (`link::prepare`), where it used to
+  check the grammar and throw the scope away. The first suggestion's parse then finds the root
+  ready instead of checking the whole grammar a second time: on the TypeScript grammar the first
+  suggestion went from about 10 ms to 0.5 ms (release build), the same as every later one. Same errors (an unknown name fails `new`, as before).
 - **Deviations from v12:**
   - A greedy join that never ends offers nothing (above); v12 throws `RangeError`. Pinned in
     `tests/autocomplete.rs`.
@@ -1377,6 +1414,13 @@ build error naming the pattern.
   the report is nested and variable (records alternate kinds), it is read rarely, and a typed
   array per field would cost a getter and a copy each, for every exec, read or not. The tree
   stays in typed arrays (§7d), where the volume is.
+- **Results are freed as soon as JS has read them** *(milestone 16, `js/taken.mjs`)*. A parse or
+  suggestion result holds its tree and report in wasm memory until `free()`. wasm-bindgen frees
+  from a `FinalizationRegistry`, which runs only when the event loop turns, so a synchronous
+  loop of parses (an ordinary way to use v12) grew wasm memory without bound: the conformance
+  harness's wasm engine slowed to minutes and aborted. Each result's fields are now read into
+  plain JS once and the wasm object freed at once. `liveResults()` (exported by `js/wasm.mjs`)
+  counts what wasm still holds, so `js/memory.test.mjs` pins it by count, not by memory.
 - **An error from an ordinary parse names its pattern by name and id only.** Its path exists
   only in a recording parse (§15); keeping one per error would cost every failed attempt an
   allocation. So `cursor.error.pattern` is `{ id, name }` after `exec(text)` and a pattern
@@ -1496,6 +1540,86 @@ build error naming the pattern.
   after letters (§17), and a literal that runs out of text inside an emoji fails at its start
   (§17's positions).
 - **Not yet:** builds for targets other than Node (`js/wasm.mjs` loads `pkg-node`).
+
+## 23. The conformance harness and the speed report *(milestone 16)*
+
+- **Layout** (`conformance/`): `run.mjs` (the one command), `bench.mjs` (the speed report),
+  `allowlist.json`, `corpus/*.json` (the captured inputs, committed), `capture/` (how the
+  corpus was captured), `lib/` (`corpus.mjs` expands the corpus, `mutate.mjs`, `js_engine.mjs`
+  runs TS v12 or cpat-wasm, `normalize.mjs`, `compare.mjs`, `allowlist.mjs`, `report.mjs`,
+  `bench_spec.mjs`, `bench_engine.mjs`), `native/` (the `cpat-conformance` binary, the native
+  engine and its bench mode, a workspace member) and `test/` (the harness's own tests).
+- **The corpus is what real tests ran** (`capture/capture.mjs --scratch <dir>`). agent-harness's
+  vitest suite runs with `clarity-pattern-parser` aliased to a shim over v12's `src`, and v12's
+  four test files run under jest with a setup file, both configured in the scratch directory
+  only: neither repo changes. Both patch `Grammar.prototype.parseString`, so every plain build
+  (no params, decorators or resolver: the text alone rebuilds it) is logged with every
+  `exec`/`test` on its rules and every `AutoComplete.suggestFor` with its options. agent-harness
+  grammars are identified by their text against the package's eleven `.cpat` files; ad-hoc
+  grammars its tests build are left out. `assemble.mjs` de-duplicates and sorts, one file per
+  harness grammar and per v12 test file. v12's `AutoComplete.test.ts` builds its patterns by
+  hand, never from a grammar, so it contributes no case; its tests run in JS against cpat-wasm
+  already (§22). Two of agent-harness's tests fail under v12, as MIGRATION-v12.md says; what
+  they ran is kept.
+- **Mutations are generated, not stored** (`lib/mutate.mjs`): for every captured input up to
+  2000 UTF-16 units, the empty text and a truncation at every token boundary (between a word
+  and a space, and around every punctuation character, never inside a surrogate pair), and up
+  to 8 single-character deletions spread over its boundaries. Truncations also run AutoComplete
+  (with the options the test used, or the defaults). The same corpus always expands to the same
+  140 349 cases. *Why capped deletions:* a deletion mostly repeats the error of its neighbour;
+  8 per input break every kind of token in a typical input without the few long inputs
+  dominating the run.
+- **What is compared**, in UTF-16 offsets, as v12 reports them: the build (success or the
+  thrown message, and the rule names in order); match or no match; the whole tree, as one row
+  per node (`depth|type|name|start|end`, plus a `value!` row only where a value isn't the text
+  its range spans); `cursor.error` and `cursor.furthestError` (start, last, pattern name);
+  `generateErrorMessage`; a throw; cpat's `tooDeep`; and AutoComplete's options (text and start
+  index, in order), `isComplete` and `errorAtIndex`. One AutoComplete per rule and options is
+  reused across texts, as an editor would. TS v12 runs under tsx on v12's `src`, cpat-wasm
+  through `js/index.mjs`, both by the same `lib/js_engine.mjs`; the native engine reports the
+  same shape from the core and converts bytes to UTF-16 itself (it must not share the
+  conversion it checks). TS and wasm run in shards; the whole run takes about 40 s.
+- **The allowlist** names every explained difference by kind and, as needed, engine, corpus file,
+  rule, input, the two values (exact or by regex) and fields the cpat result must have (`got`).
+  Each entry needs a reason and a citation of DESIGN.md or MIGRATION-v12.md, checked on load. An
+  entry that explains nothing fails the run, so the list can only describe differences that
+  occur. The run exits 0 only with no unexplained difference and no stale entry.
+- **It can fail** (`run.mjs --self-test`): the native engine's `--perturb` moves the first
+  reported tree's root end by one, and the self-test checks that the run then fails with exactly
+  that one unexplained `exec.ast` difference. `test/harness.test.mjs` checks the comparison,
+  the allowlist and the mutations on made-up results; `native/src/engine.rs` checks the fault.
+- **The explained differences** (240, final run):
+  - `custom-tokens-prototype-key` (230): **a v12 bug.** v12 reads a pattern's custom tokens from
+    a plain object (`customTokensMap[pattern.name] ?? []`), so a pattern named `constructor`
+    (a literal in the TypeScript and saya grammars) gets `Object.prototype.constructor` and
+    AutoComplete throws `customTokens is not iterable`. cpat-rs keeps a map and suggests.
+  - `v12-trimmed-bounded-repeat-crash` (4): **a v12 bug.** A bounded repeat with a trimmed
+    divider whose first item fails takes "no items" for "ended on a divider" (`0 % 2 === 0`),
+    pops a node that isn't there and throws a `TypeError`. cpat-rs fails the repeat and the
+    choice tries its next alternative.
+  - `depth-limit` (2): jq's 3000-deep paren bomb overflows v12's stack (`RangeError`) and halts
+    with `tooDeep` here (§11).
+  - `ran-out-at-a-final-surrogate-pair` (2): a sequence that runs out of text records its
+    error's last index past the end. v12 writes that as its cursor's index + 1, and its cursor
+    sits on the start of the last grapheme, so after a final emoji it says 16 where the text is
+    17 units long; cpat-rs's `last` is the text's length. One position written two ways (§17,
+    Positions); ASCII text gives the same number in both.
+  - `empty-literal-message` (2): an empty literal is reported in cpat's words (§18).
+- **What the harness found in cpat-rs**, each fixed with a test that fails without the fix:
+  wasm ran out of memory building and parsing the TypeScript grammar (clones now share a
+  choice's alternatives, §8); the shell grammar's `dqLiteral` gave up on a 500 KB string (the
+  backtrack limit, §6); a synchronous loop of wasm parses never freed its results (§22); and
+  every first suggestion checked the grammar twice (§17).
+- **The speed report** (`node conformance/bench.mjs --out <dir>`) is a script, not a test, and
+  asserts nothing. Per corpus file it times building the grammars, `exec` of every captured
+  input and `suggestFor` on up to 300 truncations, in each engine one after another, with 3
+  warm-up and 15 timed runs, and writes `bench.md` (median and p90, speed-ups over v12) and
+  `bench.json` (every run). On an Apple M5 Pro with Node 24 (milestone 16): native builds the
+  harness grammars 1.5–5.5× faster than v12 and parses 3–5.3× faster (shell 116 → 38 ms for its
+  3735 inputs); wasm builds 0.97–3.8× as fast and parses at 0.55–1.8× v12's speed. AutoComplete is
+  where cpat-rs is slower: native from 0.4× (calc, jq) to 1.5× v12, and wasm 0.05–0.13×, since
+  each wasm suggestion serializes its recording parse's whole report to JSON (about 110 KB per
+  suggestion on jq), read or not. Making that report lazy is the next performance step.
 
 ## Behavior fixed relative to clarity-pattern-parser v11
 

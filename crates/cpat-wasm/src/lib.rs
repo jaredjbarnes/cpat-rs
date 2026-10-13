@@ -13,6 +13,7 @@ mod exec_result;
 mod flat_tree;
 mod grammar;
 mod host;
+mod live;
 mod place;
 mod repeat_options;
 mod run;
@@ -29,6 +30,7 @@ use repeat_options::JsRepeatOptions;
 pub use auto_complete::{JsAutoComplete, SuggestionResult};
 pub use exec_result::ExecResult;
 pub use grammar::GrammarRecord;
+pub use live::live_results;
 
 /// A pattern living in wasm memory. Composite constructors take ownership of
 /// their children, so pass `child.clone()` to keep using a child afterwards.

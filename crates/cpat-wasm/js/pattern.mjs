@@ -10,6 +10,7 @@
 // v12's clone theirs.
 
 import { Cursor, setPlaceWrapper } from "./cursor.mjs";
+import { takeExecResult } from "./taken.mjs";
 import { Tree } from "./tree.mjs";
 
 const classesByType = new Map();
@@ -113,10 +114,11 @@ export class PatternBase {
   }
 
   exec(text, record = false) {
-    const result =
+    const result = takeExecResult(
       this._path.length === 0
         ? this._root.exec(text, record)
-        : this._root.execAt(this._path, text, record);
+        : this._root.execAt(this._path, text, record)
+    );
     return parseResult(text, result, this._root, this._path);
   }
 
@@ -129,7 +131,9 @@ export class PatternBase {
   /** v12 `parse(cursor)`: parses from `cursor.index` and reports to the
    * cursor; the node, or `null`. */
   parse(cursor) {
-    const result = this._root.parseAt(this._path, cursor.text, cursor.index, cursor.isRecording);
+    const result = takeExecResult(
+      this._root.parseAt(this._path, cursor.text, cursor.index, cursor.isRecording)
+    );
     if (result.patternError != null) {
       throwPatternError(result);
     }

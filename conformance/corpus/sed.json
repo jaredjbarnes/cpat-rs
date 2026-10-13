@@ -1,0 +1,579 @@
+{
+ "name": "sed",
+ "suite": "agent-harness",
+ "file": "sed/grammar.cpat",
+ "grammars": [
+  {
+   "id": "ee89809114462188",
+   "origin": "agent/__tests__/agent.test.ts :: ",
+   "text": "# sed — script grammar.\n#\n# Input: the raw sed script text (the string the user passes as the\n# first positional, e.g. `s/foo/bar/g;/baz/d`).\n#\n# Strategy: cpat captures the script's HIGH-LEVEL structure\n# (statements, addresses, command letters, separators). The\n# data-dependent bodies (`s/.../.../`, `y/.../.../`, `c TEXT`, etc.)\n# are captured as opaque regex matches and unpacked by the visitor —\n# the variable-delimiter problem doesn't fit a clean PEG and the\n# visitor already needs to interpret the inner content (regex\n# compilation, escape translation) regardless.\n#\n# For variable-delim commands we use JS regex NAMED BACKREFERENCES\n# (`(?<d>.)...\\k<d>`) — supported since ES2018. The first non-alpha\n# non-whitespace char after `s` or `y` becomes the delimiter; the\n# regex matches \"any char or backslash-escape that isn't the\n# delimiter, until the delimiter.\"\n\n# ─── Whitespace + separators ────────────────────────────────\n# Inline whitespace inside a statement (between address and command,\n# around `,` in a range). NOT a statement separator.\nws = /[ \\t]+/\n\n# Statement separator — `;` or newline, any number of them.\nsep = /[ \\t]*[;\\n][ \\t;\\n]*/\n\n# ─── Address atoms ──────────────────────────────────────────\nlineAddr = /\\d+/\nlastAddr = \"$\"\n# Regex address: `/PAT/` where PAT can contain `\\/` and other escapes\n# but not unescaped `/` or `\\n`.\nregexAddr = /\\/(?:\\\\.|[^\\/\\\\\\n])*\\//\n\nsingleAddr = regexAddr | lastAddr | lineAddr\n\n# ─── Range ──────────────────────────────────────────────────\ncomma = \",\"\nrangeAddr = singleAddr + ws? + comma + ws? + singleAddr\n\n# An address can be a range OR a single addr. Range listed first so\n# cpat's PEG commits to the longer form when comma is present.\naddressSpec = rangeAddr | singleAddr\n\n# ─── Negation ──────────────────────────────────────────────\nbang = \"!\"\n\n# ─── Command bodies ────────────────────────────────────────\n# Each body rule captures one complete command as its `node.value`.\n# The visitor then peels apart pattern/replacement/flags or text.\n#\n# All body regexes are anchored to consume up to but not past the\n# next statement boundary (`;` / `\\n` / end of input) for atom\n# commands; for `s` / `y` the regex naturally stops after the\n# trailing delimiter and optional flags.\n\n# s/PAT/REPL/[gimp][NUM][ w FILE]\n# `(?<sd>...)` captures the delimiter; `\\k<sd>` references it.\n# Body chars: backslash-escape (any char) OR any char that's not the\n# delimiter or backslash. Flag region after the trailing delimiter:\n#   - letter flags `[gimp]`\n#   - optional numeric NUM (replace only the Nth match)\n#   - optional `w FILE` trailer (write pattern space on successful\n#     substitute; FILE runs until `;` / `\\n`)\n# Visitor parses the flag region; we accept letter+digit flags in\n# any order, and the visitor errors on unknown letters.\nsCmd = /s(?<sd>[^A-Za-z0-9\\s\\\\\\n])(?:\\\\.|(?!\\k<sd>)[^\\\\])*\\k<sd>(?:\\\\.|(?!\\k<sd>)[^\\\\])*\\k<sd>[gimp0-9]*(?:[ \\t]*w[ \\t]+[^;\\n]+)?/\n\n# y/SRC/DST/ — like s but no flags.\nyCmd = /y(?<yd>[^A-Za-z0-9\\s\\\\\\n])(?:\\\\.|(?!\\k<yd>)[^\\\\])*\\k<yd>(?:\\\\.|(?!\\k<yd>)[^\\\\])*\\k<yd>/\n\n# c / a / i — text commands. The body runs to an unescaped `\\n` and\n# NOTHING ELSE ends it. `\\X` (backslash + any char including newline)\n# is consumed as one escape unit, so GNU's `c\\\\\\n line2\\\\\\n line3`\n# multi-line continuation works — the trailing `\\\\\\n` between lines\n# stays inside the regex's `\\\\.` branch.\n#\n# A `;` is ORDINARY TEXT here, matching real sed: `1c foo; bar`\n# inserts \"foo; bar\", and you cannot put another command after a\n# c/a/i on the same line because the text swallows it. This used to\n# exclude `;` and so rejected any body containing one — which is\n# every non-trivial line of code. Two real runs died on it, both\n# while rewriting a chunk of a script with `c\\`, and the error\n# (\"could not parse script\") pointed at the whole script and named\n# nothing. Verified against BSD sed: escaped and bare semicolons in\n# a `-f` script both insert the text verbatim.\nchangeCmd = /c(?:\\\\(?:.|\\n)|[^\\n\\\\])*/\nappendCmd = /a(?:\\\\(?:.|\\n)|[^\\n\\\\])*/\ninsertCmd = /i(?:\\\\(?:.|\\n)|[^\\n\\\\])*/\n\n# r / w — file-I/O commands. Body is a filename run, same shape as\n# the text commands minus the multi-line continuation (filenames\n# don't contain newlines). A `;` is part of the filename here too,\n# for the same reason it is part of a c/a/i body: real sed reads the\n# rest of the LINE as the name.\nreadCmd  = /r(?:\\\\.|[^\\n\\\\])*/\nwriteCmd = /w(?:\\\\.|[^\\n\\\\])*/\n\n# Branch + label commands. Label names: identifier-shape. `b` and\n# `t` accept an optional label; absent = \"branch to end of script.\"\nlabelDecl = /:[a-zA-Z_][a-zA-Z_0-9]*/\nbCmd      = /b(?:[ \\t]+[a-zA-Z_][a-zA-Z_0-9]*)?/\ntCmd      = /t(?:[ \\t]+[a-zA-Z_][a-zA-Z_0-9]*)?/\nTCmd      = /T(?:[ \\t]+[a-zA-Z_][a-zA-Z_0-9]*)?/\n\n# Atom commands — single letter, no body.\npCmd = \"p\"\ndCmd = \"d\"\nqCmd = \"q\"\nnCmd = \"n\"\nlCmd = \"l\"\neqCmd = \"=\"\n\n# Hold-space commands. Single uppercase/lowercase letters; cpat\n# alternation will commit on the matching letter.\nhCmd  = \"h\"\nHCmd  = \"H\"\ngCmd  = \"g\"\nGCmd  = \"G\"\nxCmd  = \"x\"\n\n# Multi-line commands (D / N / P): read or operate on lines\n# beyond the current one. N appends next input line; D deletes\n# the first newline-terminated part and restarts the cycle; P\n# prints the first newline-terminated part.\nNCmd  = \"N\"\nDCmd  = \"D\"\nPCmd  = \"P\"\n\natomCmd = pCmd | dCmd | qCmd | nCmd | NCmd | DCmd | PCmd | lCmd | eqCmd\n        | hCmd | HCmd | gCmd | GCmd | xCmd\n\n# Block: `{ cmd; cmd; … }`. Inner script reuses the top-level\n# `statements` rule, so blocks nest naturally.\nopenBrace  = \"{\"\ncloseBrace = \"}\"\nblock = openBrace + sep? + statements + sep? + closeBrace\n\n# Order matters in this alternation: multi-char (regex-captured)\n# bodies tried before the single-letter atoms so `s.../.../` doesn't\n# get misread as the `s` alone-then-garbage. `block` tried first so\n# `{` isn't mistaken for a stray atom.\ncommandBody = block\n            | sCmd | yCmd\n            | changeCmd | appendCmd | insertCmd\n            | readCmd | writeCmd\n            | labelDecl | bCmd | tCmd | TCmd\n            | atomCmd\n\n# ─── Statement ──────────────────────────────────────────────\n# [address] [!] command\nstatement = addressSpec? + ws? + bang? + ws? + commandBody\n\n# ─── Top level ──────────────────────────────────────────────\n# Named repeat to avoid cpat's anonymous-pattern wrapper (see the\n# convention in `docs/bash-roadmap.md`). The visitor walks\n# `script.children` looking for `statements`, then iterates that.\nstatements = (statement, sep trim)*\nscript = sep? + statements + sep?\n",
+   "cases": [
+    {
+     "rule": "script",
+     "input": "$!N;/^\\(.*\\)\\n\\1$/D;P;D",
+     "origin": "tools/__tests__/sed.test.ts :: sed — n / N / D / P > D: deletes up to first embedded newline, restarts cycle"
+    },
+    {
+     "rule": "script",
+     "input": "$p",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool — line-range print > $ as a single-address shortcut: sed -n '$p' prints the last line"
+    },
+    {
+     "rule": "script",
+     "input": "/BEGIN/,/END/p",
+     "origin": "tools/__tests__/sed.test.ts :: sed — regex ranges > range fires multiple times if pattern re-appears"
+    },
+    {
+     "rule": "script",
+     "input": "/DROP/c GONE",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c / a / i > c with regex address"
+    },
+    {
+     "rule": "script",
+     "input": "/DROP/d",
+     "origin": "tools/__tests__/sed.test.ts :: sed — regex addresses > /PAT/d deletes lines matching PAT"
+    },
+    {
+     "rule": "script",
+     "input": "/ERROR/w /errors.log",
+     "origin": "tools/__tests__/sed.test.ts :: sed — w FILE > w FILE writes matching pattern spaces to file"
+    },
+    {
+     "rule": "script",
+     "input": "/FOO/!d",
+     "origin": "tools/__tests__/sed.test.ts :: sed — regex addresses > /PAT/!d deletes lines NOT matching PAT (keep only matching)"
+    },
+    {
+     "rule": "script",
+     "input": "/FOO/{/FOO/{s/F/X/}}",
+     "origin": "tools/__tests__/sed.test.ts :: sed — blocks { ... } > nested blocks"
+    },
+    {
+     "rule": "script",
+     "input": "/FOO/{b end};s/./X/;:end",
+     "origin": "tools/__tests__/sed.test.ts :: sed — branching (b/t/:LABEL) > branch can jump out of a block"
+    },
+    {
+     "rule": "script",
+     "input": "/FOO/{s/F/X/;s/O/Y/g}",
+     "origin": "tools/__tests__/sed.test.ts :: sed — blocks { ... } > address with block applies multiple substitutions"
+    },
+    {
+     "rule": "script",
+     "input": "/KILL/{\n        s/K/k/\n        s/I/i/\n      }",
+     "origin": "tools/__tests__/sed.test.ts :: sed — blocks { ... } > block with multi-line script (newline-separated)"
+    },
+    {
+     "rule": "script",
+     "input": "/MATCH/r i.txt",
+     "origin": "tools/__tests__/sed.test.ts :: sed — r FILE > r with regex address"
+    },
+    {
+     "rule": "script",
+     "input": "/MATCH/{p;d}",
+     "origin": "tools/__tests__/sed.test.ts :: sed — blocks { ... } > /PAT/{p;d} — print then delete matching lines"
+    },
+    {
+     "rule": "script",
+     "input": "/START/,/END/d",
+     "origin": "tools/__tests__/sed.test.ts :: sed — regex ranges > /START/,/END/d deletes from START through END inclusive"
+    },
+    {
+     "rule": "script",
+     "input": "/START/,/END/p",
+     "origin": "tools/__tests__/sed.test.ts :: sed — regex ranges > /START/,/END/p prints from START through END inclusive"
+    },
+    {
+     "rule": "script",
+     "input": "/^#/d",
+     "origin": "tools/__tests__/sed.test.ts :: sed — regex addresses > regex address with custom regex chars (anchors)"
+    },
+    {
+     "rule": "script",
+     "input": "/a/{}",
+     "origin": "tools/__tests__/sed.test.ts :: sed — blocks { ... } > empty block is a no-op"
+    },
+    {
+     "rule": "script",
+     "input": "/beta/p",
+     "origin": "tools/__tests__/sed.test.ts :: sed — regex addresses > /PAT/p prints lines matching PAT"
+    },
+    {
+     "rule": "script",
+     "input": "/beta/s/./X/g",
+     "origin": "tools/__tests__/sed.test.ts :: sed — regex addresses > addressed s: only substitutes on matching lines"
+    },
+    {
+     "rule": "script",
+     "input": "/start/,/end/c BLOCK",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c / a / i > c over a regex range"
+    },
+    {
+     "rule": "script",
+     "input": "1!G;h;$p",
+     "origin": "tools/__tests__/sed.test.ts :: sed — -i in-place edit > -i with complex script (hold space) works per-file"
+    },
+    {
+     "rule": "script",
+     "input": "1,3c\\\nfunction f(q) {\\\n  let c = q;\\\n  return c;\\\n}\n",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c / a / i > a multi-line c\\ body of real code, from a -f script file"
+    },
+    {
+     "rule": "script",
+     "input": "1,3p",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool — line-range print > the motivating idiom: sed -n '1,3p' prints lines 1-3"
+    },
+    {
+     "rule": "script",
+     "input": "100,200p",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool — line-range print > range past end of input still prints what's available"
+    },
+    {
+     "rule": "script",
+     "input": "1a\\\nappended1\\\nappended2",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c/a/i multi-line text > a with multi-line text"
+    },
+    {
+     "rule": "script",
+     "input": "1b;s/./X/",
+     "origin": "tools/__tests__/sed.test.ts :: sed — branching (b/t/:LABEL) > b with no label jumps to end of script (skips remaining commands)"
+    },
+    {
+     "rule": "script",
+     "input": "1c AA;BB\n2s/b/B/",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c / a / i > a command on the NEXT line after a c body still parses"
+    },
+    {
+     "rule": "script",
+     "input": "1c const v = x;",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c / a / i > a semicolon in a c body is text, not a command separator"
+    },
+    {
+     "rule": "script",
+     "input": "1c const v = x\\;",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c / a / i > an escaped semicolon still yields a literal one"
+    },
+    {
+     "rule": "script",
+     "input": "1c if (!v) { return c; }",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c / a / i > a c body full of code inserts verbatim"
+    },
+    {
+     "rule": "script",
+     "input": "1d\n3d",
+     "origin": "tools/__tests__/sed.test.ts :: sed — multi-command scripts > commands separated by newline (multi-line script string)"
+    },
+    {
+     "rule": "script",
+     "input": "1h;2G",
+     "origin": "tools/__tests__/sed.test.ts :: sed — hold space (h/H/g/G/x) > G appends hold to pattern with embedded \\n"
+    },
+    {
+     "rule": "script",
+     "input": "1r nope.txt",
+     "origin": "tools/__tests__/sed.test.ts :: sed — r FILE > r missing file is silent (matches GNU)"
+    },
+    {
+     "rule": "script",
+     "input": "1{h;d};2{x}",
+     "origin": "tools/__tests__/sed.test.ts :: sed — hold space (h/H/g/G/x) > x swaps pattern and hold"
+    },
+    {
+     "rule": "script",
+     "input": "2!d",
+     "origin": "tools/__tests__/sed.test.ts :: sed — negation > Nd! is a parse error (negation goes BEFORE command)"
+    },
+    {
+     "rule": "script",
+     "input": "2,$c REPLACED",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c / a / i > c over a range that reaches the last line"
+    },
+    {
+     "rule": "script",
+     "input": "2,/STOP/p",
+     "origin": "tools/__tests__/sed.test.ts :: sed — regex ranges > range from line N to /PAT/"
+    },
+    {
+     "rule": "script",
+     "input": "2,2c REPLACED",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c / a / i > c over a one-line range still emits once"
+    },
+    {
+     "rule": "script",
+     "input": "2,3c REPLACED",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c / a / i > c over a RANGE emits the text once, not per line"
+    },
+    {
+     "rule": "script",
+     "input": "2,3p",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool — line-range print > without -n, matched range gets doubled (POSIX semantics)"
+    },
+    {
+     "rule": "script",
+     "input": "2,4!p",
+     "origin": "tools/__tests__/sed.test.ts :: sed — negation > range with negation"
+    },
+    {
+     "rule": "script",
+     "input": "2,4d",
+     "origin": "tools/__tests__/sed.test.ts :: sed — d / q / = > d on a numeric range"
+    },
+    {
+     "rule": "script",
+     "input": "2,4{s/./X/}",
+     "origin": "tools/__tests__/sed.test.ts :: sed — blocks { ... } > range with block"
+    },
+    {
+     "rule": "script",
+     "input": "2a AFTER",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c / a / i > a appends TEXT after the matched line"
+    },
+    {
+     "rule": "script",
+     "input": "2c REPLACED",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c / a / i > c replaces the matched line with TEXT"
+    },
+    {
+     "rule": "script",
+     "input": "2c\\\nLINE1\\\nLINE2",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c/a/i multi-line text > c with backslash-newline continuation"
+    },
+    {
+     "rule": "script",
+     "input": "2c\\REPLACED",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c / a / i > POSIX backslash form: c\\TEXT"
+    },
+    {
+     "rule": "script",
+     "input": "2d",
+     "origin": "tools/__tests__/sed.test.ts :: sed — d / q / = > d on a single line address"
+    },
+    {
+     "rule": "script",
+     "input": "2h;3g",
+     "origin": "tools/__tests__/sed.test.ts :: sed — hold space (h/H/g/G/x) > h copies pattern → hold, g copies hold → pattern"
+    },
+    {
+     "rule": "script",
+     "input": "2i BEFORE",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c / a / i > i inserts TEXT before the matched line"
+    },
+    {
+     "rule": "script",
+     "input": "2r include.txt",
+     "origin": "tools/__tests__/sed.test.ts :: sed — r FILE > r FILE outputs file contents after matching line"
+    },
+    {
+     "rule": "script",
+     "input": "3,$p",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool — line-range print > $ as the end-of-input marker: sed -n '3,$p'"
+    },
+    {
+     "rule": "script",
+     "input": "3p",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool — line-range print > single-line print: sed -n '3p'"
+    },
+    {
+     "rule": "script",
+     "input": "3q",
+     "origin": "tools/__tests__/sed.test.ts :: sed — d / q / = > q after N lines"
+    },
+    {
+     "rule": "script",
+     "input": "5,2p",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool — line-range print > inverted range: sed -n '5,2p' fires only the start line (matches GNU)"
+    },
+    {
+     "rule": "script",
+     "input": ":L;s/x/y/;:L",
+     "origin": "tools/__tests__/sed.test.ts :: sed — branching (b/t/:LABEL) > duplicate label errors at parse time"
+    },
+    {
+     "rule": "script",
+     "input": ":a; s/  / /g; t a",
+     "origin": "sed/__tests__/branch_budget.test.ts :: sed branch-loop hardening > terminating branch loop collapsing repeats still works"
+    },
+    {
+     "rule": "script",
+     "input": ":a; s/a/b/; t a",
+     "origin": "sed/__tests__/branch_budget.test.ts :: sed branch-loop hardening > legitimate terminating branch loop still works (`:a; s/a/b/; t a`)"
+    },
+    {
+     "rule": "script",
+     "input": ":a; s/z/z/; t a",
+     "origin": "sed/__tests__/branch_budget.test.ts :: sed branch-loop hardening > no-progress conditional loop `:a; s/z/z/; t a` terminates with a bounded error"
+    },
+    {
+     "rule": "script",
+     "input": ":a;H;G;b a",
+     "origin": "tools/__tests__/sed.test.ts :: sed — pattern/hold space growth is capped > H;G doubling bomb throws the space-size limit, not the instruction budget"
+    },
+    {
+     "rule": "script",
+     "input": ":a;b a",
+     "origin": "sed/__tests__/branch_budget.test.ts :: sed branch-loop hardening > the branch loop stays interruptible — an aborting host unwinds it"
+    },
+    {
+     "rule": "script",
+     "input": "=",
+     "origin": "tools/__tests__/sed.test.ts :: sed — d / q / = > = prints line number before the line"
+    },
+    {
+     "rule": "script",
+     "input": "H;$!d;${g;p;}",
+     "origin": "tools/__tests__/sed.test.ts :: sed — hold space (h/H/g/G/x) > H appends pattern to hold with embedded \\n"
+    },
+    {
+     "rule": "script",
+     "input": "N;P",
+     "origin": "tools/__tests__/sed.test.ts :: sed — n / N / D / P > P: prints up to first embedded newline"
+    },
+    {
+     "rule": "script",
+     "input": "N;s/\\n/ /",
+     "origin": "tools/__tests__/sed.test.ts :: sed — n / N / D / P > N: appends next line with embedded \\n"
+    },
+    {
+     "rule": "script",
+     "input": "b\ns/a/X/",
+     "origin": "sed/__tests__/branch_budget.test.ts :: sed branch-loop hardening > branch-to-end (`b` with no label) still exits the cycle normally"
+    },
+    {
+     "rule": "script",
+     "input": "b nowhere",
+     "origin": "tools/__tests__/sed.test.ts :: sed — branching (b/t/:LABEL) > branch to unknown label errors cleanly"
+    },
+    {
+     "rule": "script",
+     "input": "l",
+     "origin": "tools/__tests__/sed.test.ts :: sed — l (list) command > l escapes backslash as \\\\"
+    },
+    {
+     "rule": "script",
+     "input": "n;s/./X/",
+     "origin": "tools/__tests__/sed.test.ts :: sed — n / N / D / P > n: consumes next line into pattern space"
+    },
+    {
+     "rule": "script",
+     "input": "s/([0-9])([a-z])/<\\1\\2>/2",
+     "origin": "tools/__tests__/sed.test.ts :: sed — s NUM flag > NUM with capture groups in replacement"
+    },
+    {
+     "rule": "script",
+     "input": "s/(\\w+) (\\w+)/\\2 \\1/",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool > regex pattern with capture group reference"
+    },
+    {
+     "rule": "script",
+     "input": "s/.*<h3 class=\"cd__headline\"><a href=\"\\([^\"]*\\)\"[^>]*>\\([^<]*\\)<\\/a>.*/\\1 \\2/p",
+     "origin": "shell/__tests__/regex_engine_redos.test.ts :: RE2 enabled (opt-in) > a risky pattern on a huge line no longer errors (runs on RE2)"
+    },
+    {
+     "rule": "script",
+     "input": "s/.*x.*y.*z.*/Q/",
+     "origin": "shell/__tests__/regex_engine_redos.test.ts :: default JS engine, no RE2 > DEGREE-3 polynomial is refused too (O(n^3) locks the CPU below any cap)"
+    },
+    {
+     "rule": "script",
+     "input": "s/<[^>]*>//g",
+     "origin": "shell/__tests__/regex_engine_redos.test.ts :: default JS engine, no RE2 > SAFE tag-strip on a >256KB line runs fine (the regression we fixed)"
+    },
+    {
+     "rule": "script",
+     "input": "s/MISS/X/;T end;s/o/0/g;:end",
+     "origin": "tools/__tests__/sed.test.ts :: sed — branching (b/t/:LABEL) > T branches if NO substitute succeeded"
+    },
+    {
+     "rule": "script",
+     "input": "s/MISS/X/;t end;s/no/yes/;:end",
+     "origin": "tools/__tests__/sed.test.ts :: sed — branching (b/t/:LABEL) > t does NOT branch when no substitute matched"
+    },
+    {
+     "rule": "script",
+     "input": "s/X/Y/;s/Y/Z/",
+     "origin": "tools/__tests__/sed.test.ts :: sed — -f script-file > -f and -e combine in order (-e first, then -f file contents)"
+    },
+    {
+     "rule": "script",
+     "input": "s/\\(a\\+\\)\\+b/X/",
+     "origin": "shell/__tests__/regex_engine_redos.test.ts :: default JS engine, no RE2 > EXPONENTIAL pattern is refused regardless of size (length-independent)"
+    },
+    {
+     "rule": "script",
+     "input": "s/a/A/;s/b/B/;s/c/C/",
+     "origin": "tools/__tests__/sed.test.ts :: sed — multiple -e scripts > three -e scripts"
+    },
+    {
+     "rule": "script",
+     "input": "s/a/X/2",
+     "origin": "tools/__tests__/sed.test.ts :: sed — s NUM flag > s/X/Y/2 replaces only the 2nd match"
+    },
+    {
+     "rule": "script",
+     "input": "s/a/X/3",
+     "origin": "tools/__tests__/sed.test.ts :: sed — s NUM flag > s/X/Y/3 replaces only the 3rd match"
+    },
+    {
+     "rule": "script",
+     "input": "s/a/X/5",
+     "origin": "tools/__tests__/sed.test.ts :: sed — s NUM flag > NUM beyond match count → no substitution"
+    },
+    {
+     "rule": "script",
+     "input": "s/alpha/X/g",
+     "origin": "tools/__tests__/sed.test.ts :: sed — -i in-place edit > -i with multiple files processes each independently"
+    },
+    {
+     "rule": "script",
+     "input": "s/b/[&]/",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool > ampersand for whole match"
+    },
+    {
+     "rule": "script",
+     "input": "s/foo",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool > malformed script fails gracefully"
+    },
+    {
+     "rule": "script",
+     "input": "s/foo/FOO/;T end;s/O/0/g;:end",
+     "origin": "tools/__tests__/sed.test.ts :: sed — branching (b/t/:LABEL) > T does NOT branch when a substitute succeeded"
+    },
+    {
+     "rule": "script",
+     "input": "s/foo/FOO/;s/bar/BAR/",
+     "origin": "tools/__tests__/sed.test.ts :: sed — multi-command scripts > two substitutions joined by ;"
+    },
+    {
+     "rule": "script",
+     "input": "s/foo/MATCH/w /matches.log",
+     "origin": "tools/__tests__/sed.test.ts :: sed — s w FILE flag > s w FILE writes pattern space when substitute succeeds"
+    },
+    {
+     "rule": "script",
+     "input": "s/foo/X/",
+     "origin": "tools/__tests__/sed.test.ts :: sed — -i in-place edit > -i with a missing file leaves earlier files untouched"
+    },
+    {
+     "rule": "script",
+     "input": "s/foo/X/;b end;s/bar/Y/;:end",
+     "origin": "tools/__tests__/sed.test.ts :: sed — branching (b/t/:LABEL) > b LABEL jumps unconditionally"
+    },
+    {
+     "rule": "script",
+     "input": "s/foo/X/;s/bar/Y/",
+     "origin": "tools/__tests__/sed.test.ts :: sed — multiple -e scripts > two -e scripts compose left-to-right"
+    },
+    {
+     "rule": "script",
+     "input": "s/foo/X/;t end;s/./Y/;:end",
+     "origin": "tools/__tests__/sed.test.ts :: sed — branching (b/t/:LABEL) > t branches if substitute succeeded"
+    },
+    {
+     "rule": "script",
+     "input": "s/foo/X/p",
+     "origin": "tools/__tests__/sed.test.ts :: sed — s flag p (print on successful substitution) > with -n, prints only lines where substitution matched"
+    },
+    {
+     "rule": "script",
+     "input": "s/foo/X/w /out.log",
+     "origin": "tools/__tests__/sed.test.ts :: sed — s w FILE flag > s w writes to file AND auto-prints to stdout"
+    },
+    {
+     "rule": "script",
+     "input": "s/foo/bar/",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool > simple substitution (first occurrence)"
+    },
+    {
+     "rule": "script",
+     "input": "s/foo/bar/g",
+     "origin": "sed/__tests__/branch_budget.test.ts :: sed branch-loop hardening > normal global substitution still works"
+    },
+    {
+     "rule": "script",
+     "input": "s/foo/bar/gi",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool > case-insensitive with i flag"
+    },
+    {
+     "rule": "script",
+     "input": "s/foo/baz/",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool — line-range print > sed -n 's/.../.../' produces no output (suppresses auto-print)"
+    },
+    {
+     "rule": "script",
+     "input": "s/foo/baz/p",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool — line-range print > sed -n 's/.../.../p' prints only on successful substitution"
+    },
+    {
+     "rule": "script",
+     "input": "s/keep/KEEP/;/DROP/d",
+     "origin": "tools/__tests__/sed.test.ts :: sed — multiple -e scripts > -e mixes substitute and delete"
+    },
+    {
+     "rule": "script",
+     "input": "s/keep/KEEP/;/bad/d",
+     "origin": "tools/__tests__/sed.test.ts :: sed — multi-command scripts > substitute then delete"
+    },
+    {
+     "rule": "script",
+     "input": "s/line/L/",
+     "origin": "shell/__tests__/cooperative.test.ts :: sed honours the abort flag on big input > bails (throws) instead of grinding through every line"
+    },
+    {
+     "rule": "script",
+     "input": "s/line/LINE/",
+     "origin": "tools/__tests__/sed.test.ts :: sed — file arguments (without -i) > multiple files concatenate as input"
+    },
+    {
+     "rule": "script",
+     "input": "s/localhost/example.com/",
+     "origin": "tools/__tests__/sed.test.ts :: sed — -i in-place edit > -i writes the substitution result back to the file"
+    },
+    {
+     "rule": "script",
+     "input": "s/x/y/",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool > multi-line input"
+    },
+    {
+     "rule": "script",
+     "input": "s/xyz/X/p",
+     "origin": "tools/__tests__/sed.test.ts :: sed — s flag p (print on successful substitution) > p flag doesn't fire when pattern doesn't match"
+    },
+    {
+     "rule": "script",
+     "input": "s/xyz/X/w /out.log",
+     "origin": "tools/__tests__/sed.test.ts :: sed — s w FILE flag > s w does NOT write when pattern doesn't match"
+    },
+    {
+     "rule": "script",
+     "input": "s|/usr|/opt|",
+     "origin": "tools/__tests__/sed.test.ts :: sed tool > custom delimiter |"
+    },
+    {
+     "rule": "script",
+     "input": "w /out.txt",
+     "origin": "tools/__tests__/sed.test.ts :: sed — w FILE > w overwrites file on each new sed invocation"
+    },
+    {
+     "rule": "script",
+     "input": "w /out;1.txt",
+     "origin": "tools/__tests__/sed.test.ts :: sed — c / a / i > a w filename may contain a semicolon"
+    },
+    {
+     "rule": "script",
+     "input": "y/abc/123/",
+     "origin": "tools/__tests__/sed.test.ts :: sed — y (transliterate) > y is per-line"
+    },
+    {
+     "rule": "script",
+     "input": "y/abc/AB/",
+     "origin": "tools/__tests__/sed.test.ts :: sed — y (transliterate) > y errors when src/dst length differs"
+    },
+    {
+     "rule": "script",
+     "input": "y/abc/ABC/",
+     "origin": "tools/__tests__/sed.test.ts :: sed — y (transliterate) > uppercase a/b/c via y"
+    }
+   ]
+  }
+ ]
+}

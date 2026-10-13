@@ -3,6 +3,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::cursor_json::cursor_json;
 use crate::flat_tree::FlatTree;
+use crate::live::Live;
 use crate::utf16::Utf16Offsets;
 
 /// A parse result laid out for JS: the tree as flat `Uint32Array`s, so it
@@ -27,6 +28,7 @@ pub struct ExecResult {
     thrown_message: Option<String>,
     too_deep: Option<Vec<u32>>,
     cursor: String,
+    _live: Live,
 }
 
 #[wasm_bindgen]
@@ -132,6 +134,7 @@ impl ExecResult {
                 ]
             }),
             cursor: cursor_json(result, &offsets),
+            _live: Live::new(),
         }
     }
 }

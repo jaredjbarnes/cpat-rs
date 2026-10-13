@@ -55,11 +55,15 @@ impl AutoComplete {
 
     /// `new`, parsing under `limits` (see `Pattern::exec_with`).
     pub fn with_limits(
-        pattern: Pattern,
+        mut pattern: Pattern,
         options: AutoCompleteOptions,
         limits: Limits,
     ) -> Result<AutoComplete, PatternError> {
-        pattern.check()?;
+        // Readies the root as `exec` would (its implicit scope, checked) and
+        // keeps it there, so the first suggestion's parse doesn't check the
+        // whole grammar a second time. That check was nearly all of a
+        // first suggestion on the TypeScript grammar (DESIGN §17).
+        crate::link::prepare(&mut pattern)?;
         Ok(AutoComplete {
             pattern,
             greedy_pattern_names: options.greedy_pattern_names,
@@ -266,5 +270,39 @@ impl<'r> Suggester<'_, 'r, '_> {
 
     fn handle(&self, path: &PatternPath) -> Option<Handle<'r>> {
         self.intro.at(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Literal, Reference, Sequence};
+
+    #[test]
+    fn building_one_readies_the_root_as_exec_would() {
+        // `x = "a" x?`-shaped: the root has a reference, so it has an
+        // implicit scope to ready. The first suggestion finds it ready and
+        // doesn't check the grammar again.
+        let root: Pattern = crate::Choice::new(
+            "x",
+            vec![
+                Sequence::new(
+                    "ax",
+                    vec![
+                        Literal::new("a", "a").unwrap().into(),
+                        Reference::new("x").into(),
+                    ],
+                )
+                .unwrap()
+                .into(),
+                Literal::new("b", "b").unwrap().into(),
+            ],
+        )
+        .unwrap()
+        .into();
+        assert!(crate::link::readied_scope_ref(&root).is_none());
+
+        let auto_complete = AutoComplete::new(root, AutoCompleteOptions::default()).unwrap();
+        assert!(crate::link::readied_scope_ref(auto_complete.pattern()).is_some());
     }
 }

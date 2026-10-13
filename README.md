@@ -7,6 +7,7 @@ WebAssembly build for JavaScript.
 |---|---|
 | `crates/cpat-core` | The parser: patterns, cursor, read-only tree. No platform code. |
 | `crates/cpat-wasm` | wasm-bindgen layer plus `js/index.mjs`, clarity-pattern-parser's JS API over it. |
+| `conformance` | The differential conformance harness (TS v12 vs native vs wasm), its corpus, and the speed report. |
 
 ## Quick start
 
@@ -23,13 +24,17 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 15)
+## What's in the box (milestone 16)
 
 `Literal`, `Regex`, `Sequence`, `Choice`, `Repeat` (unbounded or bounded, with an optional
 divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for recursive
 grammars, `RightAssociated`, `TakeUntil`, `Block`, and `Custom` for your own patterns (a
 `CustomParse` whose own code fails stops the parse with `Cursor::halt_custom`, and `exec`
 returns `PatternError::CustomFailed`).
+
+Everything below behaves as clarity-pattern-parser v12 does, checked by running both on 140 349
+cases from real test suites ([Conformance with v12](#conformance-with-v12)); the few
+differences are listed and explained in `conformance/allowlist.json` and DESIGN.md §23.
 
 `Choice` is ordered (the first alternative that matches wins) unless some alternatives are
 operators: sequences that start or end with a reference to the choice itself (`expr "+" expr`,
@@ -328,6 +333,38 @@ const grammar = await Grammar.parse(`import { name } from "names.cpat"\nhi = "hi
   names nothing throws when `exec` starts, not when the parse reaches it; input nested too deep
   is `cursor.tooDeep`, not a `RangeError`.
 
+## Conformance with v12
+
+`node conformance/run.mjs` is the parity check. It builds the release native engine
+(`conformance/native`) and the wasm package, then runs the corpus through TS v12 (under tsx,
+against v12's `src`; set `CPAT_V12` if the checkout isn't at `../clarity-pattern-parser-v12`),
+cpat-rs native and cpat-wasm, and compares both cpat engines with v12: grammar builds (or the
+error message), match or no match, every tree (names, types, UTF-16 ranges, values), the error
+and furthest error, `generateErrorMessage`, and AutoComplete's options, `isComplete` and
+`errorAtIndex`. It prints a summary and the differences grouped by kind, writes
+`target/conformance/report.md`, and exits 0 only when every difference is explained by
+`conformance/allowlist.json` (each entry cites the decision behind it in DESIGN.md or
+MIGRATION-v12.md) and no entry is stale. Last run: 140 349 cases, 0 unexplained differences.
+
+- `--no-build` reuses the existing builds; `--examples N` prints more examples per group.
+- `--self-test` shifts one native tree range on purpose (`--perturb`) and checks that the run
+  fails with exactly that unexplained difference.
+- The corpus (`conformance/corpus/*.json`) is what real tests ran: every input agent-harness's
+  vitest suite runs through its 11 `.cpat` grammars, and every input v12's
+  `typescript.test.ts`, `Grammar.test.ts` and `Cut.test.ts` run through their grammars. The
+  run adds a truncation at every token boundary (also run through AutoComplete) and a few
+  single-character deletions of each input. `node conformance/capture/capture.mjs --scratch
+  <dir>` recaptures it, configuring both test runs in `<dir>` only (set `AGENT_HARNESS` if
+  agent-harness's `packages/harness` isn't at `../agent-harness/packages/harness`).
+- `node --test conformance/test/*.test.mjs` tests the harness itself.
+
+`node conformance/bench.mjs --out <dir>` is the speed report, not a test (nothing is asserted):
+grammar build, `exec` throughput and AutoComplete for every corpus grammar in TS v12, native
+(release) and wasm (release), with warm-up and 15 timed runs each (`--runs`, `--warmup`), written
+to `<dir>/bench.md` (median and p90 per grammar, speed-ups over v12) and `<dir>/bench.json`.
+DESIGN.md §23 summarizes the last one: native parses 3–5× faster than v12; AutoComplete in wasm
+is the slow spot.
+
 ## Working on it
 
 ```sh
@@ -335,6 +372,7 @@ cargo test --workspace                       # Rust tests
 cd crates/cpat-wasm
 wasm-pack build --target nodejs --release --out-dir pkg-node
 node --test js/*.test.mjs                     # JS tests against the wasm build
+cd ../.. && node conformance/run.mjs          # parity with TS v12 (needs v12's checkout)
 ```
 
 **Positions are byte offsets in Rust and UTF-16 offsets in JS.** The wasm layer converts at the

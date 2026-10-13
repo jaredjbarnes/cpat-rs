@@ -1,0 +1,354 @@
+{
+ "name": "date-expr",
+ "suite": "agent-harness",
+ "file": "tools/date_expr/grammar.cpat",
+ "grammars": [
+  {
+   "id": "4d15465e3ca9c40a",
+   "origin": "agent/__tests__/agent.test.ts :: ",
+   "text": "# date_expr — GNU-coreutils-style \"date input formats\" grammar.\n#\n# A date expression is a whitespace-separated SEQUENCE of items. Each\n# item either sets ABSOLUTE fields (a calendar date, a time of day, a\n# timezone, an epoch stamp) or accumulates a RELATIVE offset (`+3 days`,\n# `2 weeks ago`) or a weekday adjust (`next monday`). The visitor folds\n# the whole sequence into one `DateItems` accumulator; `fold.ts` then\n# resolves it against `now`.\n#\n# This mirrors how `src/calc/grammar.cpat` and `src/jq/grammar.cpat` are\n# structured: regex/string leaves, `+` sequence, `|` ordered choice, `?`\n# optional, `(item, sep)+` repetition. There is NO operator precedence\n# here — a date expression is a flat list, so we use a flat repetition\n# (`items`) instead of calc's expression-promotion.\n#\n# PEG ordered choice: `item`'s alternatives are listed MOST-SPECIFIC\n# first so a longer form commits before a shorter prefix can match\n# (e.g. an ISO datetime before a bare calendar date; a timezone-bearing\n# time before a bare time).\n#\n# Timezones: `Z`/`UT`/`GMT`/`UTC`, the common US abbrevs, numeric\n# `±HH[:]MM` offsets, AND full IANA `Area/Location` names (e.g.\n# `America/New_York`, or GNU's `TZ=\"…\"` prefix) — the latter resolved to\n# a DST-correct offset at the instant via `Intl` in the folder.\n\n# ─── Whitespace (also swallows a leading comma, e.g. \"May 16, 2026\") ──\nws = /(?:[ \\t\\n\\r]+|,[ \\t\\n\\r]*)+/\n\n# ─── Primitive numeric leaves ───────────────────────────────────────\nsign      = /[+-]/\nyear4     = /\\d{4}/\nmon2      = /\\d{1,2}/\nday2      = /\\d{1,2}/\nintNum    = /\\d+/\nfracSec   = /\\.\\d+/\n\n# ─── Month names (long + 3-letter abbrev, case-insensitive) ─────────\n# cpat regex leaves don't accept a trailing `/i` flag, so case-folding\n# uses inline `(?i:...)` groups throughout this grammar.\nmonthName =\n  /(?i:january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sep|october|oct|november|nov|december|dec)\\b/\n\n# ─── Day-of-week names (long + abbrev, case-insensitive) ────────────\n# Trailing `s` allowed for the `next 2 fridays` plural form.\ndowName =\n  /(?i:sunday|sun|monday|mon|tuesday|tue|wednesday|wed|thursday|thu|friday|fri|saturday|sat)s?\\b/\n\n# ─── Timezone tokens ────────────────────────────────────────────────\n# Named zones map to fixed offsets in the visitor. Numeric offsets\n# (`Z`, `+05:00`, `-0800`) are parsed structurally.\ntzNamed   = /(?i:UTC|GMT|UT|EST|EDT|CST|CDT|MST|MDT|PST|PDT)\\b/\ntzZulu    = /[Zz]/\ntzNumeric = /[+-]\\d{2}:?\\d{2}/\n# IANA `Area/Location` name (requires a `/`, so it never steals a bare\n# word). Validated + resolved to a DST-correct offset via Intl in the\n# folder; an unknown name fails the parse. Allows 3-part names\n# (`America/Argentina/Buenos_Aires`) and `+`/`-` (`Etc/GMT+5`).\ntzIana    = /[A-Za-z]+(?:\\/[A-Za-z0-9_+-]+)+/\n# Named zones / numeric offsets are distinct shapes; tzIana (has a `/`)\n# is the catch-all, tried last.\ntzOffset  = tzZulu | tzNumeric | tzNamed | tzIana\n# GNU's `TZ=\"America/New_York\"` prefix form (quoted or bare). Matched as\n# one token; the visitor strips `TZ=` and any quotes.\ntzAssign  = /(?i:TZ)=(?:\"[^\"]+\"|\\S+)/\n\n# ─── Epoch: @SECONDS (optionally fractional) ────────────────────────\nepochItem = /@\\d+(?:\\.\\d+)?/\n\n# ─── Time of day: HH:MM[:SS[.fff]] [am|pm] [tz] ─────────────────────\nhour2     = /\\d{1,2}/\nmin2      = /\\d{2}/\nsec2      = /\\d{2}/\nampm      = /(?i:am|pm|a\\.m\\.|p\\.m\\.)\\b/\nclockSecs = \":\" + sec2 + fracSec?\ntimeCore  = hour2 + \":\" + min2 + clockSecs?\ntimeOfDay = timeCore + (ws? + ampm)? + (ws? + tzOffset)?\n\n# ─── ISO 8601 combined date+time ────────────────────────────────────\nisoDate     = year4 + \"-\" + mon2 + \"-\" + day2\n# Date/time separator is `T`, `t`, or a single space. A trailing zone\n# may be glued (`...00Z`) or space-separated (`... UTC`), so allow `ws?`.\nisoDateTime = isoDate + /[Tt ]/ + timeCore + (ws? + tzOffset)?\n\n# ─── Calendar dates (several spellings) ─────────────────────────────\n# YYYY-MM-DD and YYYY/MM/DD (4-digit year leads).\ndashYMD  = year4 + \"-\" + mon2 + \"-\" + day2\nslashYMD = year4 + \"/\" + mon2 + \"/\" + day2\n# MM/DD/YYYY (US, year trails).\nslashMDY = mon2 + \"/\" + day2 + \"/\" + year4\n# DD-Mon-YYYY (e.g. 16-May-2026).\ndMonY    = day2 + \"-\" + monthName + \"-\" + year4\n# \"Month D[ ,] [YYYY]\" and \"D Month [YYYY]\" — year optional.\nmonthDY  = monthName + ws + day2 + (ws + year4)?\ndMonthY  = day2 + ws + monthName + (ws + year4)?\n\ncalendarDate = isoDateTime | dashYMD | slashYMD | slashMDY | dMonY | monthDY | dMonthY\n\n# ─── Day-of-week with optional this/next/last + optional count ──────\nthisKw = /(?i:this)\\b/\nnextKw = /(?i:next)\\b/\nlastKw = /(?i:last)\\b/\ndowKindKw = thisKw | nextKw | lastKw\n# `next 2 fridays` — a count between the kind and the day name.\ndowItem = (dowKindKw + ws)? + (intNum + ws)? + dowName\n\n# ─── Relative units ─────────────────────────────────────────────────\n# Singular/plural handled in the visitor by stem matching.\nunitWord =\n  /(?i:years?|yrs?|months?|fortnights?|weeks?|days?|hours?|hrs?|minutes?|mins?|seconds?|secs?)\\b/\nagoKw = /(?i:ago)\\b/\n# `[+-]?[N] UNIT [ago]` — the count is optional (`+ day` ≡ `+1 day`).\nrelUnitItem = (sign + ws?)? + (intNum + ws)? + unitWord + (ws + agoKw)?\n# `next/last/this WEEK` etc. — kind + unit, no count.\nrelKindItem = dowKindKw + ws + unitWord\n\n# ─── Bare keywords ──────────────────────────────────────────────────\nnowKw       = /(?i:now)\\b/\ntodayKw     = /(?i:today)\\b/\ntomorrowKw  = /(?i:tomorrow)\\b/\nyesterdayKw = /(?i:yesterday)\\b/\nnoonKw      = /(?i:noon)\\b/\nmidnightKw  = /(?i:midnight)\\b/\nkeywordItem = nowKw | todayKw | tomorrowKw | yesterdayKw | noonKw | midnightKw\n\n# ─── One item (ordered: most-specific / longest-prefix first) ───────\n# epoch → calendar (incl. ISO datetime) → time-of-day → relative\n# (kind+unit, then count+unit) → day-of-week → bare keywords.\n# `relKindItem` precedes `dowItem` so `next week` is a relative item,\n# not a (failed) weekday; `dowItem` precedes nothing that would steal\n# `next monday`. Keywords last — they're the shortest, most ambiguous.\nitem =\n    tzAssign\n  | epochItem\n  | calendarDate\n  | timeOfDay\n  | relKindItem\n  | relUnitItem\n  | dowItem\n  | keywordItem\n\n# ─── Item sequence ──────────────────────────────────────────────────\nitems = (item, ws)+\n\n# ─── Top level ──────────────────────────────────────────────────────\ndateExpr = ws? + items + ws?\n",
+   "cases": [
+    {
+     "rule": "dateExpr",
+     "input": "",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — failures return null > empty string"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "+7 days",
+     "origin": "tools/__tests__/date.test.ts :: date tool > --date '+7 days' adds a week"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "+90 minutes",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — relative & keywords > +90 minutes"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "06/21/2026",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — calendar dates default to midnight > MM/DD/YYYY"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "1 fortnight",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — relative & keywords > 1 fortnight = +14 days"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "12:00 am",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — time of day > 12-hour am/pm"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "12:00 pm",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — time of day > 12-hour am/pm"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "14:30",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — time of day > bare HH:MM uses today's date"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "16 May 2026",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — calendar dates default to midnight > D Month YYYY"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "16-May-2026",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — calendar dates default to midnight > DD-Mon-YYYY"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2020-03-04",
+     "origin": "tools/__tests__/date.test.ts :: date +FORMAT > literal text around the codes survives"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2020-03-04 13:45:56",
+     "origin": "tools/__tests__/date.test.ts :: date +FORMAT > the compound codes work"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2024-06-10",
+     "origin": "tools/__tests__/date.test.ts :: date tool > --date 'YYYY-MM-DD' --format '%Y-%m-%d' round-trips (no TZ off-by-one)"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-01-01",
+     "origin": "tools/__tests__/date.test.ts :: date tool > %j returns day-of-year padded to 3 digits"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-01-01 09:00 America/New_York",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — IANA time zones (Intl, DST-correct) > America/New_York in winter is EST (-5)"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-01-15",
+     "origin": "tools/__tests__/date.test.ts :: date tool > %B / %b return the month name and abbreviation"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-01-31 +1 month",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — relative-month/year overflow (not clamp) > 2026-01-31 + 1 month → 2026-03-03"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-01-31 +1 year",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — relative-month/year overflow (not clamp) > 2026-01-31 + 1 year → 2027-01-31"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-02-28 +1 day",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — relative-month/year overflow (not clamp) > 2026-02-28 + 1 day → 2026-03-01"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-05-16",
+     "origin": "tools/__tests__/date.test.ts :: date tool > --date ISO anchor only"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-05-16 +14 days",
+     "origin": "tools/__tests__/date.test.ts :: date tool > --date ISO anchor + offset"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-05-24",
+     "origin": "tools/__tests__/date.test.ts :: date tool > %u and %w report weekday numbers"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-05-27",
+     "origin": "tools/__tests__/date.test.ts :: date tool > %A returns the full weekday name"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-06-21",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — calendar dates default to midnight > YYYY-MM-DD"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-06-21 + 3 days 2 hours",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — chaining multiple items > anchor + multiple relative offsets"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-06-21 00:00 America/Argentina/Buenos_Aires",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — IANA time zones (Intl, DST-correct) > three-part zone name parses"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-06-21 09:00 Not/AZone",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — IANA time zones (Intl, DST-correct) > an unknown IANA name fails the parse (clean error)"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-06-21 09:00 PST",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — ISO 8601 + timezones > named US zone abbrev (PST = -0800)"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-06-21 09:00 UTC",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — ISO 8601 + timezones > GMT / UTC named zones"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-06-21 14:30",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — time of day > date + time"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-06-21 14:30:15.250",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — time of day > seconds + fractional"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-06-21T09:00:00+05:00",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — ISO 8601 + timezones > ISO datetime with +HH:MM offset → UTC"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-06-21T09:00:00-0800",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — ISO 8601 + timezones > compact ±HHMM offset"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-06-21T14:30:00Z",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — ISO 8601 + timezones > ISO datetime with Z"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-07-01 09:00 America/New_York",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — IANA time zones (Intl, DST-correct) > America/New_York in summer is EDT (-4)"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026-12-31",
+     "origin": "tools/__tests__/date.test.ts :: date tool > %j returns day-of-year padded to 3 digits"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2026/06/21",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — calendar dates default to midnight > YYYY/MM/DD"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "2:30 pm",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — time of day > 12-hour am/pm"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "3 weeks ago",
+     "origin": "tools/__tests__/date.test.ts :: date tool > --date '3 weeks ago' subtracts 21 days"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "@0",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — epoch > @0 is the Unix epoch, ignoring base"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "@1700000000",
+     "origin": "tools/__tests__/date.test.ts :: date +FORMAT > the compound codes work"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "@1700000000.5",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — epoch > fractional @SECONDS"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "May 16",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — calendar dates default to midnight > Month name without year inherits base year"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "May 16 2026",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — calendar dates default to midnight > Month D, YYYY"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "May 16, 2026",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — calendar dates default to midnight > Month D, YYYY"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "TZ=\"Europe/London\" 2026-07-01 14:00",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — IANA time zones (Intl, DST-correct) > TZ=\"Europe/London\" prefix in summer is BST (+1)"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "TZ=Asia/Kolkata 2026-06-21 12:00",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — IANA time zones (Intl, DST-correct) > TZ= bare (unquoted) prefix, half-hour zone (Kolkata +5:30)"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "friday",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — weekday adjust (base 2026-06-22 is Monday) > bare friday = coming Friday this week"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "last friday",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — weekday adjust (base 2026-06-22 is Monday) > last friday = -3 (previous Friday)"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "last monday",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — weekday adjust (base 2026-06-22 is Monday) > last monday = -7"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "last month",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — relative & keywords > last month / next year"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "midnight",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — time of day > noon / midnight keywords"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "monday",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — weekday adjust (base 2026-06-22 is Monday) > this monday / bare monday = today"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "next 2 fridays",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — weekday adjust (base 2026-06-22 is Monday) > next 2 fridays = first Friday + 7"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "next friday",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — weekday adjust (base 2026-06-22 is Monday) > next friday = +4 (Mon→Fri forward)"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "next monday",
+     "origin": "tools/__tests__/date.test.ts :: date tool > --date 'next monday' resolves (no longer rejected)"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "next week",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — relative & keywords > next week = +1 week"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "next week + 6 days",
+     "origin": "tools/__tests__/date.test.ts :: date tool > --date with GNU-style 'next week + 6 days' now resolves (+13 days)"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "next year",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — relative & keywords > last month / next year"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "noon",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — time of day > noon / midnight keywords"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "now",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — relative & keywords > now / today resolve to the base instant"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "now - 1 day",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — relative & keywords > now - 1 day keeps the base time of day"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "this monday",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — weekday adjust (base 2026-06-22 is Monday) > this monday / bare monday = today"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "today",
+     "origin": "tools/__tests__/date.test.ts :: date tool > --date 'today' returns today's date"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "tomorrow",
+     "origin": "tools/__tests__/date.test.ts :: date tool > --date 'tomorrow' is +1 day"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "tomorrow 14:00",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — chaining multiple items > tomorrow at an explicit time"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "yesterday",
+     "origin": "tools/__tests__/date.test.ts :: date tool > --date 'yesterday' is -1 day"
+    },
+    {
+     "rule": "dateExpr",
+     "input": "zzz qqq",
+     "origin": "tools/date_expr/__tests__/parse.test.ts :: parseGnuDate — failures return null > pure garbage"
+    }
+   ]
+  }
+ ]
+}

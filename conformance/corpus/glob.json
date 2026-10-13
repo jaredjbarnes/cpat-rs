@@ -1,0 +1,154 @@
+{
+ "name": "glob",
+ "suite": "agent-harness",
+ "file": "shell/glob.cpat",
+ "grammars": [
+  {
+   "id": "131d87fe5059ff1e",
+   "origin": "agent/__tests__/agent.test.ts :: ",
+   "text": "# Glob pattern grammar — the structured form of a shell glob, including\n# extended globbing (`shopt -s extglob`). The Glob matcher parses a\n# pattern with this grammar and walks the resulting AST into a RegExp.\n#\n# Only patterns that contain an extglob opener route through here; plain\n# `*` / `?` / `[…]` globs keep their original fast string scan. So this\n# grammar always parses at least one extglob group, but it also has to\n# understand every ordinary glob metachar that can sit alongside one.\n#\n# The five extglob operators each take a `|`-separated list and may nest:\n#   ?(list) *(list) +(list) @(list) !(list)\n# Nesting is handled by ordinary grammar recursion (`itemIn` → `extGroup`)\n# rather than a Block delimiter — a raw depth-scan would miscount escaped\n# parens, whereas the `escaped` rule (tried before any literal) consumes\n# `\\(` / `\\)` / `\\|` as literals so they never affect group structure.\n\n# ─── Leaf metacharacters ────────────────────────────────────────────\n# `escaped` is first in every item list so `\\X` is always a literal.\nescaped     = /\\\\./\ndoubleStar  = \"**\"\nstar        = \"*\"\nquestion    = \"?\"\n\n# Character class `[…]` / `[!…]` as one escape-aware regex: a leading `]`\n# (or `!]`) is part of the class (`[]]`, `[!]]`), `\\]` stays inside, and\n# the class ends at the first unescaped `]`.\ncharClass   = /\\[!?\\]?(?:\\\\.|[^\\]])*\\]/\n\n# `extOpen` is a negative-lookahead sentinel (operator char glued to `(`):\n# a literal run stops before it so the operator starts a group instead.\nextOpen     = /[?*+@!]\\(/\nextOp       = /[?*+@!]/\nopen        = \"(\"\nclose       = \")\"\n\n# ─── Literal runs ───────────────────────────────────────────────────\n# A literal char is anything not handled above. Two variants: top-level\n# treats `(` `)` `|` as ordinary chars; inside a group `(`/`)` bound\n# (nested) groups and `|` divides alternatives, so all three are excluded\n# there. Every char is guarded by `!extOpen` so a run never swallows the\n# operator char of a following extglob group.\nlitTopChar  = /[^*?\\[\\\\]/\nlitInChar   = /[^*?\\[\\\\|()]/\nlitTopUnit  = !extOpen + litTopChar\nlitInUnit   = !extOpen + litInChar\nlitTopRun   = (litTopUnit)+\nlitInRun    = (litInUnit)+\n\n# ─── Items ──────────────────────────────────────────────────────────\n# extGroup is tried first so an `op(` commits to a group before the\n# operator char is read as a literal.\nitemTop = extGroup | escaped | charClass | doubleStar | star | question | litTopRun\nitemIn  = extGroup | escaped | charClass | doubleStar | star | question | litInRun\n\n# ─── Extglob group ──────────────────────────────────────────────────\n# `extGroup` recurses through `itemIn`, so nested groups Just Work without\n# a delimiter scan. An empty alternative (`@(a|)`) is allowed.\nextAlt   = (itemIn)*\nextAlts  = (extAlt, \"|\")+\nextGroup = extOp + open + extAlts + close\n\n# ─── Top level ──────────────────────────────────────────────────────\nglobPattern = (itemTop)+\n",
+   "cases": [
+    {
+     "rule": "globPattern",
+     "input": "!(*.bak)",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob matcher > string mode (case / [[ ]] / pex contexts)"
+    },
+    {
+     "rule": "globPattern",
+     "input": "!(*.o|*.a)",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob matcher > !(…) — single top-level negation is exact"
+    },
+    {
+     "rule": "globPattern",
+     "input": "!(*.txt)",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob in the shell > [[ == ]] — extglob glob match and negation"
+    },
+    {
+     "rule": "globPattern",
+     "input": "*.!(c)",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob matcher > !(…) — single top-level negation is exact"
+    },
+    {
+     "rule": "globPattern",
+     "input": "*.@(jpg|png)",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob in the shell > [[ == ]] — extglob glob match and negation"
+    },
+    {
+     "rule": "globPattern",
+     "input": "*.@(jpg|png|gif)",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob matcher > @(…) — exactly one of the alternatives"
+    },
+    {
+     "rule": "globPattern",
+     "input": "+(+(a))",
+     "origin": "shell/__tests__/resource_limits.test.ts :: glob / parameter-expansion patterns can't ReDoS > a risky replace pattern is likewise refused"
+    },
+    {
+     "rule": "globPattern",
+     "input": "+(+(a))b",
+     "origin": "shell/__tests__/resource_limits.test.ts :: glob / parameter-expansion patterns can't ReDoS > a nested-quantifier extglob is refused (no linear engine) instead of hanging"
+    },
+    {
+     "rule": "globPattern",
+     "input": "+([0-9]).log",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob matcher > +(…) — one or more"
+    },
+    {
+     "rule": "globPattern",
+     "input": "+(a|b)",
+     "origin": "shell/__tests__/resource_limits.test.ts :: glob / parameter-expansion patterns can't ReDoS > ordinary globs and simple extglobs are unaffected"
+    },
+    {
+     "rule": "globPattern",
+     "input": ".@(tar.gz|zip)",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob in the shell > parameter expansion — extglob strip pattern"
+    },
+    {
+     "rule": "globPattern",
+     "input": "/@(a|b)",
+     "origin": "shell/__tests__/interactions.test.ts :: extglob — `@(a|b)` parses as a glob group and expands > `/@(a|b)` expands to the matching paths (not a subshell)"
+    },
+    {
+     "rule": "globPattern",
+     "input": "/d/!(*.txt)",
+     "origin": "shell/__tests__/interactions.test.ts :: extglob — `@(a|b)` parses as a glob group and expands > `!(…)` negation excludes the matching files"
+    },
+    {
+     "rule": "globPattern",
+     "input": "/d/!(*.txt|*.md)",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob in the shell > filesystem glob — !(…) excludes matches"
+    },
+    {
+     "rule": "globPattern",
+     "input": "/d/*.@(txt|md)",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob in the shell > filesystem glob — @(…) expands against the file store"
+    },
+    {
+     "rule": "globPattern",
+     "input": "/d/@(nope|missing).xyz",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob in the shell > filesystem glob — no match preserves the literal pattern"
+    },
+    {
+     "rule": "globPattern",
+     "input": "@(a\\(b|c)",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob matcher > escaped parens inside a group are literals, not group delimiters"
+    },
+    {
+     "rule": "globPattern",
+     "input": "@(a\\)b|c)",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob matcher > escaped parens inside a group are literals, not group delimiters"
+    },
+    {
+     "rule": "globPattern",
+     "input": "@(a\\|b|c)",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob matcher > an escaped pipe inside a group is a literal, not a divider"
+    },
+    {
+     "rule": "globPattern",
+     "input": "@(a|b)\\)c",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob matcher > escaped parens at the top level (alongside a group) stay literal"
+    },
+    {
+     "rule": "globPattern",
+     "input": "@(foo|+([0-9]))",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob matcher > nested groups"
+    },
+    {
+     "rule": "globPattern",
+     "input": "@(foo|bar)",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob matcher > @(…) — exactly one of the alternatives"
+    },
+    {
+     "rule": "globPattern",
+     "input": "@(start|stop|restart)",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob in the shell > case — extglob pattern alternation"
+    },
+    {
+     "rule": "globPattern",
+     "input": "@(unclosed",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob matcher > an unterminated group is treated literally (no extglob)"
+    },
+    {
+     "rule": "globPattern",
+     "input": "\\(@(a|b)",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob matcher > escaped parens at the top level (alongside a group) stay literal"
+    },
+    {
+     "rule": "globPattern",
+     "input": "a!(b)c",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob matcher > !(…) — single top-level negation is exact"
+    },
+    {
+     "rule": "globPattern",
+     "input": "a*(b)c",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob matcher > *(…) — zero or more"
+    },
+    {
+     "rule": "globPattern",
+     "input": "file?(s).bak",
+     "origin": "shell/__tests__/extglob.test.ts :: extglob matcher > ?(…) — zero or one"
+    }
+   ]
+  }
+ ]
+}

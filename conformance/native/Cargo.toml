@@ -1,0 +1,10 @@
+[package]
+name = "cpat-conformance"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The native engine of the conformance harness and benchmark (conformance/run.mjs, conformance/bench.mjs)."
+
+[dependencies]
+cpat-core = { path = "../../crates/cpat-core" }
+serde_json = "1.0.154"

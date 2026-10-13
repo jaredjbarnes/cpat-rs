@@ -1,0 +1,279 @@
+{
+ "name": "find",
+ "suite": "agent-harness",
+ "file": "find/grammar.cpat",
+ "grammars": [
+  {
+   "id": "ec376c0e6c1d05bc",
+   "origin": "agent/__tests__/agent.test.ts :: ",
+   "text": "# find — predicate-expression grammar.\n#\n# Input shape: the encoder in `./encoder.ts` takes the shell's\n# tokenized args + the `_meta` channel and produces a single string\n# where:\n#   - Structural tokens (keywords, operators, terminators, grouping)\n#     are bare and whitespace-separated.\n#   - Every value is either a bareword (if its source was a single\n#     bareword wordPart) or a double-quoted token (if the source had\n#     a quoted / expansion / brace-list part).\n#   - Inside `-exec ... ;` / `-exec ... +` the encoder always quotes\n#     args (even barewords), so the only bare tokens between -exec\n#     and its terminator are the terminator itself.\n#\n# Structure: the grammar produces a FLAT LIST of items (atoms +\n# `-o` markers + `-a`/`-and` no-op markers). The visitor groups\n# items by `-o` boundaries, ANDs items within each group, and ORs\n# the groups together. This avoids left-recursive infix grammar\n# and keeps the cpat side small.\n#\n# Precedence (visitor):\n#   - `-not` / `!` (prefix on a single atom — handled in `notExpr`)\n#   - implicit AND between adjacent atoms (visitor combines)\n#   - `-o` / `-or` (lowest — visitor splits chain on these)\n\n# ─── Whitespace ──────────────────────────────────────────────\nws = /[ \\t\\n\\r]+/\n\n# ─── Tokens ─────────────────────────────────────────────────\n# Standard double-quoted string. Visitor unescapes `\\\\` and `\\\"`.\nquoted = /\"(?:\\\\.|[^\"\\\\])*\"/\n\n# A bareword is any non-whitespace, non-quote, non-paren run. Listed\n# AFTER the keyword rules in alternations so cpat tries the keyword\n# literals first and `bareword` is the fallback for everything else.\n# Includes `;` and `+` so a value like `foo+bar` parses as one token\n# — `-exec` terminator disambiguation is handled by the encoder\n# always quoting exec args.\nbareword = /[^\"\\s()]+/\n\n# ─── Structural single-char tokens ──────────────────────────\nopenParen  = \"(\"\ncloseParen = \")\"\nsemi       = \";\"\nplus       = \"+\"\n\n# ─── Operator keywords ──────────────────────────────────────\nnotKw  = \"-not\"\nbangKw = \"!\"\nnotOp  = notKw | bangKw\n\nandKw  = \"-and\"\naKw    = \"-a\"\nandOp  = andKw | aKw\n\norKw   = \"-or\"\noKw    = \"-o\"\norOp   = orKw | oKw\n\n# ─── Predicate keywords ─────────────────────────────────────\nmaxdepthKw = \"-maxdepth\"\nmindepthKw = \"-mindepth\"\ntypeKw     = \"-type\"\nnameKw     = \"-name\"\ninameKw    = \"-iname\"\npathKw     = \"-path\"\nipathKw    = \"-ipath\"\nregexKw    = \"-regex\"\niregexKw   = \"-iregex\"\nsizeKw     = \"-size\"\nemptyKw    = \"-empty\"\n\n# ─── Action keywords ────────────────────────────────────────\nprintKw  = \"-print\"\nprint0Kw = \"-print0\"\ndeleteKw = \"-delete\"\nexecKw   = \"-exec\"\n\n# ─── Value (predicate argument) ─────────────────────────────\n# Accepts a quoted token OR a bareword. The encoder guarantees that\n# values originating from quoted / expansion / brace-list parts arrive\n# as `quoted`, so a value that happens to spell a keyword is\n# unambiguous — the grammar isn't in keyword-position here.\nvalue = quoted | bareword\n\n# ─── Predicates ─────────────────────────────────────────────\npMaxdepth = maxdepthKw + ws + value\npMindepth = mindepthKw + ws + value\npType     = typeKw     + ws + value\npName     = nameKw     + ws + value\npIname    = inameKw    + ws + value\npPath     = pathKw     + ws + value\npIpath    = ipathKw    + ws + value\npRegex    = regexKw    + ws + value\npIregex   = iregexKw   + ws + value\npSize     = sizeKw     + ws + value\npEmpty    = emptyKw\n\npredicate = pMaxdepth\n          | pMindepth\n          | pType\n          | pName\n          | pIname\n          | pPath\n          | pIpath\n          | pRegex\n          | pIregex\n          | pSize\n          | pEmpty\n\n# ─── Actions ────────────────────────────────────────────────\n# -exec collects (quoted)+ until a bare `;` or `+`. The encoder\n# always quotes -exec args, so the only bareword between -exec and\n# the terminator is the terminator itself.\nexecArg     = quoted\nexecArgList = (execArg, ws trim)+\nexecTerm    = semi | plus\naExec       = execKw + ws + execArgList + ws + execTerm\n\naPrint  = printKw\naPrint0 = print0Kw\naDelete = deleteKw\n\naction = aExec | aPrint0 | aDelete | aPrint\n\n# ─── Grouping ───────────────────────────────────────────────\n# `( ... )` wraps an inner chainItems list so precedence can be\n# overridden. The visitor descends transparently into the group's\n# inner chain.\ngroup = openParen + ws? + chainItems + ws? + closeParen\n\n# ─── Negation ───────────────────────────────────────────────\n# `-not` / `!` is a prefix that binds to a single atom (the atom\n# rule includes notExpr so `-not -not -name foo` works via right\n# recursion).\nnotExpr = notOp + ws + atom\n\n# ─── Atom ───────────────────────────────────────────────────\natom = group | notExpr | action | predicate\n\n# ─── Chain items ────────────────────────────────────────────\n# The visitor reads this list, splits on orMarker, AND-joins atoms\n# within each segment, OR-joins segments. andMarker is consumed by\n# the grammar (so `-a` / `-and` parse cleanly) but contributes no\n# semantics — implicit AND is the default between atoms.\norMarker  = orOp\nandMarker = andOp\nchainItem = orMarker | andMarker | atom\n\nchainItems = (chainItem, ws trim)+\n\n# ─── Top level ──────────────────────────────────────────────\n# pathArg is handled by `src/tools/find.ts` BEFORE encoding — it\n# peels off the leading non-keyword positional and only the\n# expression body is fed to cpat. So findExpr here is just an\n# optional chainItems wrapped in optional whitespace.\nfindExpr = ws? + chainItems? + ws?\n",
+   "cases": [
+    {
+     "rule": "findExpr",
+     "input": "( )",
+     "origin": "tools/__tests__/find.test.ts :: find — grouping with \\( ... \\) > empty group is valid (matches everything inside)"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-delete",
+     "origin": "tools/__tests__/find.test.ts :: find — -delete > removes a whole subtree (children-first via reverse order)"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-empty -type d",
+     "origin": "tools/__tests__/find.test.ts :: find — -empty > -empty matches empty directories"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-empty -type f",
+     "origin": "tools/__tests__/find.test.ts :: find — -empty > -empty matches zero-byte files"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-iname \"*.md\"",
+     "origin": "tools/__tests__/find.test.ts :: find — tree-walker mode (bash-style) > -iname glob matches case-insensitively"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-ipath \"*/API/*\"",
+     "origin": "tools/__tests__/find.test.ts :: find — -path / -ipath > -ipath matches case-insensitively"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-iregex \".*ALPHA.*\"",
+     "origin": "tools/__tests__/find.test.ts :: find — -regex / -iregex > -iregex matches case-insensitively"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-maxdepth 0",
+     "origin": "tools/__tests__/find.test.ts :: find — tree-walker mode (bash-style) > -maxdepth 0 returns only the starting path"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-maxdepth 1 -type f -print",
+     "origin": "tools/__tests__/find.test.ts :: find — tree-walker mode (bash-style) > THE BUG REPRO: find <path> -maxdepth 1 -type f -print"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-maxdepth foo",
+     "origin": "tools/__tests__/find.test.ts :: find — tree-walker mode (bash-style) > -maxdepth with invalid value errors cleanly"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-mindepth 1 -maxdepth 1 -type d",
+     "origin": "tools/__tests__/find.test.ts :: find — -mindepth > -mindepth combined with -maxdepth narrows the band"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-mindepth 1 -type d",
+     "origin": "tools/__tests__/find.test.ts :: find — -mindepth > -mindepth 1 excludes the starting PATH itself"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-mindepth 2 -type d",
+     "origin": "tools/__tests__/find.test.ts :: find — -mindepth > -mindepth 2 excludes immediate children"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-mindepth bogus",
+     "origin": "tools/__tests__/find.test.ts :: find — -mindepth > -mindepth with invalid value errors cleanly"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-name \"*.md\"",
+     "origin": "shell/__tests__/cwd.test.ts :: cwd in tools > find walks the cwd subtree when given a relative path (`.`)"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-path \"*/API/*\"",
+     "origin": "tools/__tests__/find.test.ts :: find — -path / -ipath > -path is case-sensitive"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-path \"*/api/*\"",
+     "origin": "tools/__tests__/find.test.ts :: find — -path / -ipath > -path matches against the full path with * crossing /"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-regex \".*\\\\.md\"",
+     "origin": "tools/__tests__/find.test.ts :: find — -regex / -iregex > -regex matches full path as BRE"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-regex \"[abc\"",
+     "origin": "tools/__tests__/find.test.ts :: find — -regex / -iregex > invalid regex fails cleanly"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-size +0c",
+     "origin": "tools/__tests__/find.test.ts :: find — -size > -size excludes directories"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-size +100c -type f",
+     "origin": "tools/__tests__/find.test.ts :: find — -size > -size +Nc matches files strictly larger than N bytes"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-size +1M -type f",
+     "origin": "tools/__tests__/find.test.ts :: find — -size > -size with M unit (MiB)"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-size +1k -type f",
+     "origin": "tools/__tests__/find.test.ts :: find — -size > -size with k unit (KiB)"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-size -2c -type f",
+     "origin": "tools/__tests__/find.test.ts :: find — -size > -size -Nc matches files strictly smaller than N bytes"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-size 1c -type f",
+     "origin": "tools/__tests__/find.test.ts :: find — -size > -size Nc matches exact byte count"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-size 1z",
+     "origin": "tools/__tests__/find.test.ts :: find — -size > -size with invalid arg errors cleanly"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type d",
+     "origin": "tools/__tests__/find.test.ts :: find — tree-walker mode (bash-style) > -type d filters to directories only"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f",
+     "origin": "tools/__tests__/find.test.ts :: find — tree-walker mode (bash-style) > -print is accepted as a no-op"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f ! -name \"*.bak\"",
+     "origin": "tools/__tests__/find.test.ts :: find — -not / ! > ! is an alias for -not"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f ( ( -name \"*.md\" -size +1k ) -o -name \"*.txt\" )",
+     "origin": "tools/__tests__/find.test.ts :: find — grouping with \\( ... \\) > nested groups parse correctly"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f ( -name \"*.md\" -o -name \"*.txt\" )",
+     "origin": "tools/__tests__/find.test.ts :: find — -o / OR > two -name predicates joined by -o match either pattern"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f ( -name \"*.md\" -o -name \"*.txt\" -o -name \"*.log\" )",
+     "origin": "tools/__tests__/find.test.ts :: find — -o / OR > three-way OR works (left-associative chain)"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f ( -name \"*.md\" -or -name \"*.txt\" )",
+     "origin": "tools/__tests__/find.test.ts :: find — -o / OR > -or is an alias for -o"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f ( -not -name \"*.md\" -o -name \"*.bak\" )",
+     "origin": "tools/__tests__/find.test.ts :: find — -not with -o / grouping > -not on one branch of an OR"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f -a -name \"*.md\" -a -size +1k",
+     "origin": "tools/__tests__/find.test.ts :: find — -a / -and explicit AND > -a as an explicit AND between predicates"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f -and -name \"*.md\"",
+     "origin": "tools/__tests__/find.test.ts :: find — -a / -and explicit AND > -and works the same as -a"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f -delete",
+     "origin": "tools/__tests__/find.test.ts :: find — -delete > suppresses the default print (delete is the action)"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f -exec \"cat\" \"/no/such/path\" ;",
+     "origin": "tools/__tests__/find.test.ts :: find — -exec > -exec inner failure propagates to overall success: false"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f -exec \"cat\" \"{}\" ;",
+     "origin": "tools/__tests__/find.test.ts :: find — -exec > -exec suppresses the default print"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f -name \"*.bak\" -delete",
+     "origin": "tools/__tests__/find.test.ts :: find — -delete > removes matching files"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f -name \"*.md\" -exec \"cat\" \"{}\" +",
+     "origin": "tools/__tests__/find.test.ts :: find — -exec > -exec CMD {} + invokes CMD ONCE with all paths in place of {}"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f -name \"*.md\" -exec \"cat\" \"{}\" ;",
+     "origin": "tools/__tests__/find.test.ts :: find — -exec > -exec CMD {} \\; invokes CMD once per match with {} → path"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f -name \"*.md\" -exec \"cat\" +",
+     "origin": "tools/__tests__/find.test.ts :: find — -exec > batch-mode -exec without {} appends all paths (lenient extension)"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f -name \"*.md\" -exec \"cat\" ;",
+     "origin": "tools/__tests__/find.test.ts :: find — -exec > single-mode -exec without {} does NOT auto-append the path (matches GNU)"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f -name \"*.md\" -o -name \"*.log\"",
+     "origin": "tools/__tests__/find.test.ts :: find — -o / OR > AND binds tighter than OR — `A B -o C` parses as `(A AND B) OR C`"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f -name \"*.md\" -size +1k",
+     "origin": "tools/__tests__/find.test.ts :: find — combinations > -name AND -size narrow together"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f -name file.md -exec \"echo\" \"{} -> {}\" ;",
+     "origin": "tools/__tests__/find.test.ts :: find — -exec > -exec substitutes {} multiple times in the same arg"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f -not ( -name \"*.bak\" -o -name \"*.tmp\" )",
+     "origin": "tools/__tests__/find.test.ts :: find — -not with -o / grouping > -not negates a grouped expression"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f -not -name \"*.bak\"",
+     "origin": "tools/__tests__/find.test.ts :: find — -not / ! > -not negates the next predicate"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f -not -not -name \"*.md\"",
+     "origin": "tools/__tests__/find.test.ts :: find — -not / ! > double -not cancels (still AND)"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f -print",
+     "origin": "tools/__tests__/find.test.ts :: find — tree-walker mode (bash-style) > -print is accepted as a no-op"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type f -print0",
+     "origin": "tools/__tests__/find.test.ts :: find — -print0 > -print0 separates matches with NUL and appends NUL at the end"
+    },
+    {
+     "rule": "findExpr",
+     "input": "-type x",
+     "origin": "tools/__tests__/find.test.ts :: find — tree-walker mode (bash-style) > -type with invalid value errors cleanly"
+    }
+   ]
+  }
+ ]
+}

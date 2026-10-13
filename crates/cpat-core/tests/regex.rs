@@ -133,6 +133,22 @@ fn lookaround_uses_the_backtracking_engine() {
 }
 
 #[test]
+fn a_backtracking_regex_matches_a_long_run_as_js_does() {
+    // The shell grammar's `dqLiteral`, on the 500 KB string an agent-harness
+    // test runs through it. fancy-regex's default backtrack limit gave up at
+    // about 500 000 characters; JS matches the whole run.
+    let source = r#"(?:\\[\s\S]|\$(?![{(A-Za-z_?@*#0-9])|[^"\\$`])+"#;
+    let literal = Regex::new("dqLiteral", source).unwrap();
+    assert!(literal.is_fancy());
+    let run = "a".repeat(600_000);
+    let mut literal: Pattern = literal.into();
+    assert_eq!(
+        parse_value(&mut literal, &format!("{run}\"")).map(|v| v.len()),
+        Some(600_000)
+    );
+}
+
+#[test]
 fn plain_sources_use_the_linear_engine() {
     assert!(!Regex::new("ws", r"[ \t]+").unwrap().is_fancy());
 }

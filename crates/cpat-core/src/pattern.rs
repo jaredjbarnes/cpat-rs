@@ -247,7 +247,7 @@ impl Pattern {
             | Pattern::Custom(_)
             | Pattern::Reference(_) => Children::Few([None, None, None]),
             Pattern::Sequence(p) => Children::Many(p.children.iter()),
-            Pattern::Choice(p) => Children::Many(p.alternatives.iter()),
+            Pattern::Choice(p) => Children::Many(p.alternatives().iter()),
             Pattern::Repeat(p) => Children::Few([Some(p.child()), p.divider(), None]),
             Pattern::Optional(p) => Children::Few([Some(&*p.child), None, None]),
             Pattern::Not(p) => Children::Few([Some(&*p.child), None, None]),
@@ -268,7 +268,7 @@ impl Pattern {
             | Pattern::Custom(_)
             | Pattern::Reference(_) => Children::Few([None, None, None]),
             Pattern::Sequence(p) => Children::Many(p.children.iter_mut()),
-            Pattern::Choice(p) => Children::Many(p.alternatives.iter_mut()),
+            Pattern::Choice(p) => Children::Many(p.alternatives_mut().iter_mut()),
             Pattern::Repeat(p) => {
                 let (child, divider) = p.parts_mut();
                 Children::Few([Some(child), divider, None])
