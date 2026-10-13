@@ -241,3 +241,36 @@ pub fn path_of(root: &Pattern, name: &str) -> PatternPath {
         .unwrap_or_else(|| panic!("no pattern named {name}"))
         .path
 }
+
+/// The tree v12's `selector.test.ts` and `query.test.ts` build: a root, two
+/// grand-parents, three parents each, four children each valued 1 to 24,
+/// normalized so positions run end to end.
+pub fn family_tree(tree: &mut cpat_core::EditableTree<'static>) -> cpat_core::NodeRef {
+    let mut value = 0;
+    let mut grand_parents = Vec::new();
+    for _ in 0..2 {
+        let mut parents = Vec::new();
+        for _ in 0..3 {
+            let children: Vec<_> = (0..4)
+                .map(|_| {
+                    value += 1;
+                    tree.create_value_node("node", "child", value.to_string())
+                })
+                .collect();
+            parents.push(tree.create_node("node", "parent", &children));
+        }
+        grand_parents.push(tree.create_node("node", "grand-parent", &parents));
+    }
+    let root = tree.create_node("node", "root", &grand_parents);
+    tree.normalize(root);
+    root
+}
+
+/// The nodes' values joined with commas, as v12's tests print them.
+pub fn joined(tree: &cpat_core::EditableTree<'_>, nodes: &[cpat_core::NodeRef]) -> String {
+    nodes
+        .iter()
+        .map(|&n| tree.to_string(n))
+        .collect::<Vec<_>>()
+        .join(",")
+}

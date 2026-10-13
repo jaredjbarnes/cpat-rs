@@ -50,6 +50,10 @@
 > breadth-first finds, `flatten` and `to_json`) is implemented; see §7b and §20. Every test in
 > v12's `Node.test.ts` is ported (`tests/node.rs`). The read-only `find` now follows v12's
 > quirk: a matching ancestor of the first match takes over (§20).
+> Milestone 13 (`Selector` and `Query`, v12's `$`, over the editable tree, with the selector
+> grammar built from v12's own cpat text) is implemented; see §21. Every test in v12's
+> `selector.test.ts` and `query.test.ts` is ported (`tests/selector.rs`, `tests/query.rs`).
+> A malformed selector is a `SelectorError` value with v12's message, where v12 throws.
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -1263,6 +1267,54 @@ build error naming the pattern.
   subtree's text.
 - **The wasm layer is unchanged.** JS keeps its read-only view (`js/tree.mjs`); an editable tree
   in JS comes with the JS milestone.
+
+## 21. Query and Selector *(milestone 13)*
+
+- **Layout** (`src/query/`): `grammar.rs` (v12's selector grammar text, built once per thread
+  with `patterns`), `step.rs` (compiling a selector's tree), `selector.rs` (running it),
+  `combinator.rs`, `attribute.rs` (the property and operator of `[name op value]`), `js.rs`
+  (the JS value semantics those comparisons need), `node_query.rs` (`Query`), `error.rs`.
+- **Compiled once, run as a list.** v12 walks the selector's syntax tree on every `find` and
+  decides at each node, from its name and its parent's, what to do. That decision depends
+  only on the selector, so `Selector::new` makes it once, in the same `walkUp` order, into a
+  list of `Step`s (`*`, or, name, name with attribute, attribute, set the combinator); a run
+  only executes the list. v12's `null` combinator and `descendant` do the same thing (a
+  `findAll` from each node), so they are one variant, and a finished `selector-expression`
+  sets it back. *Rejected:* keeping the selector's tree and porting `_process` as is (a
+  walk, string matches and parent lookups per call).
+- **v12's quirks are kept, each pinned by a test checked against v12:** a `name-selector`
+  or `*` inside an or-selector runs on its own before the or-selector does (v12 tests
+  their parent only for `name` and `attribute-selector`); chained attributes
+  (`a[x='1'][y='2']`) take the inner selector's whole text as the name and the first
+  attribute parts found, so they never match; an or-selector has exactly two parts; a node
+  reached twice is listed twice (only or-selectors, `parent()` and `parents()` dedupe);
+  `filter`, `not` and `parents` run from the root of the first node; `slice` forgets the
+  query it came from; `append`/`prepend`/`after`/`before` skip a parentless node, while
+  `replace_with` calls its visitor for it; a node whose parent doesn't list it is v12's
+  index -1 in `after`, `before` and `~`.
+- **Attributes read as JS reads them.** v12 indexes the node by the attribute's name and
+  compares with JS operators against the selector's text. `JsValue` models what that sees:
+  strings compare by UTF-16 code units, a number against text converts the text with
+  `Number()` (`js::to_number`: whitespace trimmed, "" is 0, hex/octal/binary, `Infinity`,
+  `NaN` compares as nothing), `===` holds only for strings (so `[endIndex='5']` matches
+  nothing and `[endIndex!='5']` everything), and `^= $= *=` search `String(property)`.
+  The properties are v12's `Node` getters: `id`, `type`, `name`, `value`, `firstIndex`,
+  `lastIndex`, `startIndex`, `endIndex`, `hasChildren`, `isLeaf`, and `parent`/`children`
+  through their `toString()` (a node is its value; a list joins with commas).
+  *Deviation:* any other name (a method, a private field such as `_value`) matches nothing,
+  where v12 would read the JS function or field. No selector in v12's tests or docs does.
+- **A `Query` holds handles, not the tree.** Every method takes the `EditableTree` it reads or
+  edits, so several queries over one tree live at once, as v12's do (`end()` hands back the
+  query it was narrowed from; the selection is an `Rc<[NodeRef]>` and the previous query an
+  `Rc`, so narrowing doesn't copy a chain). Edits return `&Query` to chain, as v12 returns
+  `this`; `normalize` returns nothing, as in v12. `$(root)` is `Query::of(root)` and
+  `$(root, selector)` is `Query::select(&tree, root, selector)`.
+- **Errors are values.** `Selector::new` and every narrowing that takes a selector return
+  `Result<_, SelectorError>`; the message is v12's word for word
+  (`[Invalid Selector] Error at line 1, column 3. Hint: *,[,*,[`). An or-selector's parts
+  are parsed again, as v12 does, but at construction, not on each run.
+- **Ids differ from v12's.** v12's ids come from one process-wide counter, which parsing
+  the selector advances, so `[id='3']` names different nodes in the two (§20).
 
 ## Behavior fixed relative to clarity-pattern-parser v11
 

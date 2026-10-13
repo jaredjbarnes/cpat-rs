@@ -23,7 +23,7 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 12)
+## What's in the box (milestone 13)
 
 `Literal`, `Regex`, `Sequence`, `Choice`, `Repeat` (unbounded or bounded, with an optional
 divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for recursive
@@ -193,7 +193,30 @@ assert_eq!(tree.value(root), "(1 + 2)+3");
 assert_eq!(tree.children(root).len(), 3);
 ```
 
-Still to come: autocomplete, grammars and the editable tree in JS.
+`Selector` and `Query` select from an editable tree with CSS-like selectors, as v12's do:
+names, `*`, `[property op 'text']` (`=`, `!=`, `^=`, `$=`, `*=`, `>=`, `<=`, `>`, `<` on `name`,
+`value`, `type`, `endIndex` and v12's other node properties, compared as JS compares them, so
+`[endIndex>=35]` is numeric), `name[…]`, the combinators `a b`, `a > b`, `a + b`, `a ~ b`, and
+`a, b`. `Selector` has `find`, `filter`, `not` and `parents`. `Query` (v12's `$`) narrows with
+`find`, `filter`, `not`, `parent`, `parents`, `first`, `last`, `slice` and `end`, and edits every
+selected node with `append`, `prepend`, `after`, `before`, `replace_with`, `set_value`,
+`compact`, `remove` and `normalize`. A selector that doesn't parse is a `SelectorError` with
+v12's message, never a panic.
+
+```rust
+use cpat_core::{EditableTree, Query};
+
+let mut tree = EditableTree::new();
+let one = tree.create_value_node("node", "child", "1");
+let two = tree.create_value_node("node", "child", "2");
+let root = tree.create_node("node", "parent", &[one, two]);
+
+Query::select(&tree, root, "parent > [value='2']")?.set_value(&mut tree, "3");
+assert_eq!(tree.to_string(root), "13");
+assert!(Query::select(&tree, root, "parent >").is_err());
+```
+
+Still to come: autocomplete, grammars, the editable tree and queries in JS.
 
 ```rust
 use cpat_core::{Block, Choice, Literal, Pattern, Reference, Regex, Sequence};

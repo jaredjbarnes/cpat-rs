@@ -66,6 +66,7 @@ mod pattern_error;
 mod pattern_id;
 mod pattern_path;
 mod patterns;
+mod query;
 mod regex_translate;
 mod scope;
 mod tokenizable;
@@ -97,6 +98,7 @@ pub use patterns::{
     Block, Choice, ChoiceMode, Context, Custom, CustomParse, Cut, Literal, Not, Optional,
     Reference, Regex, Repeat, RepeatOptions, RightAssociated, Sequence, TakeUntil,
 };
+pub use query::{Query, Selector, SelectorError};
 /// The JSON a decorator's argument is (`@name(json)`).
 pub use serde_json::Value as Json;
 pub use tokenizable::Tokenizable;
