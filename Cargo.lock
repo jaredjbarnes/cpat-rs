@@ -53,6 +53,7 @@ dependencies = [
  "cpat-core",
  "fancy-regex",
  "regex",
+ "regex-syntax",
  "serde_json",
  "unicode-segmentation",
 ]

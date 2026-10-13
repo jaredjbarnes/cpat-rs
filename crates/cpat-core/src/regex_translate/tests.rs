@@ -322,3 +322,15 @@ fn finds_only_unescaped_end_anchors() {
     assert!(!ends_with_anchor(r"\$"));
     assert!(!ends_with_anchor("a"));
 }
+
+#[test]
+fn a_negated_property_under_i_is_spelled_as_its_folded_complement() {
+    assert_eq!(rust(r"\P{Lu}"), r"\P{Lu}");
+    assert_eq!(rust(r"(?i:\p{Lu})"), r"(?i:\p{Lu})");
+    assert_eq!(rust(r"(?i:(?-i:\P{Lu}))"), r"(?i:(?-i:\P{Lu}))");
+    for source in [r"(?i:\P{Lu})", r"(?i:[\P{Lu}x])", r"(?i:[^\P{Lu}])"] {
+        assert!(!rust(source).contains(r"\P{"), "{source}: {}", rust(source));
+    }
+    // Nothing is outside `Any`: the class would be empty.
+    assert_eq!(rust(r"(?i:\P{Any})"), r"(?i:[^\x{0}-\x{10FFFF}])");
+}

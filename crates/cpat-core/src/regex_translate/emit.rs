@@ -11,6 +11,7 @@ use std::fmt::Write;
 use super::Dialect;
 use super::ast::{Assertion, Class, ClassItem, GroupKind, Look, Node, Repeat, Set};
 use super::char_sets::{DIGIT, LINE_TERMINATORS, SPACE, WORD};
+use super::folded_complement::folded_complement;
 use super::mode::Mode;
 
 /// Matches no character: an empty JS class, or a lone surrogate (no Rust
@@ -55,8 +56,8 @@ impl Emitter {
             },
             Node::Dot if mode.dot_all => self.out.push_str(ANYTHING),
             Node::Dot => push_ranges_class(&mut self.out, LINE_TERMINATORS, true),
-            Node::Set(set) => self.set(set),
-            Node::Class(class) => self.class(class),
+            Node::Set(set) => self.set(set, mode),
+            Node::Class(class) => self.class(class, mode),
             Node::Assertion(assertion) => self.assertion(*assertion, mode),
             Node::Group(group) => {
                 let inner = match group.kind {
@@ -107,8 +108,18 @@ impl Emitter {
         }
     }
 
-    fn set(&mut self, set: &Set) {
+    fn set(&mut self, set: &Set, mode: Mode) {
         match set {
+            Set::Property {
+                negated: true,
+                name,
+            } if mode.ignore_case => {
+                let ranges = folded_complement(name);
+                match ranges.is_empty() {
+                    true => self.out.push_str(NOTHING),
+                    false => push_ranges_class(&mut self.out, &ranges, false),
+                }
+            }
             Set::Property { negated, name } => push_property(&mut self.out, *negated, name),
             Set::Digit { negated } => push_ranges_class(&mut self.out, DIGIT, *negated),
             Set::Word { negated } => push_ranges_class(&mut self.out, WORD, *negated),
@@ -118,11 +129,17 @@ impl Emitter {
         }
     }
 
-    fn class(&mut self, class: &Class) {
+    fn class(&mut self, class: &Class, mode: Mode) {
         let mut items = String::new();
         for item in &class.items {
             match item {
                 ClassItem::Range(lo, hi) => push_range(&mut items, *lo, *hi),
+                ClassItem::Set(Set::Property {
+                    negated: true,
+                    name,
+                }) if mode.ignore_case => folded_complement(name)
+                    .into_iter()
+                    .for_each(|(lo, hi)| push_range(&mut items, lo, hi)),
                 // A negated set nests as a class of its own: Rust classes
                 // take the union of what they hold.
                 ClassItem::Set(Set::Property { negated, name }) => {
@@ -298,7 +315,9 @@ fn push_ranges_class(out: &mut String, ranges: &[(u32, u32)], negated: bool) {
     out.push(']');
 }
 
-/// `\p{…}`: JS's spellings are ones Rust's loose matching also reads.
+/// `\p{…}`: JS's spellings are ones Rust's loose matching also reads. Not
+/// for `\P{…}` under `i`, which Rust folds the wrong way round
+/// (`folded_complement`).
 fn push_property(out: &mut String, negated: bool, name: &str) {
     write!(out, "\\{}{{{name}}}", if negated { 'P' } else { 'p' }).expect("writing to a String");
 }

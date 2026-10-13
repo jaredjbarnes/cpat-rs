@@ -5,8 +5,8 @@
 //! The source is parsed as JS reads it (`parser`), so what JS rejects is
 //! rejected even where Rust would accept it, then written back out with
 //! every JS-specific meaning spelled out (`emit`): `.`, `\s`, `\d`, `\w`,
-//! `\b`, `\cX`, escaped surrogate pairs, empty classes, modifier groups and
-//! backreferences to groups that haven't matched.
+//! `\b`, `\cX`, `\P{…}` under `i`, escaped surrogate pairs, empty classes,
+//! modifier groups and backreferences to groups that haven't matched.
 
 mod ast;
 mod backreferences;
@@ -14,6 +14,7 @@ mod char_sets;
 mod emit;
 mod engine;
 mod error;
+mod folded_complement;
 mod js_property_names;
 mod mode;
 mod parser;

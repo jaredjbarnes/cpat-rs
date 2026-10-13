@@ -180,7 +180,7 @@ with v12's `gu` flags (ES2025 syntax without `v`: modifier groups and repeated n
 different alternatives included), refuses what JS refuses, and writes every JS-specific meaning
 out in Rust syntax instead of borrowing a Rust escape that looks the same. Files: `parser.rs`
 (JS `u`-mode grammar, V8's error reasons), `backreferences.rs`, `engine.rs`, `emit.rs`,
-`char_sets.rs`, `js_property_names.rs` (generated, see below). The mapping:
+`char_sets.rs`, `folded_complement.rs`, `js_property_names.rs` (generated, see below). The mapping:
 
 | JS (`u` flag) | Rust | Why |
 |---|---|---|
@@ -196,6 +196,7 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
 | `[\b]` | `\x{8}` | backspace in a class |
 | `[`, `&`, `~`, `-`, `#` in a class; any Rust meta character | escaped | Rust reads `[`, `&&`, `~~`, `--` as class syntax |
 | `\p{…}` `\P{…}` | as written, if JS knows the exact spelling | JS matches names exactly, Rust loosely (`\p{letter}`) |
+| `\P{…}` under `i` (alone or in a class) | the complement, closed under simple case folding by regex-syntax and written as ranges (`folded_complement.rs`) | JS complements first and then folds; Rust's `(?i)` folds the property and then negates, so for a property not closed under folding case partners flip: `(?i:\P{Lu})` matches `A` in JS, not in Rust's spelling (fix round 1) |
 | `(?ims-ims:…)` | `(?i:…)`/`(?-i:…)`; `m` and `s` are spelled into `^`, `$`, `.` | JS's `m` breaks lines at `\r`, U+2028, U+2029 too: `^` is `(?:^\|(?<=[…]))`, `$` is `(?:$\|(?=[…]))` |
 | `\N`, `\k<name>` | `(?(N)\N\|)`, chained over every group of that name; nothing inside its own group | JS reads a group that hasn't matched as empty; fancy-regex fails |
 | `(?<name>…)` | `(…)` | only match lengths are used; Rust's name syntax is narrower |
@@ -226,8 +227,8 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
 - **Where V8 strays from the spec, cpat follows the spec.** Inside a modifier group V8 doesn't
   fold a literal Kelvin sign or long s (`(?i:\u{212a})` doesn't match `k`, though
   `/\u{212a}/iu` and `(?i:[\u{212a}])` do); Rust's `(?i)` folds it, as the spec says.
-- **Compared with v12**: `js/regex_v12.test.mjs` runs 116 source/text pairs (escapes, classes,
-  negated classes, lookarounds, backreferences, `\p{…}`, `\u{…}`, modifiers, quantifiers and the
+- **Compared with v12**: `js/regex_v12.test.mjs` runs 131 source/text pairs (escapes, classes,
+  negated classes, lookarounds, backreferences, `\p{…}`, `\P{…}` under `i`, `\u{…}`, modifiers, quantifiers and the
   refusals above) through cpat-wasm against v12's recorded answers, all equal; it also pins the
   five refused sources and the two V8 modifier cases. The rows were recorded by running the
   same pairs through v12's `src` under tsx.

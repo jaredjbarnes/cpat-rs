@@ -278,6 +278,45 @@ fn modifier_groups_keep_their_js_meaning() {
     assert!(folded.test("\u{17F}"), "JS's \\w under i takes the long s");
 }
 
+/// JS complements `\P{…}` before folding it under `i`; Rust's `(?i)` folds
+/// first. v12's answers, recorded under tsx.
+#[test]
+fn a_negated_property_under_i_complements_before_folding() {
+    let rows: &[(&str, &str, Option<&str>)] = &[
+        (r"(?i:\P{Lu})", "A", Some("A")),
+        (r"(?i:\P{Ll})", "a", Some("a")),
+        (r"(?i:\P{Lowercase})", "a", Some("a")),
+        (r"(?i:\P{ASCII})", "k", Some("k")),
+        (r"(?i:\P{Lt})", "\u{1C6}", Some("\u{1C6}")),
+        (r"(?i:[\P{Lu}x])", "A", Some("A")),
+        (r"(?i:[^\P{Lu}])", "a", None),
+        (r"(?i:[^\P{Lu}])", "A", None),
+        (r"(?i:\P{ASCII})", "\u{E9}", Some("\u{E9}")),
+        (r"(?i:\P{Any})", "a", None),
+        (r"(?i:[\P{Any}])", "a", None),
+        (r"(?i:[^\P{Any}])", "a", Some("a")),
+        (r"(?i:\P{Lu}(?<=a))", "a", Some("a")),
+        (r"(?i:(?-i:\P{Lu}))", "A", None),
+        (r"\P{Lu}", "A", None),
+        (r"(?i:\P{Lu})", "1", Some("1")),
+        (r"(?i:\P{Script=Latin})", "a", None),
+        (r"(?i:\P{Script=Greek})", "\u{2126}", None),
+        (r"(?i:\P{Ll}+)", "aBc1", Some("aBc1")),
+        (r"(?i:[^\P{Ll}])", "A", None),
+        (r"(?i:[\P{Lu}\P{Ll}])", "A", Some("A")),
+        (r"(?i:\P{Lu})", "\u{212A}", Some("\u{212A}")),
+        (r"(?i:\P{Ll})", "\u{212A}", Some("\u{212A}")),
+    ];
+    for &(source, text, expected) in rows {
+        let mut pattern = re("r", source);
+        assert_eq!(
+            parse_value(&mut pattern, text).as_deref(),
+            expected,
+            "{source} on {text:?}"
+        );
+    }
+}
+
 /// The value `pattern` matches at the start of `text`, if any.
 fn parse_value(pattern: &mut Pattern, text: &str) -> Option<String> {
     let mut cursor = Cursor::new(text);
