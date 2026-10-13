@@ -59,8 +59,9 @@ pub enum GrammarError {
     ImportNameTaken { name: String },
     /// An import names a rule its grammar doesn't define.
     ImportNotFound { name: String, resource: String },
-    /// A grammar imports itself, directly or through others: the resources
-    /// from the first to import the repeated one, which ends the list too.
+    /// A grammar imports itself, directly or through others (the same text
+    /// from the same origin met again): the resources from the first to
+    /// import the repeated one, which ends the list too.
     ImportCycle { cycle: Vec<String> },
     /// Imports nest deeper than `MAX_IMPORT_DEPTH` (`grammar/depth.rs`);
     /// `resource` is the import one level too deep.

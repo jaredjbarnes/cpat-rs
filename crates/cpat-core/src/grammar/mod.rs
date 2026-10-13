@@ -55,7 +55,7 @@ impl Grammar {
     /// a literal an earlier, shorter one hides, an import that can't be
     /// loaded or doesn't build, and a decorator that refuses its pattern.
     pub fn parse_string(text: &str, options: GrammarOptions) -> Result<Patterns, GrammarError> {
-        build_text(text, Setup::top_level(options))
+        build_text(text, Setup::top_level(text, options))
     }
 
     /// Builds the grammar the resolver finds under `resource` (v12

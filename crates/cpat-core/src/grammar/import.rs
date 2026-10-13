@@ -44,7 +44,7 @@ impl Builder<'_, '_> {
             resource: resource.to_string(),
             details: Box::new(details),
         };
-        let setup = self.setup.for_import(&file.resource, params);
+        let setup = self.setup.for_import(&file, params);
         let patterns = super::build_text(&file.expression, setup).map_err(failed)?;
         self.take_imported_names(statement, &patterns, resource)
             .map_err(failed)
@@ -61,31 +61,31 @@ impl Builder<'_, '_> {
                 resource: resource.to_string(),
                 message,
             })?;
-        self.reject_import_cycle(&file.resource)?;
+        self.reject_import_cycle(&file)?;
         Ok(file)
     }
 
     /// v12 recurses until the JS stack overflows when a grammar imports
     /// itself; in Rust that is a process abort, so the cycle is an error.
-    fn reject_import_cycle(&self, resource: &str) -> Result<(), GrammarError> {
-        let chain: Vec<&str> = self
-            .setup
-            .importers
-            .iter()
-            .chain(&self.setup.origin)
-            .map(String::as_str)
-            .collect();
-        if let Some(start) = chain.iter().position(|&importer| importer == resource) {
-            let mut cycle: Vec<String> =
-                chain[start..].iter().map(|name| name.to_string()).collect();
-            cycle.push(resource.to_string());
+    /// A cycle is a grammar met again with the same text and origin (see
+    /// `Link`), so a resolver that reuses a name for different grammars,
+    /// or answers under the empty name, is no cycle.
+    fn reject_import_cycle(&self, file: &GrammarFile) -> Result<(), GrammarError> {
+        let chain = &self.setup.chain;
+        if let Some(start) = chain.iter().position(|link| link.repeats(file)) {
+            let mut cycle: Vec<String> = chain[start..]
+                .iter()
+                .map(|link| link.resource.clone().unwrap_or_default())
+                .collect();
+            cycle.push(file.resource.clone());
             return Err(GrammarError::ImportCycle { cycle });
         }
-        // A resolver that names one grammar differently each time it is
-        // imported hides the cycle; the depth still ends it.
-        if chain.len() >= MAX_IMPORT_DEPTH {
+        // A resolver that answers with new text, or a new name, on every
+        // import hides the cycle; the depth still ends it. Every link
+        // counts, named or not.
+        if chain.len() > MAX_IMPORT_DEPTH {
             return Err(GrammarError::ImportsTooDeep {
-                resource: resource.to_string(),
+                resource: file.resource.clone(),
             });
         }
         Ok(())

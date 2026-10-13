@@ -177,7 +177,8 @@ mod tests {
     fn build(mut pattern: Pattern, text: &str) -> Result<Pattern, GrammarError> {
         let result = pattern.exec(text);
         let root = result.tree().expect("the pattern matches").root();
-        Builder::empty(text, Setup::top_level(GrammarOptions::default())).build_pattern("x", root)
+        Builder::empty(text, Setup::top_level(text, GrammarOptions::default()))
+            .build_pattern("x", root)
     }
 
     #[test]

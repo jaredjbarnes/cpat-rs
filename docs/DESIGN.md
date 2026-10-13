@@ -1183,13 +1183,17 @@ build error naming the pattern.
   search for a JSON node finds none. Pinned in `tests/grammar_decorators.rs`.
 - **Deviations from v12:**
   - A grammar that imports itself, directly or through others, is `GrammarError::ImportCycle`
-    ("[Invalid Grammar] import cycle `a` -> `b` -> `a`: …"), found by the resources the resolver
-    answered with along the chain of importers. v12 recurses until the JS stack overflows and
-    wraps the `RangeError` once per level; in Rust that would be a process abort. A resolver that
-    names one grammar anew on each import hides the cycle from that check, so imports nested more
-    than 64 deep are `GrammarError::ImportsTooDeep` (`MAX_IMPORT_DEPTH`; each level holds only a
-    builder, since the cpat parse has returned before imports load). A grammar imported twice
-    along different paths is no cycle.
+    ("[Invalid Grammar] import cycle `a` -> `b` -> `a`: …"). v12 recurses until the JS stack
+    overflows and wraps the `RangeError` once per level; in Rust that would be a process abort.
+    A cycle is a grammar met again along the chain of importers with the same text *and* the same
+    origin (the resource the resolver answered with, empty meaning none): what a build imports
+    depends only on those two, so a repeat is certain to recur forever. The resource alone is not
+    enough (fix round 1): v12's own tests answer every import as `"r1"`, so a resolver may answer
+    different grammars under one name, or under the empty name, and v12 builds those. A resolver
+    that answers with new text or a new name on each import hides a cycle from that check, so
+    imports nested more than 64 deep are `GrammarError::ImportsTooDeep` (`MAX_IMPORT_DEPTH`;
+    every level counts, named or not; each holds only a builder, since the cpat parse has
+    returned before imports load). A grammar imported twice along different paths is no cycle.
   - A decorator argument that is cpat but not JSON (`"\x41"`, a leading zero) is
     `GrammarError::DecoratorArgument` with `serde_json`'s message; v12's `JSON.parse` throws V8's
     message, unprefixed.

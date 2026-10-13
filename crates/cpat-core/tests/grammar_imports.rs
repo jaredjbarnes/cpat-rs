@@ -957,3 +957,121 @@ fn deviation_imports_nested_too_deeply_are_an_error() {
          grammar a new name each time it is imported?"
     );
 }
+
+// ─── Fix round 1 regressions ────────────────────────────────────────────
+
+#[test]
+fn a_with_params_block_continues_the_importers_anonymous_count() {
+    // Checked against v12: the root is `anonymous-pattern-7`. A block with
+    // a count of its own would name it `anonymous-pattern-1`.
+    let mut patterns = build(
+        "import { v } from \"p\" with params { val = ((\"a\" | \"b\") + \"c\") }\nx = v",
+        options(&[("p", "use params { val }\nv = (val + \"!\" | \"z\")")]),
+    );
+    let result = patterns["x"].exec("ac!");
+    let tree = result.tree().expect("`x` matches");
+    assert_eq!(tree.root().name(), "anonymous-pattern-7");
+}
+
+#[test]
+fn an_import_is_found_before_a_param_of_the_same_name() {
+    // v12 `_getPattern`: rules, then imports, then params.
+    let param = build("a = \"P\"", GrammarOptions::default())["a"].clone();
+    let mut patterns = build(
+        "import { a } from \"a\"\nx = a",
+        with_params(&[("a", "a = \"A\"")], vec![param]),
+    );
+    assert_eq!(value(&mut patterns, "x", "A").as_deref(), Some("A"));
+    assert_eq!(value(&mut patterns, "x", "P"), None);
+}
+
+#[test]
+fn a_resolver_may_answer_different_grammars_under_one_name() {
+    // v12's own tests answer every import as "r1"; that is no cycle.
+    let files = [
+        ("a.cpat", "a = \"A\""),
+        ("b.cpat", "import { a } from \"a.cpat\"\nb = a + \"B\""),
+    ];
+    let resolver = move |resource: &str, _: Option<&str>| {
+        let (_, expression) = files
+            .iter()
+            .find(|(name, _)| *name == resource)
+            .ok_or_else(|| format!("no {resource}"))?;
+        Ok(GrammarFile {
+            resource: "same".to_string(),
+            expression: expression.to_string(),
+        })
+    };
+    let mut patterns = build(
+        "import { b } from \"b.cpat\"\nx = b",
+        GrammarOptions::default().with_resolver(resolver),
+    );
+    assert_eq!(value(&mut patterns, "x", "AB").as_deref(), Some("AB"));
+}
+
+#[test]
+fn a_grammar_may_import_from_the_resource_its_own_text_is_named_for() {
+    let mut patterns = build(
+        "import { a } from \"a.cpat\"\nx = a",
+        GrammarOptions {
+            origin_resource: Some("a.cpat".into()),
+            ..options(&[("a.cpat", "a = \"A\"")])
+        },
+    );
+    assert_eq!(value(&mut patterns, "x", "A").as_deref(), Some("A"));
+}
+
+#[test]
+fn deviation_a_grammar_under_the_empty_name_that_imports_itself_is_an_error() {
+    // v12 overflows its stack and wraps the RangeError once per level; with
+    // no name to compare, the cycle is found by the grammar's text.
+    let error = Grammar::parse_string(
+        "import { a } from \"\"\nx = a",
+        options(&[("", "import { a } from \"\"\na = \"A\"")]),
+    )
+    .unwrap_err();
+    assert_eq!(
+        error,
+        GrammarError::ImportFailed {
+            resource: "".into(),
+            details: Box::new(GrammarError::ImportCycle {
+                cycle: vec!["".into(), "".into()]
+            }),
+        }
+    );
+}
+
+#[test]
+fn deviation_unnamed_imports_nested_too_deeply_are_an_error() {
+    // A resolver that answers under the empty name with new text each time
+    // escapes the cycle check; every level still counts toward the depth.
+    let counter = Rc::new(RefCell::new(0));
+    let resolver = move |_: &str, _: Option<&str>| {
+        *counter.borrow_mut() += 1;
+        Ok(GrammarFile {
+            resource: String::new(),
+            expression: format!(
+                "import {{ a }} from \"loop\"\na = \"A\"\nn{} = \"n\"",
+                counter.borrow()
+            ),
+        })
+    };
+    let error = Grammar::parse_string(
+        "import { a } from \"loop\"\nx = a",
+        GrammarOptions::default().with_resolver(resolver),
+    )
+    .unwrap_err();
+    let mut depth = 0;
+    let mut innermost = &error;
+    while let GrammarError::ImportFailed { details, .. } = innermost {
+        depth += 1;
+        innermost = details;
+    }
+    assert_eq!(
+        *innermost,
+        GrammarError::ImportsTooDeep {
+            resource: "".into()
+        }
+    );
+    assert_eq!(depth, 64);
+}

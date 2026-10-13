@@ -9,7 +9,7 @@ use crate::pattern::Pattern;
 
 use super::anonymous::AnonymousNames;
 use super::decorators::Decorators;
-use super::imports::ImportResolver;
+use super::imports::{GrammarFile, ImportResolver};
 use super::options::GrammarOptions;
 
 pub(super) struct Setup {
@@ -24,43 +24,74 @@ pub(super) struct Setup {
     /// `with params` block names the importer's rules, which are built
     /// after its imports and so can't be params yet (v12 `_outerNames`).
     pub(super) outer_names: HashSet<String>,
-    /// The resources of the grammars importing this one, outermost first.
-    pub(super) importers: Vec<String>,
+    /// The grammars being built, outermost first, ending with this one.
+    pub(super) chain: Vec<Link>,
+}
+
+/// One grammar in a chain of imports. What a build does next depends only on
+/// its text and the origin its own imports are resolved from, so a link that
+/// repeats both is a cycle. The resource alone is not enough: a resolver may
+/// answer different grammars under one name (v12's own tests do), or under
+/// none.
+#[derive(Clone)]
+pub(super) struct Link {
+    pub(super) resource: Option<String>,
+    pub(super) expression: Rc<str>,
+}
+
+impl Link {
+    fn new(resource: Option<String>, expression: &str) -> Link {
+        Link {
+            resource,
+            expression: Rc::from(expression),
+        }
+    }
+
+    /// Whether building `file` would repeat this link exactly.
+    pub(super) fn repeats(&self, file: &GrammarFile) -> bool {
+        self.resource == origin(&file.resource) && *self.expression == *file.expression
+    }
+}
+
+/// v12 passes `originResource || null`: an empty name is none.
+fn origin(resource: &str) -> Option<String> {
+    Some(resource.to_string()).filter(|resource| !resource.is_empty())
 }
 
 impl Setup {
     /// A build of the caller's own text, with a count of its own.
-    pub(super) fn top_level(options: GrammarOptions) -> Setup {
+    pub(super) fn top_level(text: &str, options: GrammarOptions) -> Setup {
         let GrammarOptions {
             resolver,
             origin_resource,
             params,
             decorators,
         } = options;
+        let origin = origin_resource.as_deref().and_then(origin);
         Setup {
             resolver,
-            // v12 passes `originResource || null`: an empty name is none.
-            origin: origin_resource.filter(|origin| !origin.is_empty()),
+            chain: vec![Link::new(origin.clone(), text)],
+            origin,
             params,
             decorators: Rc::new(decorators.with_built_ins()),
             anonymous: AnonymousNames::default(),
             outer_names: HashSet::new(),
-            importers: Vec::new(),
         }
     }
 
-    /// The build of a grammar this one imports from `resource`.
-    pub(super) fn for_import(&self, resource: &str, params: Vec<Pattern>) -> Setup {
-        let mut importers = self.importers.clone();
-        importers.extend(self.origin.clone());
+    /// The build of `file`, which this grammar imports.
+    pub(super) fn for_import(&self, file: &GrammarFile, params: Vec<Pattern>) -> Setup {
+        let origin = origin(&file.resource);
+        let mut chain = self.chain.clone();
+        chain.push(Link::new(origin.clone(), &file.expression));
         Setup {
             resolver: self.resolver.clone(),
-            origin: Some(resource.to_string()).filter(|origin| !origin.is_empty()),
+            origin,
             params,
             decorators: Rc::clone(&self.decorators),
             anonymous: self.anonymous.shared(),
             outer_names: HashSet::new(),
-            importers,
+            chain,
         }
     }
 
@@ -78,7 +109,8 @@ impl Setup {
             decorators: Rc::clone(&self.decorators),
             anonymous: self.anonymous.shared(),
             outer_names,
-            importers: self.importers.clone(),
+            // The block is part of this grammar, not one it imports.
+            chain: self.chain.clone(),
         }
     }
 }
