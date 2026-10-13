@@ -1,11 +1,9 @@
-use cpat_core::{Node, NodeKind, ParseError, ParseResult};
+use cpat_core::{ParseError, ParseResult, PatternError};
 use wasm_bindgen::prelude::*;
 
+use crate::cursor_json::cursor_json;
+use crate::flat_tree::FlatTree;
 use crate::utf16::Utf16Offsets;
-
-/// Fields per node in `nodes`.
-pub const NODE_STRIDE: usize = 7;
-const NONE: u32 = u32::MAX;
 
 /// A parse result laid out for JS: the tree as flat `Uint32Array`s, so it
 /// crosses the wasm boundary as one copy instead of one call per node access.
@@ -16,38 +14,41 @@ const NONE: u32 = u32::MAX;
 /// `children` holds node indices; a node's children are
 /// `children[childrenAt .. childrenAt + childrenLen]`. Node 0 is the root.
 /// Only nodes reachable from the root are included.
+///
+/// `cursor` is everything v12's cursor reports about the parse, as JSON
+/// (see `cursor_json`).
 #[wasm_bindgen]
 pub struct ExecResult {
-    nodes: Vec<u32>,
-    children: Vec<u32>,
-    names: Vec<String>,
+    tree: FlatTree,
     error: Option<Vec<u32>>,
     furthest_error: Option<Vec<u32>>,
     error_names: Vec<String>,
     pattern_error: Option<String>,
+    missing_name: Option<String>,
     too_deep: Option<Vec<u32>>,
+    cursor: String,
 }
 
 #[wasm_bindgen]
 impl ExecResult {
     #[wasm_bindgen(getter)]
     pub fn matched(&self) -> bool {
-        !self.nodes.is_empty()
+        !self.tree.nodes.is_empty()
     }
 
     #[wasm_bindgen(getter)]
     pub fn nodes(&self) -> Vec<u32> {
-        self.nodes.clone()
+        self.tree.nodes.clone()
     }
 
     #[wasm_bindgen(getter)]
     pub fn children(&self) -> Vec<u32> {
-        self.children.clone()
+        self.tree.children.clone()
     }
 
     #[wasm_bindgen(getter)]
     pub fn names(&self) -> Vec<String> {
-        self.names.clone()
+        self.tree.names.clone()
     }
 
     /// `[start, lastIndex]` in UTF-16 offsets, or `undefined`.
@@ -74,6 +75,13 @@ impl ExecResult {
         self.pattern_error.clone()
     }
 
+    /// The name a reference looked up and found nowhere, when that is the
+    /// `patternError` (JS throws v12's message for it).
+    #[wasm_bindgen(getter, js_name = missingName)]
+    pub fn missing_name(&self) -> Option<String> {
+        self.missing_name.clone()
+    }
+
     /// `[maxDepth, position]` (UTF-16) when the input nested deeper than
     /// the parser allows and the parse stopped there, or `undefined`. Deep
     /// input is an answer, not a stack overflow: the module keeps working.
@@ -88,21 +96,18 @@ impl ExecResult {
             .as_ref()
             .map(|_| self.error_names[1].clone())
     }
+
+    /// The cursor's report (errors, leaf matches, history) as JSON.
+    #[wasm_bindgen(getter)]
+    pub fn cursor(&self) -> String {
+        self.cursor.clone()
+    }
 }
 
 impl ExecResult {
     pub fn from_result(text: &str, result: &ParseResult<'_>) -> ExecResult {
         let offsets = Utf16Offsets::new(text);
-        let mut flat = Flattener {
-            offsets: &offsets,
-            nodes: Vec::new(),
-            children: Vec::new(),
-            names: Vec::new(),
-        };
-
-        if let Some(tree) = result.tree() {
-            flat.add_tree(tree.root());
-        }
+        let tree = FlatTree::of(result.tree().map(|tree| tree.root()), &offsets);
 
         let error_of = |error: &ParseError| vec![offsets.of(error.start), offsets.of(error.last)];
         let name_of = |error: &Option<ParseError>| {
@@ -113,13 +118,15 @@ impl ExecResult {
         };
 
         ExecResult {
-            nodes: flat.nodes,
-            children: flat.children,
-            names: flat.names,
+            tree,
             error: result.error.as_ref().map(error_of),
             furthest_error: result.furthest_error.as_ref().map(error_of),
             error_names: vec![name_of(&result.error), name_of(&result.furthest_error)],
             pattern_error: result.pattern_error.as_ref().map(ToString::to_string),
+            missing_name: match &result.pattern_error {
+                Some(PatternError::UnknownReference { target, .. }) => Some(target.to_string()),
+                _ => None,
+            },
             // Saturating: a depth past u32 can't be asked for from JS anyway.
             too_deep: result.too_deep.map(|too_deep| {
                 vec![
@@ -127,81 +134,7 @@ impl ExecResult {
                     offsets.of(too_deep.pos),
                 ]
             }),
+            cursor: cursor_json(result, &offsets),
         }
-    }
-}
-
-struct Flattener<'o> {
-    offsets: &'o Utf16Offsets,
-    nodes: Vec<u32>,
-    children: Vec<u32>,
-    names: Vec<String>,
-}
-
-impl Flattener<'_> {
-    /// Writes `root` and its subtree, depth first with each parent before
-    /// its children (so the root is node 0). A node's children list is
-    /// reserved when the node is written and each slot is filled as that
-    /// child is written, so each list stays contiguous.
-    ///
-    /// The walk keeps its own stack instead of recursing: an operator chain
-    /// makes a tree as deep as the input is long, and a recursive walk ran
-    /// out of wasm stack and threw instead of returning the tree.
-    fn add_tree(&mut self, root: Node<'_, '_>) {
-        // Each entry is a node still to write and the children slot (in
-        // its parent's list) that gets its index.
-        let mut pending = vec![(root, NONE, None::<usize>)];
-
-        while let Some((node, parent, slot)) = pending.pop() {
-            let index = (self.nodes.len() / NODE_STRIDE) as u32;
-            if let Some(slot) = slot {
-                self.children[slot] = index;
-            }
-
-            let name = self.name_index(node.name());
-            let children_at = self.children.len();
-            let children_len = node.children().len();
-            self.children.resize(children_at + children_len, 0);
-
-            self.nodes.extend_from_slice(&[
-                kind_code(node.kind()),
-                name,
-                self.offsets.of(node.start()),
-                self.offsets.of(node.end()),
-                parent,
-                children_at as u32,
-                children_len as u32,
-            ]);
-
-            // Reversed, so the first child is written next.
-            for (i, child) in node.children().enumerate().rev() {
-                pending.push((child, index, Some(children_at + i)));
-            }
-        }
-    }
-
-    fn name_index(&mut self, name: &str) -> u32 {
-        match self.names.iter().position(|n| n == name) {
-            Some(i) => i as u32,
-            None => {
-                self.names.push(name.to_string());
-                (self.names.len() - 1) as u32
-            }
-        }
-    }
-}
-
-fn kind_code(kind: NodeKind) -> u32 {
-    match kind {
-        NodeKind::Literal => 0,
-        NodeKind::Regex => 1,
-        NodeKind::Sequence => 2,
-        NodeKind::Custom => 3,
-        NodeKind::InfiniteRepeat => 4,
-        NodeKind::FiniteRepeat => 5,
-        NodeKind::Expression => 6,
-        NodeKind::TakeUntil => 7,
-        NodeKind::Block => 8,
-        NodeKind::BlockContent => 9,
     }
 }

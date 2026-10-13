@@ -469,3 +469,34 @@ fn a_never_ending_expansion_after_the_deepest_leaf_still_fits_a_small_stack() {
     assert!(suggestions[335..].iter().all(|s| *s == "y"));
     assert!(suggestions.len() > 335);
 }
+
+#[test]
+fn the_message_from_a_results_parts_is_the_results_message() {
+    // `generate_error_message_after` is what the wasm layer calls once the
+    // result has gone to JS: the text, the leaf match and the limits give
+    // the same message as the whole result, with a leaf match or without.
+    for text in ["John Dot", "Jo", "John  Doe!", "x"] {
+        let mut pattern = full_name();
+        let result = pattern.exec(text);
+        assert_eq!(
+            cpat_core::generate_error_message_after(
+                &pattern,
+                text,
+                result.leaf_match.as_ref(),
+                result.limits()
+            ),
+            generate_error_message(&pattern, &result),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn a_pattern_id_prints_as_its_number_shared_by_clones() {
+    let pattern = full_name();
+    let id = pattern.id().to_string();
+
+    assert!(id.parse::<u32>().is_ok(), "{id}");
+    assert_eq!(pattern.clone_named("other").id().to_string(), id);
+    assert_ne!(full_name().id().to_string(), id);
+}

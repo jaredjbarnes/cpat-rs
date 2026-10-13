@@ -54,6 +54,12 @@
 > grammar built from v12's own cpat text) is implemented; see §21. Every test in v12's
 > `selector.test.ts` and `query.test.ts` is ported (`tests/selector.rs`, `tests/query.rs`).
 > A malformed selector is a `SelectorError` value with v12's message, where v12 throws.
+> Milestone 14 (the JS API, part 1: `js/index.mjs` exports every runtime name of v12's
+> `src/index.ts`, with v12's pattern classes as places in a wasm root, `Grammar` with async
+> imports fetched ahead, the cursor's report, `toNode()` into a JS port of v12's `Node`, and JS
+> ports of `Query`/`Selector` over it) is implemented; see §22. v12's `Grammar.test.ts`,
+> `patterns.test.ts`, `Node.test.ts`, `query.test.ts`, `selector.test.ts` and `Context.test.ts`
+> run in JS (`js/*.test.mjs`) with two adjusted assertions, each a documented deviation.
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -235,9 +241,9 @@ build error naming the pattern.
   a pattern, for example to inject a `Custom` one. *(Implemented: `Decorator`, `Decorators`,
   `cpat_core::Json` is `serde_json::Value`; §19.)*
 - Mistakes are build errors. *(Implemented: every decorator error is `[Invalid Grammar] …`.)*
-- JS decorators are fully supported. A JS custom pattern uses a minimal contract,
-  `(text, pos) => end | null`, so each attempt is one boundary call. *(With the wasm grammar
-  milestone.)*
+- JS decorators are fully supported. *(Implemented in milestone 14, §22.)* A JS custom pattern
+  uses a minimal contract, `(text, pos) => end | null`, so each attempt is one boundary call.
+  *(A later milestone.)*
 
 ## 10. Repeat *(milestone 2)*
 
@@ -1315,6 +1321,110 @@ build error naming the pattern.
   are parsed again, as v12 does, but at construction, not on each run.
 - **Ids differ from v12's.** v12's ids come from one process-wide counter, which parsing
   the selector advances, so `[id='3']` names different nodes in the two (§20).
+
+## 22. The JS API *(milestone 14)*
+
+- **Layout** (`crates/cpat-wasm`): `src/place.rs` (reads by path), `src/run.rs` (exec, test,
+  a direct parse, the error message), `src/grammar.rs` (the build, `importsOf`, the cpat
+  grammar), `src/host.rs` (the JS objects wasm calls back into), `src/cursor_json.rs` (the
+  cursor's report), `src/flat_tree.rs`, `src/auto_complete.rs`; and `js/`: `index.mjs` (the
+  exports), `pattern.mjs` (the base class, places), `patterns.mjs` (the classes), `cursor.mjs`,
+  `parse_error.mjs`, `grammar.mjs`, `template.mjs`, `node.mjs` (v12's `Node`), `tree.mjs` (the
+  read-only view and `toNode`), `query.mjs`, `selector.mjs`, `compact.mjs`,
+  `error_message.mjs`, `auto_complete.mjs`, `wasm.mjs` (loads `pkg-node`).
+- **A JS pattern is a place: a wasm root and a path.** v12 hands out live children that know
+  their parents. Wasm patterns have no parents (§2), so a child is `{ root, path }`, read with
+  `Introspection::at` (`at_path`'s numbering, a reference followed to what it would resolve to,
+  §16). That gives a child v12's `parent` and `getNextTokens` (the query is asked at the
+  path), and `getTokensAfter(child)` is the child's last step when it is a child of this
+  place. Every read crosses the boundary once and returns a string, a list, or paths flattened
+  into one `Uint32Array`. A pattern built in JS is its own root at the empty path. *Rejected:*
+  handing out wasm clones of children (no parent, so no `getNextTokens`, and every access would
+  copy a subtree); parent indices in the core (§16 rejected them already).
+- **Composites take copies.** v12's constructors clone their children, so JS passes a wasm clone
+  (`owned`), and the original stays usable and separate. `params` and decorators' patterns are
+  copied the same way. A copy keeps its id, as v12's clone does.
+- **Running a place below the root runs a copy** of the pattern there, as the core runs a
+  pattern taken out of its tree (§11): `exec`, `test`, `parse` and `generateErrorMessage` on a
+  child. The root itself runs in place, so what its parse resolves stays resolved.
+- **The cursor's report crosses as one JSON text**, parsed the first time a cursor property is
+  read: errors (`last` inclusive, as `lastIndex`), the leaf matches, and while recording every
+  error, match and record, all in UTF-16 offsets, each naming its pattern by path. *Why JSON:*
+  the report is nested and variable (records alternate kinds), it is read rarely, and a typed
+  array per field would cost a getter and a copy each, for every exec, read or not. The tree
+  stays in typed arrays (§7d), where the volume is.
+- **An error from an ordinary parse names its pattern by name and id only.** Its path exists
+  only in a recording parse (§15); keeping one per error would cost every failed attempt an
+  allocation. So `cursor.error.pattern` is `{ id, name }` after `exec(text)` and a pattern
+  object after `exec(text, true)`. Matches always have paths, so `leafMatch.pattern` is always
+  a pattern.
+- **`toNode()` materializes v12's `Node`** from the flat arrays, from the subtree's last index
+  back: every descendant follows its ancestor in the layout, so children exist before their
+  parent with no recursion. A leaf's value is its slice; a parent's own value is "", as a v12
+  parse node's is (§20). `exec`'s `ast` is a getter that does this the first time it is read,
+  so `test` and a run that reads only the cursor never build nodes.
+- **`node.mjs` is v12's `Node.ts` without recursion** (§7e): `walkUp`, `walkDown`, `transform`,
+  `clone`, `normalize`, `toString`, `toCycleFreeObject` and `isEqual` keep their own stacks and
+  visit in v12's order (children before parent for `walkUp`, `clone` and `transform`; the copy
+  of a node's children taken before its visit), so a 100 000-operator chain materializes and
+  walks. `isEqual` compares values at the leaves only, as the Rust tree does (§20). The JSON
+  and cycle-free forms stay quadratic in depth, as in v12.
+- **`Query` and `Selector` are JS ports, the selector parsed by the selector grammar built in
+  wasm.** The milestone allowed either the wasm selector or a JS port. They act on JS `Node`s,
+  so a port in JS keeps them where the nodes are (no tree crosses back into wasm to be
+  queried), and v12's attribute matching (`node[name] op value`, with JS's own comparisons) is
+  exact, where the Rust port models it (§21). The selector's text is parsed by v12's own
+  selector grammar, built in wasm from its cpat text by the JS `patterns` tag, and the walk over
+  its tree is v12's line for line. *Rejected:* exporting the Rust `Selector`/`Query` (they act
+  on the Rust editable tree, which would have to be rebuilt from the JS nodes on every query).
+- **Async imports are fetched first, then the build is synchronous** (§19). `Grammar.imports_of`
+  (wasm `importsOf`) lists the resources a text's import statements name; `grammar.mjs` asks
+  the user's `resolveImport` for each, depth first, from the origin the build will pass (the
+  answering resource, or none), and stops at the first failure, where v12 stops. Each answer is
+  queued under its resource and origin, and the build's resolver takes them in order, so a
+  resolver called twice for one name answers each statement as v12's would (pinned: two imports
+  from one counter). A failure is thrown when the build reaches it, so it is wrapped exactly as
+  v12 wraps it. The resolver's call sequence is v12's (compared on a grammar with nested
+  imports, repeated resources and `with params`). A `with params` block can't import (the cpat
+  grammar allows only assignments and exports there), so nothing else is ever asked for.
+- **Callbacks from wasm** (the resolver, decorators, `find`'s predicate) go through typed host
+  objects (`src/host.rs`) whose methods `catch`. JS turns a throw into its message (or, for the
+  predicate, rethrows the original after wasm has let go of its borrows), so a JS exception
+  never unwinds through Rust frames and leaves a `RefCell` borrowed. A decorator gets the rule's
+  pattern as a root object; what it changes (`setTokens`) is kept, and wasm takes back a copy,
+  so a decorator that keeps the object it was handed can still use it.
+- **Errors.** A `GrammarError` is thrown as an `Error` with its message (v12's, character for
+  character, compared on 25 failing grammars, sync and async). A reference that names nothing
+  makes `exec` throw v12's `Couldn't find 'x' pattern within tree.`; any other pattern error
+  throws cpat's message. Input nested too deep is `cursor.tooDeep` (no throw, §11).
+- **`AutoComplete`** binds the core's (§17): options, segments (each pattern a place in a copy
+  of the pattern it was built with), the error, `errorAtIndex` and the tree, in UTF-16 offsets.
+  The `Suggestion`'s `cursor` is a fresh cursor over the text: the core keeps no parse history
+  on a suggestion.
+- **Checked against v12** by running the same scripts through v12's `src` with tsx and through
+  `js/index.mjs`: the UTF-16 positions of every node, error, leaf match and recorded error on a
+  grammar of emoji, a skin-tone sequence and CJK (`js/utf16.test.mjs`), 25 error messages
+  (`js/messages.test.mjs`), the resolver's call order, AutoComplete on emoji text, and the Node
+  API on a `toNode()` tree (`js/compare_v12.test.mjs`). The ported v12 test files pass with two
+  assertions adjusted, each a deviation below.
+- **Deviations from v12** (beyond the core's):
+  - `children` are places, not separate patterns: `seq.children[0] === seq.children[0]`, but a
+    pattern from `getPatterns()` is a new object for the same place. A repeat's children are
+    its child and divider: v12's facade has the inner repeat as its only child (§16).
+  - `setTokens` works on a root (built in JS, from a grammar, or handed to a decorator); on a
+    child place it throws.
+  - An ordinary parse's errors name their pattern by `{ id, name }` (above).
+  - `getPatternsWithinContext()` returns new objects over copies, so two calls are equal as
+    patterns, not by `toEqual` (`js/context.test.mjs`).
+  - An empty literal in a grammar is reported in cpat's words (§18), so "empty string literal
+    throws" expects cpat's message (`js/grammar.test.mjs`).
+  - The core's deviations show through: a literal sharing only a high surrogate fails at the
+    start (§13, pinned in `js/utf16.test.mjs`), and options with characters outside cpat's
+    collation tables sort after letters (§17, pinned in `js/compare_v12.test.mjs`).
+  - Pattern ids are numbers as text (`"12"`), v12's are `type-n`. A choice's operator, which
+    has no id of its own, answers with its place.
+- **Not in this milestone:** custom patterns written in JS (`(text, pos) => end | null`, §9),
+  and builds for targets other than Node (`js/wasm.mjs` loads `pkg-node`).
 
 ## Behavior fixed relative to clarity-pattern-parser v11
 

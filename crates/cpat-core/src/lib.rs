@@ -75,7 +75,7 @@ mod tree;
 pub use ancestors::Frame;
 pub use ast::{CycleFreeNode, EditableTree, NodeRef, Visitors};
 pub use cursor::Cursor;
-pub use error_message::generate_error_message;
+pub use error_message::{generate_error_message, generate_error_message_after};
 pub use exec::ParseResult;
 pub use grammar::{
     Decorator, Decorators, Grammar, GrammarError, GrammarFile, GrammarOptions, ImportResolver,

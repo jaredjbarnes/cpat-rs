@@ -14,6 +14,24 @@ use super::error::GrammarError;
 use super::imports::GrammarFile;
 use super::patterns::Patterns;
 
+/// The resource each top-level import statement names, in order: what
+/// `Builder::import` will load (`Grammar::imports_of`).
+pub(super) fn resources(root: Node<'_, '_>) -> Vec<String> {
+    let Some(statements) = root.find(|node| node.name() == "statements") else {
+        return Vec::new();
+    };
+    statements
+        .children()
+        .filter(|statement| statement.name() == "importStatement")
+        .map(|statement| unquoted(descendant(statement, "resource").value()).to_string())
+        .collect()
+}
+
+/// A resource's text without its quotes.
+fn unquoted(resource: &str) -> &str {
+    &resource[1..resource.len() - 1]
+}
+
 impl Builder<'_, '_> {
     pub(super) fn resolve_imports(
         &mut self,
@@ -32,8 +50,7 @@ impl Builder<'_, '_> {
     /// One import statement: its params block is built first, then the
     /// grammar it names, and the names it asks for are taken from that.
     fn import(&mut self, statement: Node<'_, '_>) -> Result<(), GrammarError> {
-        let resource = descendant(statement, "resource").value();
-        let resource = &resource[1..resource.len() - 1];
+        let resource = unquoted(descendant(statement, "resource").value());
         let params = self.with_params(statement)?;
         let file = self.load(resource)?;
 

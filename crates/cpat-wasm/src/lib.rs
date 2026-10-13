@@ -1,11 +1,20 @@
 //! cpat-wasm: cpat-core for JavaScript.
 //!
 //! Patterns are built and run in wasm. A parse result comes back as flat
-//! typed arrays (see `ExecResult`), which `js/tree.js` wraps in a `Node` view
-//! with the familiar read API.
+//! typed arrays (see `ExecResult`), which `js/tree.mjs` wraps in a read-only
+//! view and `toNode()` turns into v12's editable `Node`. `js/index.mjs` is
+//! the JS API, shaped as clarity-pattern-parser's (DESIGN §22): its pattern
+//! classes hold a `Pattern` from here and a path into it (`place.rs`).
 
+mod auto_complete;
+mod cursor_json;
 mod exec_result;
+mod flat_tree;
+mod grammar;
+mod host;
+mod place;
 mod repeat_options;
+mod run;
 mod utf16;
 
 use cpat_core::{
@@ -16,7 +25,9 @@ use wasm_bindgen::prelude::*;
 
 use repeat_options::JsRepeatOptions;
 
+pub use auto_complete::{JsAutoComplete, SuggestionResult};
 pub use exec_result::ExecResult;
+pub use grammar::GrammarRecord;
 
 /// A pattern living in wasm memory. Composite constructors take ownership of
 /// their children, so pass `child.clone()` to keep using a child afterwards.
@@ -103,8 +114,9 @@ impl JsPattern {
         Not::new(name, child.inner).into()
     }
 
-    pub fn cut() -> JsPattern {
-        Cut::default().into()
+    /// `Pattern.cut(name?)`: v12's `new Cut(name = "cut")`.
+    pub fn cut(name: Option<String>) -> JsPattern {
+        Cut::new(name.as_deref().unwrap_or("cut")).into()
     }
 
     /// `Pattern.reference(name, target?)`: the pattern called `target`
@@ -159,13 +171,22 @@ impl JsPattern {
         }
     }
 
-    pub fn exec(&mut self, text: &str) -> ExecResult {
-        let result = self.inner.exec(text);
+    /// `exec(text, record?)`; see `execAt` for a place below the root.
+    pub fn exec(&mut self, text: &str, record: Option<bool>) -> ExecResult {
+        let result = if record.unwrap_or(false) {
+            self.inner.exec_recording(text)
+        } else {
+            self.inner.exec(text)
+        };
         ExecResult::from_result(text, &result)
     }
 
-    pub fn test(&mut self, text: &str) -> bool {
-        self.inner.test(text)
+    pub fn test(&mut self, text: &str, record: Option<bool>) -> bool {
+        if record.unwrap_or(false) {
+            self.inner.test_recording(text)
+        } else {
+            self.inner.test(text)
+        }
     }
 }
 

@@ -1075,3 +1075,39 @@ fn deviation_unnamed_imports_nested_too_deeply_are_an_error() {
     );
     assert_eq!(depth, 64);
 }
+
+#[test]
+fn imports_of_lists_each_import_statements_resource_in_order() {
+    // What an asynchronous host fetches before the build: the resources the
+    // build will ask its resolver for first, one per statement.
+    let text = r#"
+        use params { p }
+        import { a } from "first.cpat"
+        import { b, c as d } from "second.cpat" with params {
+            x = "x"
+        }
+        import { e } from "first.cpat"
+        rule = a + b
+    "#;
+    assert_eq!(
+        Grammar::imports_of(text),
+        Some(vec![
+            "first.cpat".to_string(),
+            "second.cpat".to_string(),
+            "first.cpat".to_string(),
+        ])
+    );
+    assert_eq!(Grammar::imports_of(r#"x = "a""#), Some(Vec::new()));
+}
+
+#[test]
+fn imports_of_is_none_for_text_whose_build_fails_before_importing() {
+    assert_eq!(Grammar::imports_of("//"), None);
+    assert_eq!(
+        Grammar::imports_of(
+            r#"import { a } from "f"
+            x = "a" <|> "b""#
+        ),
+        None
+    );
+}

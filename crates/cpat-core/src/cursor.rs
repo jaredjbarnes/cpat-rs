@@ -569,8 +569,10 @@ impl<'t> Cursor<'t> {
         self.tree.finish(self.text, root)
     }
 
-    /// Ends the parse. A halted parse has no tree, whatever `root` says.
-    pub(crate) fn finish(self, root: Option<NodeId>) -> crate::ParseResult<'t> {
+    /// Ends the parse: what a driver of `Pattern::parse` gets back, as
+    /// `exec` returns it (the tree from `root`, the errors, the leaf matches
+    /// and the history). A halted parse has no tree, whatever `root` says.
+    pub fn finish(self, root: Option<NodeId>) -> crate::ParseResult<'t> {
         let (pattern_error, too_deep, root) = match self.halt {
             None => (None, None, root),
             Some(Halt::Pattern(error)) => (Some(error), None, None),

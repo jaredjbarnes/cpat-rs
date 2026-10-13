@@ -1,5 +1,7 @@
 use crate::exec::ParseResult;
+use crate::halt::Limits;
 use crate::introspect::Introspection;
+use crate::parse_error::Match;
 use crate::pattern::Pattern;
 
 /// v12 `generateErrorMessage`, character for character:
@@ -20,16 +22,34 @@ use crate::pattern::Pattern;
 ///   right after the match starts a new line at column 0, and an emoji
 ///   right after it counts one unit (half of it).
 pub fn generate_error_message(pattern: &Pattern, result: &ParseResult<'_>) -> String {
-    let leaf = result.leaf_match.as_ref().filter(|leaf| leaf.end > 0);
-    let Some(leaf) = leaf else {
+    generate_error_message_after(
+        pattern,
+        result.text(),
+        result.leaf_match.as_ref(),
+        result.limits(),
+    )
+}
+
+/// `generate_error_message` from the parts of a result it reads: the text,
+/// the furthest leaf match (its path from `pattern`, the root parsed) and
+/// the limits the parse ran under. For a host that keeps those after the
+/// result itself is gone (the wasm layer hands results to JS and is asked
+/// for the message later).
+pub fn generate_error_message_after(
+    pattern: &Pattern,
+    text: &str,
+    leaf: Option<&Match>,
+    limits: Limits,
+) -> String {
+    let Some(leaf) = leaf.filter(|leaf| leaf.end > 0) else {
         let hint = clean(pattern.tokens()).join(", ");
         return format!("Error at line 1, column 1. Hint: {hint}");
     };
 
     // The leaf's path is as deep as the parse's limits allowed.
-    let introspection = Introspection::with_limits(pattern, result.limits());
+    let introspection = Introspection::with_limits(pattern, limits);
     let hint = clean(introspection.next_tokens(&leaf.path)).join(",");
-    let (line, column) = line_and_column(result.text(), leaf.end);
+    let (line, column) = line_and_column(text, leaf.end);
     format!("Error at line {line}, column {column}. Hint: {hint}")
 }
 

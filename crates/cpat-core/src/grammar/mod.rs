@@ -79,6 +79,23 @@ impl Grammar {
         };
         Grammar::parse_string(&file.expression, options)
     }
+
+    /// The resources `text`'s import statements name, in statement order:
+    /// the first thing its build asks the resolver for (each import then
+    /// asks for its own grammar's imports, depth first). A host that loads
+    /// grammars asynchronously fetches these ahead of the build and answers
+    /// the resolver from memory (DESIGN §19, §22). `None` when the text
+    /// wouldn't get as far as its imports (it isn't cpat, or nests too
+    /// deeply); its build says why. A `with params` block can't import, so
+    /// these are all of the text's imports.
+    pub fn imports_of(text: &str) -> Option<Vec<String>> {
+        let mut grammar = fresh_cpat_grammar();
+        let result = grammar.exec_with(text, GRAMMAR_TEXT_LIMITS);
+        let tree = result.tree()?;
+        let root = tree.root();
+        reject_removed_syntax(text, root).ok()?;
+        Some(import::resources(root))
+    }
 }
 
 /// One grammar's text, built with what `setup` gives it: the caller's own,

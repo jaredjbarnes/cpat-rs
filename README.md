@@ -6,7 +6,7 @@ WebAssembly build for JavaScript.
 | Crate | What it is |
 |---|---|
 | `crates/cpat-core` | The parser: patterns, cursor, read-only tree. No platform code. |
-| `crates/cpat-wasm` | wasm-bindgen layer plus `js/tree.mjs`, a JS view over the parse result. |
+| `crates/cpat-wasm` | wasm-bindgen layer plus `js/index.mjs`, clarity-pattern-parser's JS API over it. |
 
 ## Quick start
 
@@ -23,7 +23,7 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 13)
+## What's in the box (milestone 14)
 
 `Literal`, `Regex`, `Sequence`, `Choice`, `Repeat` (unbounded or bounded, with an optional
 divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for recursive
@@ -216,7 +216,6 @@ assert_eq!(tree.to_string(root), "13");
 assert!(Query::select(&tree, root, "parent >").is_err());
 ```
 
-Still to come: autocomplete, grammars, the editable tree and queries in JS.
 
 ```rust
 use cpat_core::{Block, Choice, Literal, Pattern, Reference, Regex, Sequence};
@@ -255,13 +254,63 @@ let mut block: Pattern = Block::new(
 assert!(block.test("{{{}}}"));
 ```
 
+## The JS API
+
+`crates/cpat-wasm/js/index.mjs` exports what clarity-pattern-parser v12's `src/index.ts` exports,
+with the same shapes, so code written against v12 mostly runs unchanged: the pattern classes
+(`Literal`, `Regex`, `Sequence`, `Expression`, `Optional`, `Not`, `Cut`, `Repeat`, `Reference`,
+`Context`, `RightAssociated`, `TakeUntil`, `Block`) with v12's constructors
+(`new Repeat(name, pattern, { min, max, divider, trimDivider })`), `Grammar` (`parseString`,
+async `parse` and `import`, `resolveImport`/`resolveImportSync`, `params` as JS patterns, JS
+`decorators`), `patterns` and `createPatternsTemplate`, `Node`, `compact`, `remove`, `Query`,
+`$`, `Selector`, `Cursor`, `ParseError`, `AutoComplete`, `generateErrorMessage`,
+`isTokenizablePattern` and `grammar`. Build it with
+`wasm-pack build --target nodejs --release --out-dir pkg-node` in `crates/cpat-wasm`.
+
+```js
+import { patterns, Grammar, $ } from "./crates/cpat-wasm/js/index.mjs";
+
+const { fullName } = patterns`
+  first-name = "John"
+  space = /\\s+/
+  last-name = "Doe"
+  full-name = first-name + space + last-name
+`;
+const { ast, cursor } = fullName.exec("John  Doe");
+ast.find(n => n.name === "space").remove();          // v12's editable Node
+$(ast, "last-name").setValue("Smith");
+console.log(ast.value, cursor.hasError);              // "JohnSmith" false
+
+const grammar = await Grammar.parse(`import { name } from "names.cpat"\nhi = "hi " + name`, {
+  resolveImport: async resource => ({ resource, expression: await load(resource) }),
+});
+```
+
+- `exec(text, record?)` returns `{ ast, cursor }`. `ast` is a `Node` made from the flat result
+  (`tree`, a read-only view over `Uint32Array`s) the first time it is read; the view's `toNode()`
+  does the same for any subtree. Positions are UTF-16 offsets: `firstIndex`/`lastIndex`
+  inclusive and `startIndex`/`endIndex` half-open, as in v12. The cursor reports `error`,
+  `furthestError`, `leafMatch(es)` and, after a recording exec, `errors`, `records` and
+  `rootMatch`, each naming its pattern.
+- A pattern's `children` are places in it: a child knows its `parent` and what follows it
+  (`getNextTokens`), but is a view, not a separate pattern. Composite constructors copy the
+  patterns they are given, as v12's clone them, so changing one afterwards changes nothing in
+  the composite. `setTokens` works on a pattern you hold, not on a child place.
+- `Grammar.parse` and `Grammar.import` fetch every import with your `resolveImport` first (in
+  the order v12 asks, from the same origins), then build synchronously. Grammar errors are
+  thrown as `Error`s with v12's message, character for character.
+- Differences from v12 are those of the Rust core (DESIGN.md lists them), plus: an error from an
+  ordinary (not recording) parse names its pattern by `name` and `id` only; a reference that
+  names nothing throws when `exec` starts, not when the parse reaches it; input nested too deep
+  is `cursor.tooDeep`, not a `RangeError`.
+
 ## Working on it
 
 ```sh
 cargo test --workspace                       # Rust tests
 cd crates/cpat-wasm
-wasm-pack build --target nodejs --out-dir pkg-node
-node --test js/*.test.mjs                     # JS smoke tests against the wasm build
+wasm-pack build --target nodejs --release --out-dir pkg-node
+node --test js/*.test.mjs                     # JS tests against the wasm build
 ```
 
 **Positions are byte offsets in Rust and UTF-16 offsets in JS.** The wasm layer converts at the

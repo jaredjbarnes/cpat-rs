@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { Tree } from "./tree.mjs";
+import { Node } from "./node.mjs";
 
 const { Pattern } = createRequire(import.meta.url)("../pkg-node/cpat_wasm.js");
 
@@ -278,6 +279,46 @@ test("a long operator chain comes back as a tree as deep as the input", () => {
   assert.equal(depth, n + 1);
   assert.equal(root.findAll(node => node.type === "expression").length, n);
   assert.equal(root.find(node => node.isLeaf).value, "1");
+});
+
+test("toNode makes v12's editable Node from a tree as deep as the input, and none of its walks recurse", () => {
+  const n = 100_000;
+  const text = "1" + "+1".repeat(n);
+  const node = new Tree(text, arithmetic().exec(text)).root.toNode();
+
+  assert.ok(node instanceof Node);
+  assert.equal(node.value, text);
+  assert.deepEqual([node.firstIndex, node.lastIndex, node.startIndex, node.endIndex], [0, 2 * n, 0, 2 * n + 1]);
+  assert.equal(node.findAll(m => m.name === "num").length, n + 1);
+  assert.equal(node.find(m => m.isLeaf && m.lastIndex === 2 * n).value, "1");
+  assert.equal(node.flatten().length, 2 * n + 1);
+  let names = 0;
+  node.walkDown(() => {
+    names++;
+  });
+  assert.equal(names, 3 * n + 1);
+  const copy = node.clone();
+  assert.ok(copy.isEqual(node));
+  copy.normalize(5);
+  assert.equal(copy.endIndex, 2 * n + 6);
+  assert.equal(node.transform({ num: m => m }).value, text);
+});
+
+test("toNode on an inner node makes only its subtree, with the tree's positions", () => {
+  const text = "1+2*3";
+  const root = new Tree(text, arithmetic().exec(text)).root;
+  const mul = root.children[2].toNode();
+
+  assert.equal(mul.parent, null);
+  assert.deepEqual(
+    mul.children.map(c => [c.name, c.type, c.value, c.firstIndex, c.lastIndex]),
+    [
+      ["num", "regex", "2", 2, 2],
+      ["*", "literal", "*", 3, 3],
+      ["num", "regex", "3", 4, 4],
+    ]
+  );
+  assert.equal(mul.value, "2*3");
 });
 
 test("a right-associated operator nests to the right", () => {

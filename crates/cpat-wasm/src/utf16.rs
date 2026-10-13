@@ -37,6 +37,21 @@ impl Utf16Offsets {
     }
 }
 
+/// The byte offset of UTF-16 offset `unit` in `text`: JS hands positions in
+/// as string indices. A unit inside a character (half of a surrogate pair)
+/// is that character's start, and a unit past the end is the end.
+pub(crate) fn byte_of(text: &str, unit: u32) -> usize {
+    let mut units = 0u32;
+    for (byte, ch) in text.char_indices() {
+        let next = units + ch.len_utf16() as u32;
+        if unit < next {
+            return byte;
+        }
+        units = next;
+    }
+    text.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,5 +70,17 @@ mod tests {
         assert_eq!(offsets.of(1), 1);
         assert_eq!(offsets.of(5), 3);
         assert_eq!(offsets.of(7), 4);
+    }
+
+    #[test]
+    fn byte_of_inverts_of() {
+        let text = "|🔴é";
+        assert_eq!(byte_of(text, 0), 0);
+        assert_eq!(byte_of(text, 1), 1);
+        // Half of the surrogate pair is the emoji's start.
+        assert_eq!(byte_of(text, 2), 1);
+        assert_eq!(byte_of(text, 3), 5);
+        assert_eq!(byte_of(text, 4), 7);
+        assert_eq!(byte_of(text, 99), 7);
     }
 }

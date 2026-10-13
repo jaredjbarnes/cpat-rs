@@ -10,6 +10,14 @@ use crate::name::Name;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PatternId(u32);
 
+/// The id's number, for hosts that hand ids out as text (v12's ids are
+/// strings). Two patterns print the same exactly when they are clones.
+impl std::fmt::Display for PatternId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 thread_local! {
     static NEXT_ID: Cell<u32> = const { Cell::new(0) };
 }

@@ -56,3 +56,25 @@ fn a_partial_match_with_no_failures_reports_the_leftover_text() {
     let furthest = result.furthest_error.unwrap();
     assert_eq!((furthest.start, furthest.last), (1, 2));
 }
+
+#[test]
+fn a_direct_parse_finishes_into_a_result_as_exec_returns_one() {
+    // `Cursor::finish` is how a host driving `parse` itself (v12's
+    // `pattern.parse(cursor)`) gets the tree and the report: here from a
+    // position past the start, and kept although it doesn't span the text.
+    let mut world = lit("world", "World");
+    let mut cursor = cpat_core::Cursor::new("Hello World!");
+    cursor.set_pos(6);
+    let root = world.parse(&mut cursor);
+    let result = cursor.finish(root);
+
+    let tree = result.tree().expect("the literal matched");
+    assert_eq!((tree.root().start(), tree.root().end()), (6, 11));
+    assert_eq!(result.leaf_match.expect("a leaf match").end, 11);
+
+    let mut cursor = cpat_core::Cursor::new("Hello World!");
+    let root = world.parse(&mut cursor);
+    let result = cursor.finish(root);
+    assert!(result.tree().is_none());
+    assert_eq!(result.error.expect("an error").pattern.name, "world");
+}

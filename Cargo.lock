@@ -54,6 +54,7 @@ name = "cpat-wasm"
 version = "0.1.0"
 dependencies = [
  "cpat-core",
+ "serde_json",
  "wasm-bindgen",
 ]
 
