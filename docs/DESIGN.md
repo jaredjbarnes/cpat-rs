@@ -92,7 +92,8 @@
 > choice-scope methods. Every public member of v12's `Cursor` and pattern classes is in JS but
 > two, listed in §22 and pinned by `js/index.test.mjs`.
 > Gap 1-3 (AutoComplete's option order exact for every letter in U+00C0–U+017F) is
-> implemented; see §17's sorting entry for exactly which characters sort as ICU sorts them.
+> implemented, with its fix round (`ĳ` as `ij` by case only; marks in canonical order); see
+> §17's sorting entry for exactly which characters sort as ICU sorts them.
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -1096,10 +1097,14 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   the soft hyphen, U+200B–U+200F, U+2060, U+FEFF). Within that block: letters with a
   diacritic weigh as base + mark; stroke letters (`ø`, `đ`, `ł`, `ð`, `ſ`) and `ŀ` (ICU's
   `l·` contraction, a secondary weight above the stroke) weigh as their base at a secondary
-  above it; `æ`, `œ`, `ĳ`, `ß` are two letters set apart above any accent; `ŉ` is `ʼn` told
-  apart only at the case level; and `ı`, `ĸ`, `ŋ`, `ŧ`, `þ` are letters of their own, each
+  above it; `æ`, `œ`, `ß` are two letters set apart above any accent; `ĳ` is `ij` and `ŉ` is
+  `ʼn`, told apart only at the case level (`ij < iJ < ĳ < Ij < IJ < Ĳ`, `ĳ < íj`); and `ı`, `ĸ`, `ŋ`, `ŧ`, `þ` are letters of their own, each
   right after the ASCII letter ICU puts it after (`þ` after `z`), with their capitals as the
-  case tie-break. **Approximate:** every other character (`ʼ` alone, `·` alone, Greek, CJK,
+  case tie-break. Marks weigh in canonical order (`collate_nfd.rs`): each letter with a mark is
+  split into base and mark and each run of marks is stably sorted by combining class, as ICU
+  normalizes to NFD before weighing, so `â` + cedilla, `a` + cedilla + circumflex and `a` +
+  circumflex + cedilla compare equal, as in JS. Only the 13 marks have a class here; any other
+  mark is a starter, which is part of the approximation. **Approximate:** every other character (`ʼ` alone, `·` alone, Greek, CJK,
   emoji, …) sorts after every letter of the exact set, by code point. *Gap 1-3* fixed `ŀ`/`Ŀ`,
   `ŋ`/`Ŋ`, `ĸ`, `ŧ`/`Ŧ`, `þ`/`Þ` and `ŉ`, which fell into that approximation (after `z`, capital
   first). *Checked:* `tests/autocomplete.rs` and `js/autocomplete.test.mjs` sort `"<c>x"` for
@@ -1109,7 +1114,17 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   non-ASCII letter in `ORDER`) makes that test fail. `ŉ` sorts last of the 242 with or without
   its row, so its row (and `ẞ`'s, outside the block) is pinned by a second test of Node's order
   (`ʼn < ʼN < ŉ`). 100 000 random pairs of strings of 1–4 characters drawn from the exact set
-  (10 seeds, half of them pairs one character apart) compare the same in both. *Rejected:*
+  (10 seeds, half of them pairs one character apart) compare the same in both. *Fix round 1*
+  of gap 1-3 found two errors in that claim: `ĳ`/`Ĳ` were weighed as digraphs like `æ` (a
+  secondary weight between the letters, so `IJ < ĳ` and `íj < ĳ`; DUCET gives `ĳ` only a
+  tertiary difference from `ij`), and marks weighed in typed order, so canonically equal
+  strings sorted apart. Neither showed in the 242-letter fixture (no typed `ij`, no stacked
+  marks) or in those random strings. Both are pinned by v12-recorded tests
+  (`ij_ligature_is_ij_told_apart_only_by_case`, `canonically_equal_strings_sort_as_equal`, and
+  their wasm twins), and 10 more seeds of 800 strings of 1–4 characters drawn from the
+  242 letters, the 13 marks (three times as likely), `i`/`j`/`ĳ`/`Ĳ`, the no-break space, the
+  soft hyphen, controls and punctuation sort the same through AutoComplete in v12 and in wasm.
+  *Rejected:*
   `icu_collator` (megabytes of data in a wasm module that is mostly regex tables already, §6,
   for characters no grammar here offers); byte order (every capital before every lowercase
   letter, `"Z" < "a"`).

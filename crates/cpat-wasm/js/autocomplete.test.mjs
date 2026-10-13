@@ -1767,3 +1767,23 @@ describe("AutoComplete's option order for Latin letters", () => {
     assert.deepEqual(options, recorded);
   });
 });
+
+describe("AutoComplete's option order: compatibility and canonical equivalence", () => {
+  // Expected orders recorded from v12 runs.
+  const order = words =>
+    new AutoComplete(new Expression("words", words.map((w, i) => new Literal(`w${i}`, w))))
+      .suggestFor("").options.map(o => o.text);
+
+  test("ĳ is ij told apart only by case", () => {
+    assert.deepEqual(order(["IJ", "ĳ"]), ["ĳ", "IJ"]);
+    assert.deepEqual(order(["íj", "ĳ", "ìj", "Ĳ"]), ["ĳ", "Ĳ", "íj", "ìj"]);
+  });
+
+  test("marks weigh in canonical order, however typed", () => {
+    assert.deepEqual(
+      order(["â̧", "ã", "â̧"]),
+      ["ã", "â̧", "â̧"],
+    );
+    assert.deepEqual(order(["ã", "Â̧"]), ["ã", "Â̧"]);
+  });
+});

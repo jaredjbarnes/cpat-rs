@@ -11,10 +11,12 @@
 //! This is the Unicode Collation Algorithm cut down to what suggestions
 //! hold, with weights taken from Node (DESIGN §17): every ASCII character,
 //! every letter in U+00C0–U+017F (with a diacritic, a stroke, written as
-//! two letters: `æ` sorts as a special `ae`, `ß` as `ss`, `ŉ` as `ʼn`, or a
-//! letter of its own: `ĸ`, `ŋ`, `ŧ`, `þ`), and the combining marks they
-//! decompose to, exactly; any other character sorts after every letter, by
-//! code point. Three levels, each compared over the whole
+//! two letters: `æ` sorts as a special `ae`, `ß` as `ss`, `ĳ` as `ij` and
+//! `ŉ` as `ʼn` told apart only by case, or a letter of its own: `ĸ`, `ŋ`,
+//! `ŧ`, `þ`), and the combining marks they decompose to, exactly; any other
+//! character sorts after every letter, by code point. The text is first
+//! put in canonical order (`collate_nfd`), as ICU normalizes it, so
+//! canonically equal strings weigh the same. Three levels, each compared over the whole
 //! string before the next: primary (the base character), secondary
 //! (accents, as separate elements, so `"eá" < "éa"`), tertiary (case).
 //!
@@ -26,6 +28,7 @@
 use std::cmp::Ordering;
 
 use super::collate_latin::LATIN;
+use super::collate_nfd::{decompose, mark_index};
 
 /// ICU's primary order for ASCII (and NEL), one entry per primary weight;
 /// a letter's capital shares its weight. Generated from Node by sorting
@@ -36,13 +39,6 @@ use super::collate_latin::LATIN;
 /// every letter and with the capital first.
 const ORDER: &str = "\t\n\u{b}\u{c}\r\u{85} _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$\
                      0123456789abcdefghi\u{131}jklmn\u{14B}opq\u{138}rst\u{167}uvwxyz\u{FE}";
-
-/// The combining marks the Latin table's letters decompose to, in the
-/// order ICU's secondary weights put them (`collate_latin`).
-const MARKS: [char; 13] = [
-    '\u{301}', '\u{300}', '\u{306}', '\u{302}', '\u{30C}', '\u{30A}', '\u{308}', '\u{30B}',
-    '\u{303}', '\u{307}', '\u{327}', '\u{328}', '\u{304}',
-];
 
 const COMMON: u16 = 1;
 /// Tertiary weights, in DUCET's order: plain lower case, a letter written
@@ -59,20 +55,26 @@ const NO_BREAK: u8 = 27;
 const DIGRAPH: u16 = 200;
 
 /// Letters ICU sorts as two, set apart from the two typed by a secondary
-/// weight: the letters, and whether upper case.
-const DIGRAPHS: [(char, [char; 2], bool); 8] = [
+/// weight (DUCET gives them one between their letters): the letters, and
+/// whether upper case. `ĳ` is not one: it is only compatible with `ij`
+/// (`COMPATIBLE`).
+const DIGRAPHS: [(char, [char; 2], bool); 6] = [
     ('\u{C6}', ['a', 'e'], true),   // Æ
     ('\u{DF}', ['s', 's'], false),  // ß
     ('\u{E6}', ['a', 'e'], false),  // æ
-    ('\u{132}', ['i', 'j'], true),  // Ĳ
-    ('\u{133}', ['i', 'j'], false), // ĳ
     ('\u{152}', ['o', 'e'], true),  // Œ
     ('\u{153}', ['o', 'e'], false), // œ
     ('\u{1E9E}', ['s', 's'], true), // ẞ
 ];
 /// Letters ICU sorts exactly as the two characters they are compatible
-/// with, told apart only at the case level (`ʼn < ʼN < ŉ`): `ŉ` is `ʼn`.
-const COMPATIBLE: [(char, [char; 2]); 1] = [('\u{149}', ['\u{2BC}', 'n'])];
+/// with, told apart only at the case level, where a compatible lower-case
+/// letter weighs between lower and upper case (`ij < iJ < ĳ < Ij < IJ <
+/// Ĳ`, `ʼn < ʼN < ŉ`): the letters, and whether upper case.
+const COMPATIBLE: [(char, [char; 2], bool); 3] = [
+    ('\u{132}', ['i', 'j'], true),        // Ĳ
+    ('\u{133}', ['i', 'j'], false),       // ĳ
+    ('\u{149}', ['\u{2BC}', 'n'], false), // ŉ
+];
 /// Primaries for characters outside the tables start past every letter.
 const UNLISTED: u32 = 1_000;
 
@@ -105,7 +107,7 @@ fn level(a: &[Element], b: &[Element], weight: impl Fn(&Element) -> u32) -> Orde
 
 fn elements(text: &str) -> Vec<Element> {
     let mut elements = Vec::with_capacity(text.len());
-    for c in text.chars() {
+    for c in decompose(text) {
         push_elements(c, &mut elements);
     }
     elements
@@ -135,14 +137,18 @@ fn push_elements(c: char, out: &mut Vec<Element>) {
         out.push(base(second, tertiary));
         return;
     }
-    if let Some((_, letters)) = COMPATIBLE.iter().find(|(listed, _)| *listed == c) {
-        out.extend(letters.map(|letter| base(primary(letter), COMPAT)));
+    if let Some((_, letters, upper)) = COMPATIBLE.iter().find(|(listed, ..)| *listed == c) {
+        let tertiary = if *upper { UPPER_COMPAT } else { COMPAT };
+        out.extend(letters.map(|letter| base(primary(letter), tertiary)));
         return;
     }
     if let Some(weight) = mark_weight(c) {
         out.push(diacritic(weight));
         return;
     }
+    // `decompose` has split every letter with a mark, so the letters left
+    // in the table are those that sort with a base but have no mark (`ø`,
+    // `ŀ`, `ſ`).
     if let Ok(index) = LATIN.binary_search_by(|(listed, ..)| listed.cmp(&c)) {
         let (_, letter, weight, upper) = LATIN[index];
         let primary = ordered(char::from(letter)).expect("a letter is ordered");
@@ -182,10 +188,7 @@ fn ordered(c: char) -> Option<u32> {
 
 /// A combining mark's secondary weight, on `collate_latin`'s scale.
 fn mark_weight(c: char) -> Option<u8> {
-    MARKS
-        .iter()
-        .position(|&listed| listed == c)
-        .map(|index| 4 * (index as u8 + 1))
+    mark_index(c).map(|index| 4 * (index as u8 + 1))
 }
 
 fn base(primary: u32, tertiary: u8) -> Element {

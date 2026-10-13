@@ -24,6 +24,7 @@
 mod auto_complete;
 mod collate;
 mod collate_latin;
+mod collate_nfd;
 mod composite;
 mod options;
 mod suggestion;

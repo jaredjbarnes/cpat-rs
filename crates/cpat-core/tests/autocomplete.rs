@@ -1340,6 +1340,85 @@ fn letters_with_a_primary_of_their_own_take_accents_and_case() {
     assert_eq!(locale_compare("\u{212A}", "K"), std::cmp::Ordering::Equal);
 }
 
+/// AutoComplete's `suggestFor("")` option order for one literal per word,
+/// as v12's tests build them.
+fn suggested_order(words: &[&str]) -> Vec<String> {
+    let pattern = choice(
+        "words",
+        words
+            .iter()
+            .enumerate()
+            .map(|(i, word)| lit(&format!("w{i}"), word))
+            .collect(),
+    );
+    suggest(pattern, "")
+        .options
+        .into_iter()
+        .map(|option| option.text)
+        .collect()
+}
+
+#[test]
+fn ij_ligature_is_ij_told_apart_only_by_case() {
+    // ICU: `ĳ` is only compatible with `ij` (no secondary weight between
+    // its letters, unlike `æ`), so it sorts among the cased `ij`s and
+    // before any accent. Expected orders recorded from v12 runs.
+    assert_eq!(suggested_order(&["IJ", "ĳ"]), ["ĳ", "IJ"]);
+    assert_eq!(
+        suggested_order(&["íj", "ĳ", "ìj", "Ĳ"]),
+        ["ĳ", "Ĳ", "íj", "ìj"]
+    );
+    assert_eq!(
+        suggested_order(&[
+            "ĳa",
+            "ija",
+            "ĳ\u{301}",
+            "ij\u{301}",
+            "Ĳ",
+            "IJ",
+            "Ij",
+            "ĳ",
+            "iJ",
+            "ij"
+        ]),
+        [
+            "ij",
+            "iJ",
+            "ĳ",
+            "Ij",
+            "IJ",
+            "Ĳ",
+            "ij\u{301}",
+            "ĳ\u{301}",
+            "ija",
+            "ĳa"
+        ]
+    );
+}
+
+#[test]
+fn canonically_equal_strings_sort_as_equal() {
+    // ICU puts marks in canonical order first: the cedilla (class 202)
+    // before the circumflex (230), however typed or composed. Node:
+    // "â\u0327".localeCompare("a\u0327\u0302") === 0.
+    use std::cmp::Ordering::Equal;
+    assert_eq!(locale_compare("â\u{327}", "a\u{327}\u{302}"), Equal);
+    assert_eq!(locale_compare("a\u{302}\u{327}", "a\u{327}\u{302}"), Equal);
+    assert_eq!(locale_compare("ç\u{301}", "c\u{301}\u{327}"), Equal);
+
+    // Expected orders recorded from v12 runs; equal texts keep their
+    // order (a stable sort).
+    assert_eq!(
+        suggested_order(&["a\u{302}\u{327}", "ã", "a\u{327}\u{302}"]),
+        ["ã", "a\u{302}\u{327}", "a\u{327}\u{302}"]
+    );
+    assert_eq!(suggested_order(&["ã", "Â\u{327}"]), ["ã", "Â\u{327}"]);
+    assert_eq!(
+        suggested_order(&["ç\u{301}", "ć", "c\u{301}\u{327}", "c\u{327}\u{301}", "ç"]),
+        ["ć", "ç", "ç\u{301}", "c\u{301}\u{327}", "c\u{327}\u{301}"]
+    );
+}
+
 #[test]
 fn locale_compare_ignores_control_characters_and_ties_stay_in_order() {
     // JS: "a\u0000".localeCompare("a") === 0, so a stable sort keeps them

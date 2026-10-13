@@ -90,7 +90,8 @@ then `suggest_for(text)` returns a `Suggestion`: whether the text is complete, t
 a `text` to insert at `start_index`, a byte offset, with the tokens it is made of and the path
 of the pattern each came from), where the text stops making sense (`error`, `error_at_index`),
 and the tree of what matched. Options are sorted as JS's `localeCompare` sorts them
-(`locale_compare`): exactly for ASCII and every letter in U+00C0–U+017F, and any other
+(`locale_compare`): exactly for ASCII, every letter in U+00C0–U+017F and the combining marks
+they decompose to (in canonical order, as ICU normalizes them), and any other
 character after those letters, by code point.
 
 ```rust
