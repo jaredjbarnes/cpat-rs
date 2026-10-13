@@ -1260,6 +1260,86 @@ fn options_are_sorted_as_js_locale_compare_sorts_them() {
     assert_eq!(texts, node_order);
 }
 
+/// Every letter in U+00C0–U+017F and every ASCII letter, as v12's
+/// AutoComplete.test.ts-style check builds them: in code-point order, then
+/// `A a B b … Z z`.
+fn latin_letters() -> Vec<char> {
+    let mut letters: Vec<char> = ('\u{C0}'..='\u{17F}')
+        .filter(|c| c.is_alphabetic())
+        .collect();
+    for (upper, lower) in ('A'..='Z').zip('a'..='z') {
+        letters.extend([upper, lower]);
+    }
+    letters
+}
+
+/// v12's order for `latin_letters()` as `"<c>x"` literals, recorded by
+/// running v12's `new AutoComplete(new Expression("letters", literals))
+/// .suggestFor("")` under Node 24 (ICU 78) and writing one option per line.
+/// The trailing `x` matters: it shows `æx < ax` (`æ` is `ae`) and
+/// `ŀx` among the `l`s rather than `l` + a middle dot that would sort first.
+const LATIN_ORDER_V12: &str = include_str!("fixtures/latin_order_v12.txt");
+
+#[test]
+fn every_latin_letter_from_u00c0_to_u017f_sorts_as_v12_sorts_it() {
+    let letters = latin_letters();
+    let expected: Vec<&str> = LATIN_ORDER_V12.lines().collect();
+    assert_eq!(letters.len(), 242);
+    assert_eq!(expected.len(), letters.len());
+
+    let words: Vec<String> = letters.iter().map(|letter| format!("{letter}x")).collect();
+    let pattern = choice(
+        "letters",
+        words
+            .iter()
+            .enumerate()
+            .map(|(i, word)| lit(&format!("l{i}"), word))
+            .collect(),
+    );
+    let texts: Vec<String> = suggest(pattern, "")
+        .options
+        .into_iter()
+        .map(|option| option.text)
+        .collect();
+    assert_eq!(texts, expected);
+
+    // The bare letters too, reversed so a stable sort can't keep a right
+    // order by luck: `ĸ`, `ŋ`, `ŧ` and `þ` among the letters, lower case
+    // first, `ŀ` after `ł`, `ŉ` (as `ʼn`) last.
+    let mut bare: Vec<String> = letters.iter().rev().map(char::to_string).collect();
+    bare.sort_by(|a, b| locale_compare(a, b));
+    let tail: Vec<&str> = bare[bare.len() - 4..].iter().map(String::as_str).collect();
+    assert_eq!(tail, ["Ż", "þ", "Þ", "ŉ"]);
+}
+
+#[test]
+fn letters_with_a_primary_of_their_own_take_accents_and_case() {
+    // Node's order for each list.
+    let mut own = vec!["ŋa", "Ŋ", "ŋ\u{301}", "nz", "ŋ", "N", "o", "ņz"];
+    own.sort_by(|a, b| locale_compare(a, b));
+    assert_eq!(own, ["N", "nz", "ņz", "ŋ", "Ŋ", "ŋ\u{301}", "ŋa", "o"]);
+
+    let mut dotted = vec!["ŀa", "L", "Ŀ", "ł\u{301}", "la", "ŀ", "Ł", "l", "ł"];
+    dotted.sort_by(|a, b| locale_compare(a, b));
+    assert_eq!(
+        dotted,
+        ["l", "L", "ł", "Ł", "ł\u{301}", "ŀ", "Ŀ", "la", "ŀa"]
+    );
+
+    let mut apostrophe = vec!["ŉa", "ʼN", "ŉ", "ʼn", "ʼna"];
+    apostrophe.sort_by(|a, b| locale_compare(a, b));
+    assert_eq!(apostrophe, ["ʼn", "ʼN", "ŉ", "ʼna", "ŉa"]);
+
+    // `ŉ` sorts last among the 242 letters with or without its row, so its
+    // row is pinned here; so is `ẞ`, outside U+00C0–U+017F.
+    let mut sharp = vec!["ẞa", "ssa", "ẞ", "ß", "SS", "Ss", "ss"];
+    sharp.sort_by(|a, b| locale_compare(a, b));
+    assert_eq!(sharp, ["ss", "Ss", "SS", "ß", "ẞ", "ssa", "ẞa"]);
+
+    // The Kelvin sign is canonically `K`.
+    assert_eq!(locale_compare("\u{212A}", "K"), std::cmp::Ordering::Equal);
+}
+
 #[test]
 fn locale_compare_ignores_control_characters_and_ties_stay_in_order() {
     // JS: "a\u0000".localeCompare("a") === 0, so a stable sort keeps them

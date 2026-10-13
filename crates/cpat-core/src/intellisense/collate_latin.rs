@@ -13,8 +13,9 @@
 //! letters of its base sort before it, plus its place among such letters
 //! of one base. `ſ` weighs 255, above every diacritic and above `ß`'s
 //! second element (`collate::DIGRAPH`), as Node orders them (`ß < ſſ`,
-//! `ß̀ < ſś`). `ŀ` is left out: ICU
-//! sorts it as `l·`, two primaries.
+//! `ß̀ < ſś`). `ŀ` is ICU's contraction of `l·`: an `l` whose middle dot
+//! weighs only at the secondary level, above `ł`'s stroke and below `ſ`
+//! (`ł < ł́ < ŀ`), so it weighs 56.
 //! Sorted by `char`, for binary search.
 
 pub(super) const LATIN: &[(char, u8, u8, bool)] = &[
@@ -134,6 +135,8 @@ pub(super) const LATIN: &[(char, u8, u8, bool)] = &[
     ('\u{13C}', b'l', 44, false),  // ļ
     ('\u{13D}', b'l', 20, true),   // Ľ
     ('\u{13E}', b'l', 20, false),  // ľ
+    ('\u{13F}', b'l', 56, true),   // Ŀ
+    ('\u{140}', b'l', 56, false),  // ŀ
     ('\u{141}', b'l', 54, true),   // Ł
     ('\u{142}', b'l', 54, false),  // ł
     ('\u{143}', b'n', 4, true),    // Ń

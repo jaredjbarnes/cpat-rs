@@ -91,6 +91,8 @@
 > grapheme at a time with the parser's boundaries (`grapheme_starts`) and has v12's history and
 > choice-scope methods. Every public member of v12's `Cursor` and pattern classes is in JS but
 > two, listed in §22 and pinned by `js/index.test.mjs`.
+> Gap 1-3 (AutoComplete's option order exact for every letter in U+00C0–U+017F) is
+> implemented; see §17's sorting entry for exactly which characters sort as ICU sorts them.
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -1087,16 +1089,30 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   own order (`_ - , ; : ! ? . ' " ( ) [ ] { } @ * / \ & # % \` ^ + < = > | ~ $`), accents
   outrank case (`e < E < é`), a word sorts before a longer word it begins (`á < a b`), and
   control characters are ignored. Here: the UCA's three levels (base character, accents as
-  separate elements, case), with weights generated once from Node 24: every ASCII character;
-  the Latin letters of U+00C0–U+017F, with their combining marks' secondary order, stroke
-  letters (`ø`, `đ`, `ł`) placed among them, and `æ`, `œ`, `ĳ`, `ß` as two letters set apart
-  above any accent; the dotless `ı` between `i` and `j`; the no-break space; the soft hyphen and
-  zero-width format characters ignored. Anything else sorts after every letter, by code point
-  (an approximation). *Checked:* 3 000 random strings of 1–4 characters from those sets, sorted
-  by both, for 10 seeds: the same order. `tests/autocomplete.rs` pins Node's order for a fixed
-  list. *Rejected:* `icu_collator` (megabytes of data in a wasm module that is mostly regex
-  tables already, §6, for characters no grammar here offers); byte order (every capital before
-  every lowercase letter, `"Z" < "a"`).
+  separate elements, case), with weights generated once from Node 24.
+  **Exact** (the same order as ICU for any string made of them): every ASCII character; every
+  letter (`\p{Alphabetic}`) in U+00C0–U+017F, case pairs included, and the 13 combining marks
+  they decompose to; the no-break space; the ignorables (C0/C1 controls but the whitespace ones,
+  the soft hyphen, U+200B–U+200F, U+2060, U+FEFF). Within that block: letters with a
+  diacritic weigh as base + mark; stroke letters (`ø`, `đ`, `ł`, `ð`, `ſ`) and `ŀ` (ICU's
+  `l·` contraction, a secondary weight above the stroke) weigh as their base at a secondary
+  above it; `æ`, `œ`, `ĳ`, `ß` are two letters set apart above any accent; `ŉ` is `ʼn` told
+  apart only at the case level; and `ı`, `ĸ`, `ŋ`, `ŧ`, `þ` are letters of their own, each
+  right after the ASCII letter ICU puts it after (`þ` after `z`), with their capitals as the
+  case tie-break. **Approximate:** every other character (`ʼ` alone, `·` alone, Greek, CJK,
+  emoji, …) sorts after every letter of the exact set, by code point. *Gap 1-3* fixed `ŀ`/`Ŀ`,
+  `ŋ`/`Ŋ`, `ĸ`, `ŧ`/`Ŧ`, `þ`/`Þ` and `ŉ`, which fell into that approximation (after `z`, capital
+  first). *Checked:* `tests/autocomplete.rs` and `js/autocomplete.test.mjs` sort `"<c>x"` for
+  each of the 242 letters (the block's and ASCII's) through AutoComplete and compare with v12's
+  `suggestFor("")` order, recorded from a v12 run in `tests/fixtures/latin_order_v12.txt`;
+  deleting any entry of the tables (each `collate_latin` row, each digraph of the block, each
+  non-ASCII letter in `ORDER`) makes that test fail. `ŉ` sorts last of the 242 with or without
+  its row, so its row (and `ẞ`'s, outside the block) is pinned by a second test of Node's order
+  (`ʼn < ʼN < ŉ`). 100 000 random pairs of strings of 1–4 characters drawn from the exact set
+  (10 seeds, half of them pairs one character apart) compare the same in both. *Rejected:*
+  `icu_collator` (megabytes of data in a wasm module that is mostly regex tables already, §6,
+  for characters no grammar here offers); byte order (every capital before every lowercase
+  letter, `"Z" < "a"`).
 - **Dedupe is chosen once.** `disable_dedupe` picks `Dedupe::Off` or `Dedupe::ByKey` in the
   constructor. v12 also dedupes each match's composites and the error options; that step is left
   out, because the merge that follows keeps only the first option per text, which drops
@@ -1144,8 +1160,8 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
     `tests/autocomplete.rs`.
   - Unknown names fail `AutoComplete::new` (above); v12 throws when a parse or query reaches
     one.
-  - Characters outside the collation tables sort by code point after every letter; v12 sorts
-    them as ICU does.
+  - Characters outside the exact set above (ASCII, the letters of U+00C0–U+017F, their marks)
+    sort by code point after every letter; v12 sorts them as ICU does.
   - Positions are bytes and options never start inside a character (above).
   - The milestone-8 deviations apply to the queries autocomplete asks (the repeat facade, a
     marked atom, unknown names, home binding).

@@ -10,10 +10,11 @@
 //!
 //! This is the Unicode Collation Algorithm cut down to what suggestions
 //! hold, with weights taken from Node (DESIGN §17): every ASCII character,
-//! the Latin letters in U+00C0–U+017F (with a diacritic, a stroke, or
-//! written as two letters: `æ` sorts as a special `ae`, `ß` as `ss`), and
-//! the combining marks they decompose to, exactly; any other character
-//! sorts after every letter, by code point. Three levels, each compared over the whole
+//! every letter in U+00C0–U+017F (with a diacritic, a stroke, written as
+//! two letters: `æ` sorts as a special `ae`, `ß` as `ss`, `ŉ` as `ʼn`, or a
+//! letter of its own: `ĸ`, `ŋ`, `ŧ`, `þ`), and the combining marks they
+//! decompose to, exactly; any other character sorts after every letter, by
+//! code point. Three levels, each compared over the whole
 //! string before the next: primary (the base character), secondary
 //! (accents, as separate elements, so `"eá" < "éa"`), tertiary (case).
 //!
@@ -29,9 +30,12 @@ use super::collate_latin::LATIN;
 /// ICU's primary order for ASCII (and NEL), one entry per primary weight;
 /// a letter's capital shares its weight. Generated from Node by sorting
 /// every printable ASCII character with `localeCompare`.
-/// The dotless `ı` is a letter of its own between `i` and `j`.
+/// ICU gives five Latin letters a primary of their own, right after the
+/// ASCII letter they look like (`þ` after `z`): the dotless `ı`, `ĸ`, `ŋ`,
+/// `ŧ` and `þ`. Without them here they would fall to `UNLISTED`, past
+/// every letter and with the capital first.
 const ORDER: &str = "\t\n\u{b}\u{c}\r\u{85} _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$\
-                     0123456789abcdefghi\u{131}jklmnopqrstuvwxyz";
+                     0123456789abcdefghi\u{131}jklmn\u{14B}opq\u{138}rst\u{167}uvwxyz\u{FE}";
 
 /// The combining marks the Latin table's letters decompose to, in the
 /// order ICU's secondary weights put them (`collate_latin`).
@@ -54,7 +58,8 @@ const NO_BREAK: u8 = 27;
 /// DUCET.
 const DIGRAPH: u16 = 200;
 
-/// Letters ICU sorts as two: the letters, and whether upper case.
+/// Letters ICU sorts as two, set apart from the two typed by a secondary
+/// weight: the letters, and whether upper case.
 const DIGRAPHS: [(char, [char; 2], bool); 8] = [
     ('\u{C6}', ['a', 'e'], true),   // Æ
     ('\u{DF}', ['s', 's'], false),  // ß
@@ -65,6 +70,9 @@ const DIGRAPHS: [(char, [char; 2], bool); 8] = [
     ('\u{153}', ['o', 'e'], false), // œ
     ('\u{1E9E}', ['s', 's'], true), // ẞ
 ];
+/// Letters ICU sorts exactly as the two characters they are compatible
+/// with, told apart only at the case level (`ʼn < ʼN < ŉ`): `ŉ` is `ʼn`.
+const COMPATIBLE: [(char, [char; 2]); 1] = [('\u{149}', ['\u{2BC}', 'n'])];
 /// Primaries for characters outside the tables start past every letter.
 const UNLISTED: u32 = 1_000;
 
@@ -107,8 +115,7 @@ fn push_elements(c: char, out: &mut Vec<Element>) {
     if is_ignorable(c) {
         return;
     }
-    if let Some(primary) = ordered(c.to_ascii_lowercase()) {
-        let tertiary = if c.is_ascii_uppercase() { UPPER } else { LOWER };
+    if let Some((primary, tertiary)) = ordered_with_case(c) {
         out.push(base(primary, tertiary));
         return;
     }
@@ -118,7 +125,7 @@ fn push_elements(c: char, out: &mut Vec<Element>) {
     }
     if let Some((_, letters, upper)) = DIGRAPHS.iter().find(|(listed, ..)| *listed == c) {
         let tertiary = if *upper { UPPER_COMPAT } else { COMPAT };
-        let [first, second] = letters.map(|letter| ordered(letter).expect("an ASCII letter"));
+        let [first, second] = letters.map(primary);
         out.push(base(first, tertiary));
         out.push(Element {
             primary: 0,
@@ -126,6 +133,10 @@ fn push_elements(c: char, out: &mut Vec<Element>) {
             tertiary: COMPAT,
         });
         out.push(base(second, tertiary));
+        return;
+    }
+    if let Some((_, letters)) = COMPATIBLE.iter().find(|(listed, _)| *listed == c) {
+        out.extend(letters.map(|letter| base(primary(letter), COMPAT)));
         return;
     }
     if let Some(weight) = mark_weight(c) {
@@ -139,7 +150,26 @@ fn push_elements(c: char, out: &mut Vec<Element>) {
         out.push(diacritic(weight));
         return;
     }
-    out.push(base(UNLISTED + u32::from(c), LOWER));
+    out.push(base(primary(c), LOWER));
+}
+
+/// A character in `ORDER` at its own weight (lower case), or the capital
+/// of one: `Ŋ` weighs as `ŋ`, upper case.
+fn ordered_with_case(c: char) -> Option<(u32, u8)> {
+    if let Some(primary) = ordered(c) {
+        return Some((primary, LOWER));
+    }
+    let mut lower = c.to_lowercase();
+    match (lower.next(), lower.next()) {
+        (Some(single), None) if single != c => ordered(single).map(|primary| (primary, UPPER)),
+        _ => None,
+    }
+}
+
+/// A character's primary weight: its place in `ORDER`, or past every
+/// letter by code point.
+fn primary(c: char) -> u32 {
+    ordered(c).unwrap_or(UNLISTED + u32::from(c))
 }
 
 /// The primary weight of a character in `ORDER` (never zero).

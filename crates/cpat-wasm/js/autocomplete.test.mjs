@@ -4,6 +4,7 @@
 // on non-ASCII text: options, UTF-16 start indices, segments, errors, the
 // suggestion's cursor, the static methods and generateErrorMessage.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test, expect } from "./testing/expect.mjs";
 import * as api from "./index.mjs";
 
@@ -1738,5 +1739,31 @@ describe("AutoComplete compared with v12", () => {
   test("the deviations adjust only emoji order and the one emoji cut short", () => {
     const changed = Object.keys(V12).filter(key => JSON.stringify(expected[key]) !== JSON.stringify(V12[key]));
     assert.deepEqual(changed, ["greeting", "tokens", "tokensStatic", "tokensWithCursor"]);
+  });
+});
+
+describe("AutoComplete's option order for Latin letters", () => {
+  // v12's suggestFor("") order for "<c>x" over every letter in
+  // U+00C0–U+017F plus A a … Z z, recorded from a v12 run under Node 24
+  // (the same file the core's autocomplete.rs test reads).
+  const recorded = readFileSync(
+    new URL("../../cpat-core/tests/fixtures/latin_order_v12.txt", import.meta.url),
+    "utf8",
+  ).split("\n").filter(line => line !== "");
+
+  test("matches v12 for every letter in U+00C0–U+017F", () => {
+    const letters = [];
+    for (let code = 0xc0; code <= 0x17f; code++) {
+      const letter = String.fromCodePoint(code);
+      if (/\p{Alphabetic}/u.test(letter)) letters.push(letter);
+    }
+    for (let code = 65; code <= 90; code++) {
+      letters.push(String.fromCharCode(code), String.fromCharCode(code + 32));
+    }
+    assert.equal(letters.length, 242);
+
+    const pattern = new Expression("letters", letters.map((c, i) => new Literal(`l${i}`, `${c}x`)));
+    const options = new AutoComplete(pattern).suggestFor("").options.map(o => o.text);
+    assert.deepEqual(options, recorded);
   });
 });
