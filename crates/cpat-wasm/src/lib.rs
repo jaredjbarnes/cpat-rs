@@ -8,6 +8,7 @@
 
 mod auto_complete;
 mod cursor_json;
+mod custom;
 mod exec_result;
 mod flat_tree;
 mod grammar;
@@ -151,6 +152,13 @@ impl JsPattern {
         let open = delimiter(name, "open", open)?;
         let close = delimiter(name, "close", close)?;
         Ok(Block::new(name, open, content.map(|content| content.inner), close).into())
+    }
+
+    /// `Pattern.custom(name, host)`: a pattern whose matching is a JS
+    /// function, `(text, pos) => end | null` in UTF-16 offsets, behind
+    /// `host` (see `src/custom.rs`). A leaf: its node is the text it took.
+    pub fn custom(name: &str, host: host::CustomHost) -> JsPattern {
+        custom::custom(name, host).into()
     }
 
     #[wasm_bindgen(getter)]

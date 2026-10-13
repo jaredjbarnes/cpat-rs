@@ -62,6 +62,12 @@
 > run in JS (`js/*.test.mjs`) with two adjusted assertions, each a documented deviation.
 > Its fix round makes `test` v12's `!cursor.hasError` (so `test("")` is true, as in v12) and
 > makes JS `test` throw what `exec` throws for a pattern that can't run (§22).
+> Milestone 15 (the JS API, part 2: `CustomPattern` written in JS, decorators that return a
+> replacement, AutoComplete's `cursor`, `suggestForWithCursor` and statics) is implemented; see
+> §9 and §22. v12's `AutoComplete.test.ts` runs in JS as written (`js/autocomplete.test.mjs`),
+> with grammar-built AutoComplete on non-ASCII text compared with v12. A `Suggestion` now keeps
+> its recording parse (§17), and a custom pattern whose code fails halts the parse
+> (`Cursor::halt_custom`, §22).
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -245,7 +251,9 @@ build error naming the pattern.
 - Mistakes are build errors. *(Implemented: every decorator error is `[Invalid Grammar] …`.)*
 - JS decorators are fully supported. *(Implemented in milestone 14, §22.)* A JS custom pattern
   uses a minimal contract, `(text, pos) => end | null`, so each attempt is one boundary call.
-  *(A later milestone.)*
+  *(Implemented in milestone 15, §22: `CustomPattern`.)* A JS decorator may return the
+  replacement (a `CustomPattern`, say) as the Rust signature does; returning nothing keeps the
+  pattern it changed in place, as v12's `void` decorators do.
 
 ## 10. Repeat *(milestone 2)*
 
@@ -1018,9 +1026,12 @@ build error naming the pattern.
   on a sequence that failed earlier into options. The other keeps an option that starts before
   the furthest when it comes after it, which adds `ohn` to `Ja` and moves the flag grammar's
   error back to the space. Both are now pinned by v12-checked tests in `tests/autocomplete.rs`.
-- **Not ported:** `suggestForWithCursor` (it is `suggest_for` on a cursor's text) and the
-  `cursor` field (the parse's history is not kept on the `Suggestion`; the tree is). The wasm
-  layer gets AutoComplete with UTF-16 offsets in a later milestone.
+- **The parse is kept** *(milestone 15)*. `Suggestion::parse` is the recording parse's
+  `ParseResult` (`None` for empty text, which v12 doesn't parse); `tree()`, `pattern_error()`
+  and `too_deep()` read it. It is v12's `cursor` field, which the JS API reports (§22). Keeping
+  it costs nothing: the result was built anyway and used to be taken apart. *Rejected:* a second
+  recording parse in wasm when the cursor is read (twice the work for the same answer).
+  `suggestForWithCursor` is not ported to Rust: it is `suggest_for` on the cursor's text.
 - **Deviations from v12:**
   - A greedy join that never ends offers nothing (above); v12 throws `RangeError`. Pinned in
     `tests/autocomplete.rs`.
@@ -1333,7 +1344,8 @@ build error naming the pattern.
   exports), `pattern.mjs` (the base class, places), `patterns.mjs` (the classes), `cursor.mjs`,
   `parse_error.mjs`, `grammar.mjs`, `template.mjs`, `node.mjs` (v12's `Node`), `tree.mjs` (the
   read-only view and `toNode`), `query.mjs`, `selector.mjs`, `compact.mjs`,
-  `error_message.mjs`, `auto_complete.mjs`, `wasm.mjs` (loads `pkg-node`).
+  `error_message.mjs`, `auto_complete.mjs`, `wasm.mjs` (loads `pkg-node`). Milestone 15 adds
+  `src/custom.rs` (a JS function as a `CustomParse`) and `CustomPattern` in `patterns.mjs`.
 - **A JS pattern is a place: a wasm root and a path.** v12 hands out live children that know
   their parents. Wasm patterns have no parents (§2), so a child is `{ root, path }`, read with
   `Introspection::at` (`at_path`'s numbering, a reference followed to what it would resolve to,
@@ -1411,8 +1423,42 @@ build error naming the pattern.
   throws cpat's message. Input nested too deep is `cursor.tooDeep` (no throw, §11).
 - **`AutoComplete`** binds the core's (§17): options, segments (each pattern a place in a copy
   of the pattern it was built with), the error, `errorAtIndex` and the tree, in UTF-16 offsets.
-  The `Suggestion`'s `cursor` is a fresh cursor over the text: the core keeps no parse history
-  on a suggestion.
+  *(Milestone 15:)* the `Suggestion`'s `cursor` is v12's: recording, holding the parse's
+  errors, matches and records from the core's kept parse (§17), as the same JSON report `exec`
+  sends. `suggestForWithCursor(cursor)` reports into the cursor it is given (moved to 0,
+  recording), as v12 mutates it, and `suggestFor` is that on a new cursor; the static
+  `suggestFor`/`suggestForWithCursor` build an `AutoComplete` and ask it once, as v12's do.
+- **`CustomPattern`** *(milestone 15)*: `new CustomPattern(name, (text, pos) => end | null)`,
+  the contract §9 settled, in UTF-16 offsets. In wasm it is a `Custom` whose `CustomParse`
+  (`src/custom.rs`) calls a JS host object (`js/patterns.mjs`). Its node is a leaf of kind
+  `custom`; `null` records an error at the position, as a regex does (compared: the same errors
+  as `/\d+/` on the same texts); answering the position itself is the `Custom` contract's
+  zero-width success. It takes tokens (`setTokens`, so `isTokenizablePattern` and `@tokens`
+  apply), and a copy, clone or child place shares the function.
+  - *The text crosses once per parse.* Passing it per attempt would decode the whole text into
+    a JS string on every attempt, quadratic over a long input. The host is told the text when
+    a parse it hasn't seen asks, keyed on `Cursor::id` (a process-wide counter: two parses can't
+    share an id, where a text's address and length can repeat once the first is freed). The
+    key is checked on every call, so a function that parses again mid-attempt (another pattern,
+    or a copy of itself) leaves the outer parse's text restored at its next attempt. The byte
+    to UTF-16 maps are built once per text with it. *Rejected:* keying on the text's address
+    (reused between parses); comparing content (a memcmp per attempt).
+  - *Its own failures stop the parse.* A throw, or an answer that isn't `null` or a whole number
+    from `pos` to the text's length outside a surrogate pair, is not a failure to match: the
+    custom pattern calls `Cursor::halt_custom`, the parse halts as it does for a name that
+    resolves to nothing (§11), no alternative runs in its place, and `exec`/`test`/`parse`/
+    `suggestFor` throw `custom pattern \`name\` failed: <message>`. The host checks the answer
+    (it has the text); the Rust side refuses an end outside the text again, so no host can make
+    it slice past the end. *Rejected:* treating a bad answer as `null` (a bug in the function
+    would read as text that doesn't match).
+- **Decorators may return the replacement** *(milestone 15)*. A JS decorator's return value is
+  kept when it is a pattern (a copy is taken, as for params), so `pattern =>
+  new CustomPattern(pattern.name, fn)` puts a JS function in place of a rule's pattern; anything
+  else it returns is ignored and the pattern it was handed (changed in place, by `setTokens`
+  say) is kept, as v12 ignores the return of its `void` decorators. v12's tests return
+  `received.push(arg)`, a number, so refusing other values would break them. A replacement
+  under another name is the core's `DecoratorRenamed` error (§19); a throw is `[Invalid
+  Grammar] <message>`.
 - **Checked against v12** by running the same scripts through v12's `src` with tsx and through
   `js/index.mjs`: the UTF-16 positions of every node, error, leaf match and recorded error on a
   grammar of emoji, a skin-tone sequence and CJK (`js/utf16.test.mjs`), 25 error messages
@@ -1435,8 +1481,21 @@ build error naming the pattern.
     collation tables sort after letters (§17, pinned in `js/compare_v12.test.mjs`).
   - Pattern ids are numbers as text (`"12"`), v12's are `type-n`. A choice's operator, which
     has no id of its own, answers with its place.
-- **Not in this milestone:** custom patterns written in JS (`(text, pos) => end | null`, §9),
-  and builds for targets other than Node (`js/wasm.mjs` loads `pkg-node`).
+  - `CustomPattern` is cpat's (v12's custom patterns implement the whole `Pattern` interface,
+    which a pattern parsed in wasm can't), and a decorator's returned pattern replaces the rule's
+    (v12 ignores what a decorator returns). A custom pattern's failure throws `custom pattern
+    \`name\` failed: …`, not the function's own error object.
+- **Checked against v12 in milestone 15** (`js/autocomplete.test.mjs`): every test of v12's
+  `AutoComplete.test.ts` as written, and five grammars (CJK, accented and emoji names with a
+  greedy space, `@tokens` with custom tokens, a Pratt expression, mutual recursion, a trimmed
+  divider list) on 28 inputs through v12's `src` and here: options, UTF-16 start indices,
+  segment names and types, errors, `errorAtIndex`, the tree, the suggestion's cursor (errors,
+  matched nodes, recording), both statics, `suggestForWithCursor` returning the cursor it was
+  given, and `generateErrorMessage` after `exec`. Equal but for two of the core's deviations,
+  applied to v12's answers in the test and pinned to the four cases they change: emoji sort
+  after letters (§17), and a literal that runs out of text inside an emoji fails at its start
+  (§17's positions).
+- **Not yet:** builds for targets other than Node (`js/wasm.mjs` loads `pkg-node`).
 
 ## Behavior fixed relative to clarity-pattern-parser v11
 

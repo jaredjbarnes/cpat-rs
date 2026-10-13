@@ -135,6 +135,66 @@ export class Block extends PatternBase {
   }
 }
 
+/**
+ * A pattern whose matching is your function: `match(text, pos)` answers the
+ * end of a match starting at `pos` (exclusive), or `null` for none. Both
+ * are UTF-16 offsets, as JS strings count. Not in v12, whose custom
+ * patterns implement the whole `Pattern` contract; here a parse runs in
+ * wasm, so the contract is one call per attempt (DESIGN §9).
+ *
+ * Answering `pos` itself matches nothing and succeeds (as an absent
+ * optional does). Throwing, or answering anything but `null` or a whole
+ * number from `pos` to `text.length` that doesn't split a surrogate pair,
+ * stops the parse: `exec` throws `custom pattern \`name\` failed: …`.
+ */
+export class CustomPattern extends PatternBase {
+  constructor(name, match) {
+    if (typeof match !== "function") {
+      throw new TypeError(`CustomPattern \`${name}\`: match must be a function (text, pos) => end | null, got ${match}`);
+    }
+    super(WasmPattern.custom(name, new CustomHost(match)));
+  }
+
+  setTokens(tokens) {
+    setTokens(this, tokens);
+  }
+}
+
+// What wasm calls (src/custom.rs): the text once per parse, then a
+// position per attempt. Answers -1 for no match, and turns a throw or a
+// bad answer into the message the parse stops with.
+class CustomHost {
+  constructor(match) {
+    this._match = match;
+    this._text = "";
+  }
+
+  setText(text) {
+    this._text = text;
+  }
+
+  match(pos) {
+    let end;
+    try {
+      end = this._match(this._text, pos);
+    } catch (thrown) {
+      throw thrown instanceof Error ? thrown.message : String(thrown);
+    }
+    if (end == null) {
+      return -1;
+    }
+    if (!Number.isInteger(end) || end < pos || end > this._text.length || splitsPair(this._text, end)) {
+      throw `answered ${typeof end === "string" ? JSON.stringify(end) : String(end)} at ${pos}; return null, or an end from ${pos} to ${this._text.length} (the text's length) that doesn't split a surrogate pair`;
+    }
+    return end;
+  }
+}
+
+function splitsPair(text, at) {
+  const code = text.charCodeAt(at);
+  return at > 0 && at < text.length && code >= 0xdc00 && code <= 0xdfff;
+}
+
 // Tokens are set on a pattern you hold: one built here, or one a grammar
 // or decorator handed you. A child reached through `children` is a place in
 // its parent, which wasm doesn't change in place (DESIGN §22).
@@ -166,3 +226,4 @@ registerPatternClass("context", Context);
 registerPatternClass("right-associated", RightAssociated);
 registerPatternClass("take-until", TakeUntil);
 registerPatternClass("block", Block);
+registerPatternClass("custom", CustomPattern);

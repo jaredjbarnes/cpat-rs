@@ -7,6 +7,8 @@ use serde_json::{Value, json};
 use wasm_bindgen::prelude::*;
 
 use crate::JsPattern;
+use crate::cursor_json::cursor_json;
+use crate::exec_result::thrown_message;
 use crate::flat_tree::FlatTree;
 use crate::utf16::Utf16Offsets;
 
@@ -64,11 +66,20 @@ impl JsAutoComplete {
             "options": options,
             "error": error,
             "errorAtIndex": suggestion.error_at_index.map(|at| offsets.of(at)),
-            "patternError": suggestion.pattern_error.as_ref().map(ToString::to_string),
+            "patternError": suggestion.pattern_error().map(ToString::to_string),
+            "thrownMessage": suggestion.pattern_error().map(thrown_message),
+            // Saturating, as `ExecResult.tooDeep` is.
+            "tooDeep": suggestion.too_deep().map(|too_deep| {
+                [u32::try_from(too_deep.max_depth).unwrap_or(u32::MAX), offsets.of(too_deep.pos)]
+            }),
         });
         SuggestionResult {
             json: json.to_string(),
-            tree: FlatTree::of(suggestion.tree.as_ref().map(|tree| tree.root()), &offsets),
+            tree: FlatTree::of(suggestion.tree().map(|tree| tree.root()), &offsets),
+            cursor: suggestion
+                .parse
+                .as_ref()
+                .map(|parse| cursor_json(parse, &offsets)),
         }
     }
 }
@@ -97,14 +108,23 @@ fn option_json(option: &SuggestionOption, offsets: &Utf16Offsets) -> Value {
 pub struct SuggestionResult {
     json: String,
     tree: FlatTree,
+    cursor: Option<String>,
 }
 
 #[wasm_bindgen]
 impl SuggestionResult {
-    /// `{ isComplete, options, error, errorAtIndex, patternError }`.
+    /// `{ isComplete, options, error, errorAtIndex, patternError,
+    /// thrownMessage, tooDeep }`.
     #[wasm_bindgen(getter)]
     pub fn json(&self) -> String {
         self.json.clone()
+    }
+
+    /// The recording parse's report, as `ExecResult.cursor` has it, or
+    /// `undefined` for empty text (v12 doesn't parse it).
+    #[wasm_bindgen(getter)]
+    pub fn cursor(&self) -> Option<String> {
+        self.cursor.clone()
     }
 
     #[wasm_bindgen(getter)]

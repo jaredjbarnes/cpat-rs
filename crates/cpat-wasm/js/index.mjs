@@ -15,6 +15,7 @@ export {
   Block,
   Context,
   Cut,
+  CustomPattern,
   Expression,
   Literal,
   Not,

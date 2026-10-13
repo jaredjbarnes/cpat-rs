@@ -38,6 +38,20 @@ extern "C" {
         pattern: JsPattern,
         arg: Option<String>,
     ) -> Result<JsPattern, JsValue>;
+
+    /// A custom pattern's function (`js/patterns.mjs`), told the text once
+    /// per parse.
+    pub type CustomHost;
+
+    /// The text the following `match` calls are about.
+    #[wasm_bindgen(method, js_name = setText)]
+    pub fn set_text(this: &CustomHost, text: &str);
+
+    /// The user's function at UTF-16 offset `pos` of the text: the end of
+    /// its match, or -1 for none. Throws the message to stop the parse with
+    /// (the function threw, or answered something that isn't an end).
+    #[wasm_bindgen(method, catch, js_name = match)]
+    pub fn match_at(this: &CustomHost, pos: u32) -> Result<f64, JsValue>;
 }
 
 /// What a host threw: the JS side throws strings (see the module docs);

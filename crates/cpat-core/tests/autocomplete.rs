@@ -51,8 +51,7 @@ fn summary(suggestion: &Suggestion<'_>) -> String {
         .error_at_index
         .map_or("-".to_string(), |at| at.to_string());
     let ast = suggestion
-        .tree
-        .as_ref()
+        .tree()
         .map_or("-".to_string(), |tree| format!("{:?}", tree.root().value()));
     let complete = if suggestion.is_complete {
         "complete"

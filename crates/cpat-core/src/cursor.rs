@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::ancestors::{Ancestors, At, Frame};
 use crate::graphemes::Boundaries;
 use crate::halt::{Halt, Limits, TooDeep};
@@ -11,6 +13,9 @@ use crate::pattern_path::PatternPath;
 use crate::scope::{self, Found, ScopeFrame};
 use crate::tree::{NodeId, NodeKind, Tree, TreeBuilder};
 
+// Atomic only because a `static` must be `Sync`; parsing is single-threaded.
+static NEXT_CURSOR_ID: AtomicU64 = AtomicU64::new(0);
+
 /// The state of one parse: position, errors, cut scopes, the ancestor and
 /// scope stacks, and the node arena.
 ///
@@ -18,6 +23,8 @@ use crate::tree::{NodeId, NodeKind, Tree, TreeBuilder};
 /// pattern matches, the cursor sits just past the match, where the next
 /// pattern starts. End of text is `pos() == len()`.
 pub struct Cursor<'t> {
+    // Unique among cursors (see `id`).
+    id: u64,
     text: &'t str,
     pos: usize,
     // Where clarity-pattern-parser's cursor would sit after the latest
@@ -50,6 +57,7 @@ impl<'t> Cursor<'t> {
 
     pub fn with_limits(text: &'t str, limits: Limits) -> Cursor<'t> {
         Cursor {
+            id: NEXT_CURSOR_ID.fetch_add(1, Ordering::Relaxed),
             text,
             pos: 0,
             stopped_at: None,
@@ -83,6 +91,15 @@ impl<'t> Cursor<'t> {
         probe.scopes = self.scopes.clone();
         probe.scope_floor = self.scope_floor;
         probe
+    }
+
+    /// Unique to this cursor among every cursor made in the process, so a
+    /// custom pattern can do per-parse work once per parse, keyed on it (a
+    /// JS custom pattern sends the text across once instead of on every
+    /// attempt). A clone of a pattern sees the same id within a parse; a
+    /// later parse of the same text gets a new one.
+    pub fn id(&self) -> u64 {
+        self.id
     }
 
     // ─── Position ───────────────────────────────────────────────────────
@@ -374,6 +391,19 @@ impl<'t> Cursor<'t> {
             Some(Halt::Pattern(error)) => Some(error),
             _ => None,
         }
+    }
+
+    /// Stops the parse because the custom pattern `pattern`'s own code
+    /// failed (a JS function threw, or answered something that isn't a
+    /// position). The parse ends with `PatternError::CustomFailed`, as it
+    /// ends for a name that resolves to nothing: not a failure to match, so
+    /// no alternative is tried in its place.
+    pub fn halt_custom(&mut self, pattern: Meta, reason: String) {
+        let error = PatternError::CustomFailed {
+            name: pattern.name.as_str().to_string(),
+            reason,
+        };
+        self.halt(self.pos, pattern, At::Child, Halt::Pattern(error));
     }
 
     /// The input nested deeper than the cursor's `max_depth`.

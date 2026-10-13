@@ -26,10 +26,26 @@ export class AutoComplete {
   }
 
   suggestFor(text) {
+    return this.suggestForWithCursor(new Cursor(text));
+  }
+
+  /** v12's: the suggestion for `cursor.text`, with `cursor` as its
+   * cursor. As in v12 the cursor starts recording and takes the parse's
+   * report (errors, matches, history), so it is changed. */
+  suggestForWithCursor(cursor) {
+    const text = cursor.text;
     const result = this._wasm.suggestFor(text);
     const suggestion = JSON.parse(result.json);
     if (suggestion.patternError != null) {
-      throw new Error(suggestion.patternError);
+      throw new Error(suggestion.thrownMessage);
+    }
+    cursor.moveTo(0);
+    cursor.startRecording();
+    const report = result.cursor;
+    if (report != null) {
+      // Empty text isn't parsed (v12 returns before it parses), so its
+      // cursor has nothing to report.
+      cursor._take({ cursor: report, tooDeep: suggestion.tooDeep }, this._root, []);
     }
     const tree = new Tree(text, result);
     const error = suggestion.error;
@@ -46,12 +62,16 @@ export class AutoComplete {
       })),
       error: error == null ? null : new ParseError(error.start, error.last, this._pattern),
       errorAtIndex: suggestion.errorAtIndex,
-      cursor: new Cursor(text),
+      cursor,
       ast: tree.root == null ? null : tree.root.toNode(),
     };
   }
 
-  suggestForWithCursor(cursor) {
-    return this.suggestFor(cursor.text);
+  static suggestFor(text, pattern, options) {
+    return new AutoComplete(pattern, options).suggestFor(text);
+  }
+
+  static suggestForWithCursor(cursor, pattern, options) {
+    return new AutoComplete(pattern, options).suggestForWithCursor(cursor);
   }
 }

@@ -1,3 +1,4 @@
+use crate::exec::ParseResult;
 use crate::halt::TooDeep;
 use crate::parse_error::ParseError;
 use crate::pattern_error::PatternError;
@@ -17,13 +18,31 @@ pub struct Suggestion<'t> {
     pub error: Option<ParseError>,
     /// `error`'s start, the place to show the problem.
     pub error_at_index: Option<usize>,
+    /// The recording parse the suggestion came from: what v12's cursor
+    /// holds after `suggestFor` (errors, matches, history), and the tree.
+    /// `None` for empty text, which v12 doesn't parse.
+    pub parse: Option<ParseResult<'t>>,
+}
+
+impl<'t> Suggestion<'t> {
     /// What the parse matched, whole or not (v12 `ast`).
-    pub tree: Option<Tree<'t>>,
+    pub fn tree(&self) -> Option<&Tree<'t>> {
+        self.parse.as_ref().and_then(ParseResult::tree)
+    }
+
     /// The parse met a name that resolves to nothing past what
-    /// `AutoComplete::new` could check, and halted (see `ParseResult`).
-    pub pattern_error: Option<PatternError>,
+    /// `AutoComplete::new` could check (or a custom pattern failed), and
+    /// halted (see `ParseResult`).
+    pub fn pattern_error(&self) -> Option<&PatternError> {
+        self.parse
+            .as_ref()
+            .and_then(|parse| parse.pattern_error.as_ref())
+    }
+
     /// The input nested deeper than the limits allow, and the parse halted.
-    pub too_deep: Option<TooDeep>,
+    pub fn too_deep(&self) -> Option<TooDeep> {
+        self.parse.as_ref().and_then(|parse| parse.too_deep)
+    }
 }
 
 /// One thing to insert (v12 `SuggestionOption`): `text` goes at

@@ -8,7 +8,7 @@
 // fetched (DESIGN §22).
 
 import { buildGrammar, importsOf } from "./wasm.mjs";
-import { owned, wrap } from "./pattern.mjs";
+import { PatternBase, owned, wrap } from "./pattern.mjs";
 
 const NO_RESOLVER = "No import resolver supplied.";
 
@@ -81,14 +81,13 @@ export class Grammar {
       },
       decorate(name, pattern, arg) {
         const decorated = wrap(pattern);
+        let returned;
         try {
-          decorators[name](decorated, arg === undefined ? undefined : JSON.parse(arg));
+          returned = decorators[name](decorated, arg === undefined ? undefined : JSON.parse(arg));
         } catch (thrown) {
           throw messageOf(thrown);
         }
-        // A copy goes back: wasm takes what it is handed, and the decorator
-        // may have kept `decorated`.
-        return decorated._root.clone();
+        return kept(decorated, returned);
       },
     };
 
@@ -107,6 +106,19 @@ export class Grammar {
     });
     return result;
   }
+}
+
+/**
+ * What a decorator leaves the rule with: the pattern it returned in place of
+ * the one it was handed (a cpat addition, DESIGN §9: a `CustomPattern`,
+ * say), or else the one it was handed, changed in place as v12's decorators
+ * change it. Any other return value is ignored, as v12 ignores it: a
+ * decorator written `(p, arg) => seen.push(arg)` returns a number. A copy
+ * goes back either way: wasm takes what it is handed, and the decorator may
+ * have kept the object.
+ */
+function kept(decorated, returned) {
+  return returned instanceof PatternBase ? owned(returned) : decorated._root.clone();
 }
 
 /**

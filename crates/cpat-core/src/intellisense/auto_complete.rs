@@ -109,9 +109,7 @@ impl AutoComplete {
             options,
             error,
             error_at_index,
-            tree: result.tree,
-            pattern_error: result.pattern_error,
-            too_deep: result.too_deep,
+            parse: Some(result),
         }
     }
 
@@ -129,9 +127,7 @@ impl AutoComplete {
             options,
             error: Some(self.error_at(0, 0)),
             error_at_index: Some(0),
-            tree: None,
-            pattern_error: None,
-            too_deep: None,
+            parse: None,
         }
     }
 

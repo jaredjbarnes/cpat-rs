@@ -23,11 +23,13 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 14)
+## What's in the box (milestone 15)
 
 `Literal`, `Regex`, `Sequence`, `Choice`, `Repeat` (unbounded or bounded, with an optional
 divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for recursive
-grammars, `RightAssociated`, `TakeUntil`, `Block`, and `Custom` for your own patterns.
+grammars, `RightAssociated`, `TakeUntil`, `Block`, and `Custom` for your own patterns (a
+`CustomParse` whose own code fails stops the parse with `Cursor::halt_custom`, and `exec`
+returns `PatternError::CustomFailed`).
 
 `Choice` is ordered (the first alternative that matches wins) unless some alternatives are
 operators: sequences that start or end with a reference to the choice itself (`expr "+" expr`,
@@ -263,8 +265,9 @@ with the same shapes, so code written against v12 mostly runs unchanged: the pat
 (`new Repeat(name, pattern, { min, max, divider, trimDivider })`), `Grammar` (`parseString`,
 async `parse` and `import`, `resolveImport`/`resolveImportSync`, `params` as JS patterns, JS
 `decorators`), `patterns` and `createPatternsTemplate`, `Node`, `compact`, `remove`, `Query`,
-`$`, `Selector`, `Cursor`, `ParseError`, `AutoComplete`, `generateErrorMessage`,
-`isTokenizablePattern` and `grammar`. Build it with
+`$`, `Selector`, `Cursor`, `ParseError`, `AutoComplete` (with its static `suggestFor` and
+`suggestForWithCursor`), `generateErrorMessage`, `isTokenizablePattern` and `grammar`; and one
+class v12 doesn't have, `CustomPattern`, for patterns written in JS. Build it with
 `wasm-pack build --target nodejs --release --out-dir pkg-node` in `crates/cpat-wasm`.
 
 ```js
@@ -299,6 +302,27 @@ const grammar = await Grammar.parse(`import { name } from "names.cpat"\nhi = "hi
 - `Grammar.parse` and `Grammar.import` fetch every import with your `resolveImport` first (in
   the order v12 asks, from the same origins), then build synchronously. Grammar errors are
   thrown as `Error`s with v12's message, character for character.
+- `new CustomPattern(name, (text, pos) => end | null)` is a pattern whose matching is your
+  function, asked once per attempt with UTF-16 positions; its node is the text it took. Use it
+  directly, or return one from a grammar decorator to put it in place of a rule's pattern:
+
+  ```js
+  const word = pattern => new CustomPattern(pattern.name, (text, pos) => wordEnd(text, pos));
+  const { items } = createPatternsTemplate({ decorators: { word } })`
+    @word
+    word = /never-used/
+    items = word + "," + word
+  `;
+  ```
+
+  A decorator may also change the pattern in place (`pattern.setTokens([...])`, as v12's do);
+  what it returns that isn't a pattern is ignored. A function that throws, or answers anything
+  but `null` or an end in the text, stops the parse: `exec` throws `custom pattern \`name\`
+  failed: …`.
+- `AutoComplete.suggestFor(text)` answers v12's `Suggestion`: `options` (`text`, `startIndex` in
+  UTF-16, and `suggestionSequence` segments whose `pattern` is a place with `name` and `type`),
+  `error`, `errorAtIndex`, `isComplete`, `ast` and a recording `cursor` with the parse's errors
+  and matches; `suggestForWithCursor(cursor)` reports into the cursor you pass, as v12's does.
 - Differences from v12 are those of the Rust core (DESIGN.md lists them), plus: an error from an
   ordinary (not recording) parse names its pattern by `name` and `id` only; a reference that
   names nothing throws when `exec` starts, not when the parse reaches it; input nested too deep

@@ -37,6 +37,12 @@ pub enum PatternError {
         choice: String,
         alternative: String,
     },
+    /// The custom pattern `name`'s own code failed while parsing (see
+    /// `Cursor::halt_custom`): `reason` is its author's message.
+    CustomFailed {
+        name: String,
+        reason: String,
+    },
 }
 
 impl fmt::Display for PatternError {
@@ -82,6 +88,9 @@ impl fmt::Display for PatternError {
                 f,
                 "alternative `{alternative}` of choice `{choice}` is a sequence of only `{choice}` itself, so it can neither be an operator nor match anything; remove it, or add the operator it should match around the self-reference"
             ),
+            PatternError::CustomFailed { name, reason } => {
+                write!(f, "custom pattern `{name}` failed: {reason}")
+            }
         }
     }
 }

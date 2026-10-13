@@ -269,7 +269,7 @@ fn suggest() {
     let error = suggestion.error.as_ref().unwrap();
     assert_eq!((error.start, error.last), (6, 6));
     assert_eq!(suggestion.error_at_index, Some(6));
-    assert_eq!(suggestion.tree.as_ref().unwrap().root().value(), "a");
+    assert_eq!(suggestion.tree().unwrap().root().value(), "a");
 }
 
 #[test]
