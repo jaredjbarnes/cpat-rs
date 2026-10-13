@@ -23,7 +23,7 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 11)
+## What's in the box (milestone 12)
 
 `Literal`, `Regex`, `Sequence`, `Choice`, `Repeat` (unbounded or bounded, with an optional
 divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for recursive
@@ -148,7 +148,52 @@ let rules = cpat_core::patterns!(r#"full-name = "John Doe""#)?;
 assert!(rules["fullName"].clone().test("John Doe"));
 ```
 
-Still to come: autocomplete and grammars in JS.
+A parse gives a read-only `Tree` whose values are slices of the input. It walks and searches
+without copying: on a `Node`, `walk_up`, `walk_down` and `walk_breadth_first` (a visitor
+returning `false` stops), `find`/`find_all` and their `_breadth_first` forms, `flatten` (the
+leaves) and `to_json(space)`, v12's JSON key for key (`id`, `type`, `name`, `value`,
+`startIndex`, `endIndex`, `children`; ids are strings).
+
+To change a tree, `tree.to_mut()` copies it into an `EditableTree` (leaves still borrow the
+input) with v12's whole `Node` API, called with a `NodeRef` handle: `id`, `type_name`, `name`,
+`value`, `first_index`/`last_index`/`start_index`/`end_index`, `parent`, `children`,
+`has_children`/`is_leaf`; `remove_child`, `find_child_index`, `splice_children`,
+`remove_all_children`, `replace_child`, `replace_with`, `insert_before`, `append_child`,
+`append`, `remove`; `next_sibling`, `previous_sibling`, `find_root`, `find_ancestor`; the walks
+and finds above (a visitor may edit the tree); `transform` with `Visitors` by node name,
+`compact`, `clone_node`, `normalize` (renumber positions from the values' lengths, in bytes),
+`is_equal`, `to_string`, `to_cycle_free_object` and `to_json`. `create_node`,
+`create_value_node` and `new_node` make nodes; `ast::compact(tree, node, names)` and
+`ast::remove(tree, node, names)` act on every node with one of those names, breadth first.
+
+```rust
+use cpat_core::ast::{compact, remove};
+use cpat_core::{EditableTree, Visitors};
+
+let mut patterns = cpat_core::patterns!(r#"
+    space = /\s+/
+    number = /\d+/
+    group = "(" + space? + expr + space? + ")"
+    add = expr + space? + "+" + space? + expr
+    expr = add | group | number
+"#)?;
+let result = patterns.get_mut("expr").unwrap().exec("(1 + 2) + 3");
+let mut tree = result.tree().unwrap().to_mut();
+let root = tree.root().unwrap();
+
+compact(&mut tree, root, &["group"]);
+remove(&mut tree, root, &["space"]);
+let mut visitors = Visitors::new().on("number", |t: &mut EditableTree<'_>, n| {
+    let value = t.to_string(n);
+    t.create_value_node("number", "num", value)
+});
+let root = tree.transform(root, &mut visitors);
+
+assert_eq!(tree.value(root), "(1 + 2)+3");
+assert_eq!(tree.children(root).len(), 3);
+```
+
+Still to come: autocomplete, grammars and the editable tree in JS.
 
 ```rust
 use cpat_core::{Block, Choice, Literal, Pattern, Reference, Regex, Sequence};

@@ -1,0 +1,159 @@
+{
+  "id": "1287",
+  "type": "binary",
+  "name": "sum",
+  "value": "-(1 + 2)*3!^x^2+y",
+  "startIndex": 0,
+  "endIndex": 17,
+  "children": [
+    {
+      "id": "1265",
+      "type": "expression",
+      "name": "mul",
+      "value": "-(1 + 2)*3!^x^2",
+      "startIndex": 0,
+      "endIndex": 15,
+      "children": [
+        {
+          "id": "1240",
+          "type": "expression",
+          "name": "neg",
+          "value": "-(1 + 2)",
+          "startIndex": 0,
+          "endIndex": 8,
+          "children": [
+            {
+              "id": "1238",
+              "type": "literal",
+              "name": "-",
+              "value": "-",
+              "startIndex": 0,
+              "endIndex": 1,
+              "children": []
+            },
+            {
+              "id": "1260",
+              "type": "sequence",
+              "name": "group",
+              "value": "(1 + 2)",
+              "startIndex": 1,
+              "endIndex": 8,
+              "children": []
+            }
+          ]
+        },
+        {
+          "id": "1262",
+          "type": "literal",
+          "name": "*",
+          "value": "*",
+          "startIndex": 8,
+          "endIndex": 9,
+          "children": []
+        },
+        {
+          "id": "1272",
+          "type": "expression",
+          "name": "pow",
+          "value": "3!^x^2",
+          "startIndex": 9,
+          "endIndex": 15,
+          "children": [
+            {
+              "id": "1269",
+              "type": "expression",
+              "name": "fact",
+              "value": "3!",
+              "startIndex": 9,
+              "endIndex": 11,
+              "children": [
+                {
+                  "id": "1285",
+                  "type": "number-literal",
+                  "name": "num",
+                  "value": "3",
+                  "startIndex": 9,
+                  "endIndex": 10,
+                  "children": []
+                },
+                {
+                  "id": "1267",
+                  "type": "literal",
+                  "name": "!",
+                  "value": "!",
+                  "startIndex": 10,
+                  "endIndex": 11,
+                  "children": []
+                }
+              ]
+            },
+            {
+              "id": "1270",
+              "type": "literal",
+              "name": "^",
+              "value": "^",
+              "startIndex": 11,
+              "endIndex": 12,
+              "children": []
+            },
+            {
+              "id": "1276",
+              "type": "expression",
+              "name": "pow",
+              "value": "x^2",
+              "startIndex": 12,
+              "endIndex": 15,
+              "children": [
+                {
+                  "id": "1273",
+                  "type": "regex",
+                  "name": "variable",
+                  "value": "x",
+                  "startIndex": 12,
+                  "endIndex": 13,
+                  "children": []
+                },
+                {
+                  "id": "1274",
+                  "type": "literal",
+                  "name": "^",
+                  "value": "^",
+                  "startIndex": 13,
+                  "endIndex": 14,
+                  "children": []
+                },
+                {
+                  "id": "1286",
+                  "type": "number-literal",
+                  "name": "num",
+                  "value": "2",
+                  "startIndex": 14,
+                  "endIndex": 15,
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "1280",
+      "type": "literal",
+      "name": "+",
+      "value": "+",
+      "startIndex": 15,
+      "endIndex": 16,
+      "children": []
+    },
+    {
+      "id": "1284",
+      "type": "regex",
+      "name": "variable",
+      "value": "y",
+      "startIndex": 16,
+      "endIndex": 17,
+      "children": []
+    }
+  ]
+}

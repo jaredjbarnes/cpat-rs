@@ -21,9 +21,35 @@ pub enum NodeKind {
     BlockContent,
 }
 
+impl NodeKind {
+    /// The node `type` v12 gives a node of this kind.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NodeKind::Literal => "literal",
+            NodeKind::Regex => "regex",
+            NodeKind::Sequence => "sequence",
+            NodeKind::InfiniteRepeat => "infinite-repeat",
+            NodeKind::FiniteRepeat => "finite-repeat",
+            NodeKind::Custom => "custom",
+            NodeKind::Expression => "expression",
+            NodeKind::TakeUntil => "take-until",
+            NodeKind::Block => "block",
+            NodeKind::BlockContent => "block-content",
+        }
+    }
+}
+
 /// Index of a node in its tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct NodeId(u32);
+
+impl NodeId {
+    /// The node's place in its tree's arena. A tree's JSON uses it as the
+    /// node's `id`, and `to_mut` keeps it, so both forms print the same ids.
+    pub fn index(self) -> u32 {
+        self.0
+    }
+}
 
 const NO_PARENT: u32 = u32::MAX;
 
@@ -143,6 +169,18 @@ impl<'t> Tree<'t> {
     pub fn text(&self) -> &'t str {
         self.text
     }
+
+    /// How many nodes the arena holds, reachable or not. Ids below this are
+    /// taken, so an editable copy numbers the nodes it makes from here.
+    pub(crate) fn arena_len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub(crate) fn child_ids(&self, id: NodeId) -> &[NodeId] {
+        let data = &self.nodes[id.0 as usize];
+        let at = data.children_at as usize;
+        &self.child_ids[at..at + data.children_len as usize]
+    }
 }
 
 /// A view of one node. Cheap to copy; it borrows the tree.
@@ -202,50 +240,8 @@ impl<'a, 't> Node<'a, 't> {
         self.data().children_len == 0
     }
 
-    /// The first node, depth first with children before their parent, that
-    /// satisfies `predicate`. The node itself is included.
-    pub fn find(&self, predicate: impl Fn(&Node<'a, 't>) -> bool) -> Option<Node<'a, 't>> {
-        self.post_order().find(|node| predicate(node))
-    }
-
-    /// Every node, in the same order as `find`, that satisfies `predicate`.
-    pub fn find_all(&self, predicate: impl Fn(&Node<'a, 't>) -> bool) -> Vec<Node<'a, 't>> {
-        self.post_order().filter(|node| predicate(node)).collect()
-    }
-
-    /// This subtree, children before their parent. A choice in Pratt mode
-    /// builds a tree as deep as its operator chain is long, so no walk over
-    /// a tree may recurse on the native stack.
-    fn post_order(&self) -> PostOrder<'a, 't> {
-        PostOrder {
-            tree: self.tree,
-            pending: vec![(self.id, 0)],
-        }
-    }
-}
-
-/// A post-order walk with its own stack: each frame is a node and how many
-/// of its children have been walked.
-struct PostOrder<'a, 't> {
-    tree: &'a Tree<'t>,
-    pending: Vec<(NodeId, usize)>,
-}
-
-impl<'a, 't> Iterator for PostOrder<'a, 't> {
-    type Item = Node<'a, 't>;
-
-    fn next(&mut self) -> Option<Node<'a, 't>> {
-        loop {
-            let (id, done) = self.pending.pop()?;
-            let node = self.tree.node(id);
-            let data = node.data();
-            if done == data.children_len as usize {
-                return Some(node);
-            }
-            self.pending.push((id, done + 1));
-            let child = self.tree.child_ids[data.children_at as usize + done];
-            self.pending.push((child, 0));
-        }
+    pub(crate) fn tree(&self) -> &'a Tree<'t> {
+        self.tree
     }
 }
 

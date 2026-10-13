@@ -43,6 +43,7 @@ macro_rules! patterns {
 }
 
 mod ancestors;
+pub mod ast;
 mod children;
 mod cursor;
 mod equality;
@@ -71,6 +72,7 @@ mod tokenizable;
 mod tree;
 
 pub use ancestors::Frame;
+pub use ast::{CycleFreeNode, EditableTree, NodeRef, Visitors};
 pub use cursor::Cursor;
 pub use error_message::generate_error_message;
 pub use exec::ParseResult;

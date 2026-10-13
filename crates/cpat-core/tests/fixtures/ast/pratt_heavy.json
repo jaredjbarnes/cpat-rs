@@ -1,0 +1,624 @@
+{
+  "id": "1318",
+  "type": "expression",
+  "name": "add",
+  "value": "-(1 + -2!) * 3!^x^2^(y * -z) + 4 * 5 + --6!!^7",
+  "startIndex": 0,
+  "endIndex": 46,
+  "children": [
+    {
+      "id": "1305",
+      "type": "expression",
+      "name": "add",
+      "value": "-(1 + -2!) * 3!^x^2^(y * -z) + 4 * 5",
+      "startIndex": 0,
+      "endIndex": 36,
+      "children": [
+        {
+          "id": "1271",
+          "type": "expression",
+          "name": "mul",
+          "value": "-(1 + -2!) * 3!^x^2^(y * -z)",
+          "startIndex": 0,
+          "endIndex": 28,
+          "children": [
+            {
+              "id": "1240",
+              "type": "expression",
+              "name": "neg",
+              "value": "-(1 + -2!)",
+              "startIndex": 0,
+              "endIndex": 10,
+              "children": [
+                {
+                  "id": "1238",
+                  "type": "literal",
+                  "name": "-",
+                  "value": "-",
+                  "startIndex": 0,
+                  "endIndex": 1,
+                  "children": []
+                },
+                {
+                  "id": "1266",
+                  "type": "sequence",
+                  "name": "group",
+                  "value": "(1 + -2!)",
+                  "startIndex": 1,
+                  "endIndex": 10,
+                  "children": [
+                    {
+                      "id": "1241",
+                      "type": "literal",
+                      "name": "(",
+                      "value": "(",
+                      "startIndex": 1,
+                      "endIndex": 2,
+                      "children": []
+                    },
+                    {
+                      "id": "1257",
+                      "type": "expression",
+                      "name": "add",
+                      "value": "1 + -2!",
+                      "startIndex": 2,
+                      "endIndex": 9,
+                      "children": [
+                        {
+                          "id": "1251",
+                          "type": "regex",
+                          "name": "number",
+                          "value": "1",
+                          "startIndex": 2,
+                          "endIndex": 3,
+                          "children": []
+                        },
+                        {
+                          "id": "1253",
+                          "type": "regex",
+                          "name": "spaces",
+                          "value": " ",
+                          "startIndex": 3,
+                          "endIndex": 4,
+                          "children": []
+                        },
+                        {
+                          "id": "1254",
+                          "type": "literal",
+                          "name": "+",
+                          "value": "+",
+                          "startIndex": 4,
+                          "endIndex": 5,
+                          "children": []
+                        },
+                        {
+                          "id": "1255",
+                          "type": "regex",
+                          "name": "spaces",
+                          "value": " ",
+                          "startIndex": 5,
+                          "endIndex": 6,
+                          "children": []
+                        },
+                        {
+                          "id": "1264",
+                          "type": "expression",
+                          "name": "fact",
+                          "value": "-2!",
+                          "startIndex": 6,
+                          "endIndex": 9,
+                          "children": [
+                            {
+                              "id": "1260",
+                              "type": "expression",
+                              "name": "neg",
+                              "value": "-2",
+                              "startIndex": 6,
+                              "endIndex": 8,
+                              "children": [
+                                {
+                                  "id": "1258",
+                                  "type": "literal",
+                                  "name": "-",
+                                  "value": "-",
+                                  "startIndex": 6,
+                                  "endIndex": 7,
+                                  "children": []
+                                },
+                                {
+                                  "id": "1261",
+                                  "type": "regex",
+                                  "name": "number",
+                                  "value": "2",
+                                  "startIndex": 7,
+                                  "endIndex": 8,
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "id": "1262",
+                              "type": "literal",
+                              "name": "!",
+                              "value": "!",
+                              "startIndex": 8,
+                              "endIndex": 9,
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": "1265",
+                      "type": "literal",
+                      "name": ")",
+                      "value": ")",
+                      "startIndex": 9,
+                      "endIndex": 10,
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "1267",
+              "type": "regex",
+              "name": "spaces",
+              "value": " ",
+              "startIndex": 10,
+              "endIndex": 11,
+              "children": []
+            },
+            {
+              "id": "1268",
+              "type": "literal",
+              "name": "*",
+              "value": "*",
+              "startIndex": 11,
+              "endIndex": 12,
+              "children": []
+            },
+            {
+              "id": "1269",
+              "type": "regex",
+              "name": "spaces",
+              "value": " ",
+              "startIndex": 12,
+              "endIndex": 13,
+              "children": []
+            },
+            {
+              "id": "1278",
+              "type": "expression",
+              "name": "pow",
+              "value": "3!^x^2^(y * -z)",
+              "startIndex": 13,
+              "endIndex": 28,
+              "children": [
+                {
+                  "id": "1275",
+                  "type": "expression",
+                  "name": "fact",
+                  "value": "3!",
+                  "startIndex": 13,
+                  "endIndex": 15,
+                  "children": [
+                    {
+                      "id": "1272",
+                      "type": "regex",
+                      "name": "number",
+                      "value": "3",
+                      "startIndex": 13,
+                      "endIndex": 14,
+                      "children": []
+                    },
+                    {
+                      "id": "1273",
+                      "type": "literal",
+                      "name": "!",
+                      "value": "!",
+                      "startIndex": 14,
+                      "endIndex": 15,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "id": "1276",
+                  "type": "literal",
+                  "name": "^",
+                  "value": "^",
+                  "startIndex": 15,
+                  "endIndex": 16,
+                  "children": []
+                },
+                {
+                  "id": "1282",
+                  "type": "expression",
+                  "name": "pow",
+                  "value": "x^2^(y * -z)",
+                  "startIndex": 16,
+                  "endIndex": 28,
+                  "children": [
+                    {
+                      "id": "1279",
+                      "type": "regex",
+                      "name": "variable",
+                      "value": "x",
+                      "startIndex": 16,
+                      "endIndex": 17,
+                      "children": []
+                    },
+                    {
+                      "id": "1280",
+                      "type": "literal",
+                      "name": "^",
+                      "value": "^",
+                      "startIndex": 17,
+                      "endIndex": 18,
+                      "children": []
+                    },
+                    {
+                      "id": "1286",
+                      "type": "expression",
+                      "name": "pow",
+                      "value": "2^(y * -z)",
+                      "startIndex": 18,
+                      "endIndex": 28,
+                      "children": [
+                        {
+                          "id": "1283",
+                          "type": "regex",
+                          "name": "number",
+                          "value": "2",
+                          "startIndex": 18,
+                          "endIndex": 19,
+                          "children": []
+                        },
+                        {
+                          "id": "1284",
+                          "type": "literal",
+                          "name": "^",
+                          "value": "^",
+                          "startIndex": 19,
+                          "endIndex": 20,
+                          "children": []
+                        },
+                        {
+                          "id": "1299",
+                          "type": "sequence",
+                          "name": "group",
+                          "value": "(y * -z)",
+                          "startIndex": 20,
+                          "endIndex": 28,
+                          "children": [
+                            {
+                              "id": "1287",
+                              "type": "literal",
+                              "name": "(",
+                              "value": "(",
+                              "startIndex": 20,
+                              "endIndex": 21,
+                              "children": []
+                            },
+                            {
+                              "id": "1293",
+                              "type": "expression",
+                              "name": "mul",
+                              "value": "y * -z",
+                              "startIndex": 21,
+                              "endIndex": 27,
+                              "children": [
+                                {
+                                  "id": "1288",
+                                  "type": "regex",
+                                  "name": "variable",
+                                  "value": "y",
+                                  "startIndex": 21,
+                                  "endIndex": 22,
+                                  "children": []
+                                },
+                                {
+                                  "id": "1289",
+                                  "type": "regex",
+                                  "name": "spaces",
+                                  "value": " ",
+                                  "startIndex": 22,
+                                  "endIndex": 23,
+                                  "children": []
+                                },
+                                {
+                                  "id": "1290",
+                                  "type": "literal",
+                                  "name": "*",
+                                  "value": "*",
+                                  "startIndex": 23,
+                                  "endIndex": 24,
+                                  "children": []
+                                },
+                                {
+                                  "id": "1291",
+                                  "type": "regex",
+                                  "name": "spaces",
+                                  "value": " ",
+                                  "startIndex": 24,
+                                  "endIndex": 25,
+                                  "children": []
+                                },
+                                {
+                                  "id": "1296",
+                                  "type": "expression",
+                                  "name": "neg",
+                                  "value": "-z",
+                                  "startIndex": 25,
+                                  "endIndex": 27,
+                                  "children": [
+                                    {
+                                      "id": "1294",
+                                      "type": "literal",
+                                      "name": "-",
+                                      "value": "-",
+                                      "startIndex": 25,
+                                      "endIndex": 26,
+                                      "children": []
+                                    },
+                                    {
+                                      "id": "1297",
+                                      "type": "regex",
+                                      "name": "variable",
+                                      "value": "z",
+                                      "startIndex": 26,
+                                      "endIndex": 27,
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "id": "1298",
+                              "type": "literal",
+                              "name": ")",
+                              "value": ")",
+                              "startIndex": 27,
+                              "endIndex": 28,
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "1301",
+          "type": "regex",
+          "name": "spaces",
+          "value": " ",
+          "startIndex": 28,
+          "endIndex": 29,
+          "children": []
+        },
+        {
+          "id": "1302",
+          "type": "literal",
+          "name": "+",
+          "value": "+",
+          "startIndex": 29,
+          "endIndex": 30,
+          "children": []
+        },
+        {
+          "id": "1303",
+          "type": "regex",
+          "name": "spaces",
+          "value": " ",
+          "startIndex": 30,
+          "endIndex": 31,
+          "children": []
+        },
+        {
+          "id": "1311",
+          "type": "expression",
+          "name": "mul",
+          "value": "4 * 5",
+          "startIndex": 31,
+          "endIndex": 36,
+          "children": [
+            {
+              "id": "1306",
+              "type": "regex",
+              "name": "number",
+              "value": "4",
+              "startIndex": 31,
+              "endIndex": 32,
+              "children": []
+            },
+            {
+              "id": "1307",
+              "type": "regex",
+              "name": "spaces",
+              "value": " ",
+              "startIndex": 32,
+              "endIndex": 33,
+              "children": []
+            },
+            {
+              "id": "1308",
+              "type": "literal",
+              "name": "*",
+              "value": "*",
+              "startIndex": 33,
+              "endIndex": 34,
+              "children": []
+            },
+            {
+              "id": "1309",
+              "type": "regex",
+              "name": "spaces",
+              "value": " ",
+              "startIndex": 34,
+              "endIndex": 35,
+              "children": []
+            },
+            {
+              "id": "1312",
+              "type": "regex",
+              "name": "number",
+              "value": "5",
+              "startIndex": 35,
+              "endIndex": 36,
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "1314",
+      "type": "regex",
+      "name": "spaces",
+      "value": " ",
+      "startIndex": 36,
+      "endIndex": 37,
+      "children": []
+    },
+    {
+      "id": "1315",
+      "type": "literal",
+      "name": "+",
+      "value": "+",
+      "startIndex": 37,
+      "endIndex": 38,
+      "children": []
+    },
+    {
+      "id": "1316",
+      "type": "regex",
+      "name": "spaces",
+      "value": " ",
+      "startIndex": 38,
+      "endIndex": 39,
+      "children": []
+    },
+    {
+      "id": "1334",
+      "type": "expression",
+      "name": "pow",
+      "value": "--6!!^7",
+      "startIndex": 39,
+      "endIndex": 46,
+      "children": [
+        {
+          "id": "1331",
+          "type": "expression",
+          "name": "fact",
+          "value": "--6!!",
+          "startIndex": 39,
+          "endIndex": 44,
+          "children": [
+            {
+              "id": "1328",
+              "type": "expression",
+              "name": "fact",
+              "value": "--6!",
+              "startIndex": 39,
+              "endIndex": 43,
+              "children": [
+                {
+                  "id": "1321",
+                  "type": "expression",
+                  "name": "neg",
+                  "value": "--6",
+                  "startIndex": 39,
+                  "endIndex": 42,
+                  "children": [
+                    {
+                      "id": "1319",
+                      "type": "literal",
+                      "name": "-",
+                      "value": "-",
+                      "startIndex": 39,
+                      "endIndex": 40,
+                      "children": []
+                    },
+                    {
+                      "id": "1324",
+                      "type": "expression",
+                      "name": "neg",
+                      "value": "-6",
+                      "startIndex": 40,
+                      "endIndex": 42,
+                      "children": [
+                        {
+                          "id": "1322",
+                          "type": "literal",
+                          "name": "-",
+                          "value": "-",
+                          "startIndex": 40,
+                          "endIndex": 41,
+                          "children": []
+                        },
+                        {
+                          "id": "1325",
+                          "type": "regex",
+                          "name": "number",
+                          "value": "6",
+                          "startIndex": 41,
+                          "endIndex": 42,
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": "1326",
+                  "type": "literal",
+                  "name": "!",
+                  "value": "!",
+                  "startIndex": 42,
+                  "endIndex": 43,
+                  "children": []
+                }
+              ]
+            },
+            {
+              "id": "1329",
+              "type": "literal",
+              "name": "!",
+              "value": "!",
+              "startIndex": 43,
+              "endIndex": 44,
+              "children": []
+            }
+          ]
+        },
+        {
+          "id": "1332",
+          "type": "literal",
+          "name": "^",
+          "value": "^",
+          "startIndex": 44,
+          "endIndex": 45,
+          "children": []
+        },
+        {
+          "id": "1335",
+          "type": "regex",
+          "name": "number",
+          "value": "7",
+          "startIndex": 45,
+          "endIndex": 46,
+          "children": []
+        }
+      ]
+    }
+  ]
+}

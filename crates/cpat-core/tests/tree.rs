@@ -56,7 +56,10 @@ fn find_visits_children_before_parents() {
     let result = pattern.exec("ab");
     let root = result.tree().unwrap().root();
 
-    assert_eq!(root.find(|_| true).unwrap().name(), "a");
+    // v12's `find` keeps testing the first match's ancestors, and the
+    // outermost one that matches wins (`ast.find(() => true)` is `outer`).
+    assert_eq!(root.find(|_| true).unwrap().name(), "outer");
+    assert_eq!(root.find(|n| n.is_leaf()).unwrap().name(), "a");
     assert_eq!(names(root.find_all(|_| true)), ["a", "inner", "b", "outer"]);
     assert_eq!(names(root.find_all(|n| n.is_leaf())), ["a", "b"]);
     assert!(root.find(|n| n.name() == "missing").is_none());

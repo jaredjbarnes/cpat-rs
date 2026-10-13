@@ -45,6 +45,11 @@
 > implemented; see §9 and §19. Every test in v12's `Grammar.test.ts` is ported (the checklist
 > heads `tests/grammar.rs`). A grammar that imports itself is an error here, where v12
 > overflows the stack (§19).
+> Milestone 12 (the editable tree: `Tree::to_mut` into an `EditableTree` with v12's whole `Node`
+> API by `NodeRef` handle, `ast::compact`/`ast::remove` by name, and the read-only tree's walks,
+> breadth-first finds, `flatten` and `to_json`) is implemented; see §7b and §20. Every test in
+> v12's `Node.test.ts` is ported (`tests/node.rs`). The read-only `find` now follows v12's
+> quirk: a matching ancestor of the first match takes over (§20).
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -148,6 +153,8 @@ build error naming the pattern.
 - **7a:** `Tree` is one flat arena: `Vec<NodeData>` plus a child-id pool. Names are interned
   (`Name` is a `u32`), and values are slices of the input.
 - **7b:** an editable form (`to_mut`) gets built only when something needs to edit a tree.
+  *(Implemented in milestone 12, §20: an arena of owned slots, addressed by `NodeRef`, whose
+  leaves keep borrowing the input until an edit replaces their value.)*
 - **7c:** the arena only grows during a parse. Nodes from failed alternatives stay in it,
   unreachable. History stores copies (`Match`, `ParseError`), not node references, each with
   its `PatternPath` (§2). *(Implemented in milestone 7, §15.)*
@@ -1199,6 +1206,62 @@ build error naming the pattern.
     message, unprefixed.
   - `patterns` returns a `HashMap`, so its keys have no order; v12's object keeps the rules'.
     Two rule names that meet in camelCase keep the later rule, as in v12.
+
+## 20. The editable tree *(milestone 12)*
+
+- **Layout** (`src/ast/`): `editable.rs` (`EditableTree`, `NodeRef`, making nodes, reads),
+  `splice.rs` (child edits), `search.rs` (walks, finds, equality, JSON on the editable tree),
+  `rewrite.rs` (`compact`, `clone_node`, `normalize`), `transform.rs` (`Visitors`),
+  `by_name.rs` (`ast::compact`, `ast::remove`), `from_tree.rs` (`Tree::to_mut`),
+  `read_only.rs` (the read-only `Node`'s share), and the parts both trees share through one
+  crate-private `AstView` trait: `walk.rs`, `json.rs`, `equality.rs`, `cycle_free.rs`,
+  `view.rs` (the trait and v12's `toString`).
+- **An arena of slots, a `NodeRef` per node.** Each slot owns its type and name
+  (`Cow<'static, str>`: a parse node borrows the interned name), its own value
+  (`Cow<'t, str>`: a parse leaf borrows its slice), its half-open range, parent and children.
+  Methods take the `NodeRef` they act on, where v12's take `this`, so a visitor gets `(&mut
+  EditableTree, NodeRef)` and may edit as it walks. A removed node stays in the arena,
+  parentless, as a v12 node lives on while something holds it; nothing is ever freed before the
+  tree is. *Rejected:* `Rc<RefCell<Node>>` with weak parents (a borrow per read, cycles to
+  manage, and a recursive drop on deep trees); a handle that borrows the tree (it can't be
+  held across an edit).
+- **Ids.** v12 numbers every node from one process-wide counter. Here an id is the read-only
+  tree's arena index, which `to_mut` keeps, so the read-only JSON and the editable JSON are
+  identical; new nodes count on from the arena's length. The tests that compare with v12's JSON
+  for a parse mask ids, because v12's depend on everything parsed earlier in the process.
+- **v12's semantics, quirks included,** each pinned by a test (`tests/ast.rs`): `walk_up` stops
+  visiting siblings after a `false` but still visits every ancestor, so `find` lets the
+  outermost matching ancestor of the first match win (v12's `find(n =>
+  n.name.startsWith("x"))` returns the parent); `walk_up`/`walk_down` read a node's children
+  before visiting it and `walk_breadth_first` after, so `compact` by name skips what it
+  compacted; adopting a node doesn't take it out of its old parent's list; `insert_before` adopts
+  even when the reference node isn't a child; `splice_children` clamps as `Array.splice` does;
+  `clone_node` makes children before their parent; `normalize` clamps a last index at 0.
+- **The read-only `find` changed** to that semantics. It returned the first match children
+  first; for a predicate that matches a node and its ancestor the answer is now the ancestor,
+  as in v12 (`tests/tree.rs` pinned the old answer and now pins v12's, checked against v12).
+  No code in the crates relied on the old order.
+- **Parse nodes' own values.** A leaf's own value is its slice; a parent's is "". v12's
+  sequences, repeats and blocks also keep "", so a parent stripped of every child reads "" in
+  both. *Deviation:* v12's expression nodes are made by `createNode`, which snapshots the join of
+  whatever children (and placeholders) they had then; here they keep "" too. It shows only after
+  every child of an expression node is removed without compacting it.
+- **Lengths are bytes.** `normalize` lays leaves end to end by `value.len()`, bytes, as every
+  position is (§5a); v12 counts UTF-16 units. They agree on ASCII.
+- **The JSON is written, not built.** `to_json(space)` writes v12's `JSON.stringify` output
+  straight from the tree: the keys in v12's order, ids as strings, `[]` for no children, indent
+  capped at 10, and `JSON.stringify`'s escaping (quotes, backslashes and control characters
+  only; lowercase `\u00xx`). The escaping and indents are compared byte for byte with files v12
+  wrote (`tests/fixtures/ast/`).
+- **Nothing recurses (§7e).** The walks, JSON, `clone_node`, `normalize`, `transform`,
+  `is_equal`, `to_cycle_free_object` and `CycleFreeNode`'s drop and equality keep their own
+  stacks; a test runs all of them on a 5,000-level operator chain on a 256 KiB thread, where a
+  one-line recursive node count overflows. `is_equal` compares values at leaves only: equal
+  children make equal joined values, so this keeps it linear where v12 joins at every level.
+  JSON and cycle-free values remain quadratic in depth, as in v12, since each repeats its
+  subtree's text.
+- **The wasm layer is unchanged.** JS keeps its read-only view (`js/tree.mjs`); an editable tree
+  in JS comes with the JS milestone.
 
 ## Behavior fixed relative to clarity-pattern-parser v11
 
