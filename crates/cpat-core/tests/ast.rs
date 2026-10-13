@@ -309,6 +309,35 @@ fn a_walk_may_edit_the_tree_it_walks() {
 }
 
 #[test]
+fn walk_breadth_first_reads_children_after_the_visit() {
+    // v12 queues `current.children` after the callback, so emptying a node
+    // keeps the walk out of its old children. Checked against v12
+    // (`walkBreadthFirst` with `compact()` / `removeAllChildren()` on xq):
+    // both give `["xp","xq","xb"]`.
+    let edits: [fn(&mut EditableTree<'static>, cpat_core::NodeRef); 2] = [
+        |t, n| t.compact(n),
+        |t, n| {
+            t.remove_all_children(n);
+        },
+    ];
+    for edit in edits {
+        let (mut tree, [_, xq, xb, xp]) = x_tree();
+        let mut seen = Vec::new();
+
+        let finished = tree.walk_breadth_first(xp, |t, n| {
+            seen.push(n);
+            if n == xq {
+                edit(t, n);
+            }
+            true
+        });
+
+        assert!(finished);
+        assert_eq!(seen, vec![xp, xq, xb]);
+    }
+}
+
+#[test]
 fn compact_by_name_skips_what_it_compacted_and_remove_spares_the_root() {
     let (mut tree, [xa, xq, xb, xp]) = x_tree();
     let mut visited = Vec::new();

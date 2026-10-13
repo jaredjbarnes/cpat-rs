@@ -1233,8 +1233,9 @@ build error naming the pattern.
   visiting siblings after a `false` but still visits every ancestor, so `find` lets the
   outermost matching ancestor of the first match win (v12's `find(n =>
   n.name.startsWith("x"))` returns the parent); `walk_up`/`walk_down` read a node's children
-  before visiting it and `walk_breadth_first` after, so `compact` by name skips what it
-  compacted; adopting a node doesn't take it out of its old parent's list; `insert_before` adopts
+  before visiting it and `walk_breadth_first` after, so a visit that compacts or empties a
+  node keeps the walk out of its old children and `compact` by name skips what it compacted
+  (both orders checked against v12); adopting a node doesn't take it out of its old parent's list; `insert_before` adopts
   even when the reference node isn't a child; `splice_children` clamps as `Array.splice` does;
   `clone_node` makes children before their parent; `normalize` clamps a last index at 0.
 - **The read-only `find` changed** to that semantics. It returned the first match children
