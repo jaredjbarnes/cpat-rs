@@ -174,17 +174,21 @@ class CustomHost {
   }
 
   match(pos) {
+    // Held here, not read back from `_text` after the call: the function may
+    // parse again through a copy of this pattern, which shares this host and
+    // calls setText with that other parse's text before we check the answer.
+    const text = this._text;
     let end;
     try {
-      end = this._match(this._text, pos);
+      end = this._match(text, pos);
     } catch (thrown) {
       throw thrown instanceof Error ? thrown.message : String(thrown);
     }
     if (end == null) {
       return -1;
     }
-    if (!Number.isInteger(end) || end < pos || end > this._text.length || splitsPair(this._text, end)) {
-      throw `answered ${typeof end === "string" ? JSON.stringify(end) : String(end)} at ${pos}; return null, or an end from ${pos} to ${this._text.length} (the text's length) that doesn't split a surrogate pair`;
+    if (!Number.isInteger(end) || end < pos || end > text.length || splitsPair(text, end)) {
+      throw `answered ${typeof end === "string" ? JSON.stringify(end) : String(end)} at ${pos}; return null, or an end from ${pos} to ${text.length} (the text's length) that doesn't split a surrogate pair`;
     }
     return end;
   }

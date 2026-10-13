@@ -122,6 +122,40 @@ test("a function that parses again (with a copy of itself) still sees its own pa
   ]);
 });
 
+test("an answer longer than the text a nested parse saw is checked against its own text", () => {
+  let inner = null;
+  const word = new CustomPattern("word", (text, pos) => {
+    if (text === "abcdef" && pos === 0) {
+      assert.equal(inner.exec("z").ast.value, "z");
+    }
+    let end = pos;
+    while (end < text.length && text[end] !== ",") {
+      end++;
+    }
+    return end > pos ? end : null;
+  });
+  inner = word.clone();
+
+  const { ast, cursor } = word.exec("abcdef");
+
+  assert.equal(ast.value, "abcdef");
+  assert.equal(cursor.hasError, false);
+});
+
+test("an answer is not judged by a surrogate pair in the text a nested parse saw", () => {
+  let inner = null;
+  const whole = new CustomPattern("whole", (text, pos) => {
+    if (text === "ab" && pos === 0) {
+      // In "a😀", offset 2 splits the pair; in "ab" it is the end.
+      assert.equal(inner.exec("a\u{1F600}").ast.value, "a\u{1F600}");
+    }
+    return text.length;
+  });
+  inner = whole.clone();
+
+  assert.equal(whole.exec("ab").ast.value, "ab");
+});
+
 test("a throw stops the parse: exec and test throw its message, and no alternative is tried", () => {
   const tried = [];
   const broken = new CustomPattern("broken", () => {
