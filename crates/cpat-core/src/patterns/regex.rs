@@ -20,8 +20,8 @@ pub struct Regex {
 }
 
 /// The engine is chosen once, when the pattern is built: the linear-time
-/// `regex` crate whenever it can compile the source, and `fancy-regex` only for
-/// lookaround and backreferences, which `regex` doesn't support.
+/// `regex` crate unless the translation needs lookaround or backreferences,
+/// which only `fancy-regex` supports (`regex_translate::Dialect`).
 #[derive(Clone, Debug)]
 enum Matcher {
     Fast(Rc<regex::Regex>),
@@ -39,24 +39,27 @@ const BACKTRACK_LIMIT: usize = 100_000_000;
 
 impl Matcher {
     fn compile(name: &str, source: &str) -> Result<Matcher, PatternError> {
+        let invalid = |reason: String| PatternError::InvalidRegex {
+            name: name.to_string(),
+            source: source.to_string(),
+            reason,
+        };
+        let translation = js_to_rust(source).map_err(|error| invalid(error.to_string()))?;
         // Anchored at the start of the slice it runs on. The slice starts at
         // the cursor, so `\b` and lookbehind see the cursor as the start of
         // the input, exactly as the JS library's substring does.
-        let anchored = |dialect| format!("^(?:{})", js_to_rust(source, dialect));
+        let anchored = format!("^(?:{})", translation.rust);
 
-        if let Ok(fast) = regex::Regex::new(&anchored(Dialect::Fast)) {
-            return Ok(Matcher::Fast(Rc::new(fast)));
+        match translation.dialect {
+            Dialect::Fast => regex::Regex::new(&anchored)
+                .map(|fast| Matcher::Fast(Rc::new(fast)))
+                .map_err(|error| invalid(error.to_string())),
+            Dialect::Fancy => fancy_regex::RegexBuilder::new(&anchored)
+                .backtrack_limit(BACKTRACK_LIMIT)
+                .build()
+                .map(|fancy| Matcher::Fancy(Rc::new(fancy)))
+                .map_err(|error| invalid(error.to_string())),
         }
-
-        fancy_regex::RegexBuilder::new(&anchored(Dialect::Fancy))
-            .backtrack_limit(BACKTRACK_LIMIT)
-            .build()
-            .map(|fancy| Matcher::Fancy(Rc::new(fancy)))
-            .map_err(|error| PatternError::InvalidRegex {
-                name: name.to_string(),
-                source: source.to_string(),
-                reason: error.to_string(),
-            })
     }
 
     /// Length in bytes of the match at the start of `haystack`, if any.

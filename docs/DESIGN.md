@@ -80,6 +80,10 @@
 > alternatives (§8; the TypeScript grammar took 1.2 GB to build), the backtracking regex engine
 > may take 100 million steps (§6), wasm results are freed as soon as JS has read them (§22),
 > and `AutoComplete::new` readies its pattern (§17).
+> Gap 1-1 (JS-faithful regex translation) is implemented; see §6. A regex source is parsed as
+> JS's `u` flag reads it: what JS rejects (`[\d-z]`, `\p{letter}`, `\-`) is a build error, and
+> `.`, `\s`/`\S`, `\cX`, modifier groups and backreferences to unmatched groups mean what they
+> mean in JS. Backreferences JS resets on each repetition are refused (a deviation, §6).
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -165,14 +169,68 @@ work commits nothing. A cut reached at the end of input still fires.
 ## 6. Regex
 
 `enum Matcher { Fast(regex), Fancy(fancy_regex) }` is chosen when the pattern is built. The
-linear-time `regex` crate is used unless the source needs lookaround or backreferences. The
-pattern compiles as `^(?:src)` and matches on `&text[pos..]`, so `\b` and lookbehind treat the
-cursor as the start of input, the same as the JS substring. `regex_translate` rewrites JS-only
-syntax (ASCII `\d \w \b`, class escapes, `[^]`, `\0`, `\/`). An ASCII `\b` is spelled per engine:
-`(?-u:\b)` for `regex`, lookaround over `[0-9A-Za-z_]` for `fancy-regex`, which refuses the
-inline flag *(milestone 10, §18)*. A source that won't compile is a
-build error naming the pattern.
+linear-time `regex` crate is used unless the translated source needs lookaround or
+backreferences (`regex_translate::engine`, decided on the parsed source, not by trying to
+compile). The pattern compiles as `^(?:src)` and matches on `&text[pos..]`, so `\b` and
+lookbehind treat the cursor as the start of input, the same as the JS substring. A source that
+won't compile is a build error naming the pattern.
 
+**JS-faithful translation** *(gap-1-1)*. `regex_translate` parses the source the way JS does
+with v12's `gu` flags (ES2025 syntax without `v`: modifier groups and repeated names in
+different alternatives included), refuses what JS refuses, and writes every JS-specific meaning
+out in Rust syntax instead of borrowing a Rust escape that looks the same. Files: `parser.rs`
+(JS `u`-mode grammar, V8's error reasons), `backreferences.rs`, `engine.rs`, `emit.rs`,
+`char_sets.rs`, `js_property_names.rs` (generated, see below). The mapping:
+
+| JS (`u` flag) | Rust | Why |
+|---|---|---|
+| `.` | `[^\x{A}\x{D}\x{2028}-\x{2029}]`; `(?s:.)` under `s` | Rust's `.` refuses only `\n` |
+| `\s` / `\S` (in and out of classes) | JS's exact set: `\t`–`\r`, space, U+00A0, U+1680, U+2000–200A, U+2028–2029, U+202F, U+205F, U+3000, U+FEFF (negated as `[^…]`) | Rust's is Unicode White_Space: has U+0085, lacks U+FEFF |
+| `\d` `\w` `\D` `\W` | `[0-9]`, `[0-9A-Z_a-z]` and their `[^…]` | ASCII in JS, Unicode in Rust |
+| `\b` `\B` | `(?-u:\b)` in `regex`; lookaround over `[0-9A-Z_a-z]` in `fancy-regex`, and always under `i` | fancy-regex refuses `(?-u:…)`; under `i` JS's word characters add `ſ` and the Kelvin sign, which `(?i)` adds to the class |
+| `\cX` | the control character (`X % 32`) | Rust has no `\c` |
+| `\0` `\v` `\f` `\t` `\n` `\r` `\xHH` `\uHHHH` `\u{…}` | the character as `\x{…}` | one spelling; `\0` isn't Rust |
+| `\uD83D\uDE00` | U+1F600 | the `u` flag joins an escaped surrogate pair |
+| a lone surrogate (`\uD800`), `\p{Cs}` | matches nothing (a range keeps its non-surrogate part) | no Rust text holds a surrogate, and Rust can't spell one |
+| `[]`, `[^]` | `[^\x{0}-\x{10FFFF}]`, `(?s:.)` | no Rust spelling |
+| `[\b]` | `\x{8}` | backspace in a class |
+| `[`, `&`, `~`, `-`, `#` in a class; any Rust meta character | escaped | Rust reads `[`, `&&`, `~~`, `--` as class syntax |
+| `\p{…}` `\P{…}` | as written, if JS knows the exact spelling | JS matches names exactly, Rust loosely (`\p{letter}`) |
+| `(?ims-ims:…)` | `(?i:…)`/`(?-i:…)`; `m` and `s` are spelled into `^`, `$`, `.` | JS's `m` breaks lines at `\r`, U+2028, U+2029 too: `^` is `(?:^\|(?<=[…]))`, `$` is `(?:$\|(?=[…]))` |
+| `\N`, `\k<name>` | `(?(N)\N\|)`, chained over every group of that name; nothing inside its own group | JS reads a group that hasn't matched as empty; fancy-regex fails |
+| `(?<name>…)` | `(…)` | only match lengths are used; Rust's name syntax is narrower |
+
+- **Refused, as JS refuses** (a `PatternError::InvalidRegex` whose reason is V8's, e.g.
+  `Invalid character class`): a class range with a set end (`[\d-z]`), `\pL` and misspelled
+  properties (`\p{letter}`, `\p{sc=latin}`), identity escapes outside `^$\.*+?()[]{}|/` (`\-`,
+  `\a`, `\e`, `\A`, `\z`, `\_`, `\ `; `\-` is fine in a class), `\x{41}`, a bad `\c`, `\u`
+  or `\x`, `\0` before a digit, a backreference past the last group or to an unknown name,
+  lone `{` `}` `]`, `a{,3}`, `a*+` and other stacked quantifiers, a quantified lookaround or
+  assertion, `(?P<…>`, `(?i)` without a colon, repeated or empty modifier flags, a name repeated
+  where both groups could match, `[[:alpha:]]`. `tests.rs` checks each against V8's reason.
+- **Refused though JS accepts** (`Unsupported`, a documented deviation): a backreference to a
+  group inside a repetition unless every round sets the group before the backreference reads
+  it (JS clears captures each round and drops a round that matched nothing; fancy-regex keeps
+  the last round's: `(?:(a)|b)+\1` matches `abb` in JS); a backreference inside a lookbehind
+  (JS matches lookbehinds backwards); properties regex-syntax lacks (`CWKCF`, `Script=Unknown`);
+  groups nested more than 256 deep. Refused because matching differently would be silent.
+- **Property names** (`js_property_names.rs`) were generated by probing Node 24 (V8, Unicode
+  17) with every alias Perl's `Unicode::UCD` and regex-syntax's tables know, keeping what
+  `new RegExp("\\p{…}", "u")` accepts; a test checks every one compiles in Rust. Rust's tables
+  are Unicode 16, so a character or script new in 17 can differ.
+- **Repetition counts** past `u32::MAX`, which Rust can't write (JS allows up to 2^53 − 1): a
+  maximum that large is no maximum, since no text has that many characters; a minimum that
+  large makes an atom that can't match empty match nothing, as JS finds by trying (an atom that
+  can match empty is refused). A count Rust can write but whose program exceeds its size limit
+  (`a{4294967295}`) is a build error where JS builds: a deviation no real grammar meets.
+- **Where V8 strays from the spec, cpat follows the spec.** Inside a modifier group V8 doesn't
+  fold a literal Kelvin sign or long s (`(?i:\u{212a})` doesn't match `k`, though
+  `/\u{212a}/iu` and `(?i:[\u{212a}])` do); Rust's `(?i)` folds it, as the spec says.
+- **Compared with v12**: `js/regex_v12.test.mjs` runs 116 source/text pairs (escapes, classes,
+  negated classes, lookarounds, backreferences, `\p{…}`, `\u{…}`, modifiers, quantifiers and the
+  refusals above) through cpat-wasm against v12's recorded answers, all equal; it also pins the
+  five refused sources and the two V8 modifier cases. The rows were recorded by running the
+  same pairs through v12's `src` under tsx.
 - **Rejected:** calling JS `RegExp` from wasm. It would make native and browser results differ
   and cost a boundary crossing per call.
 - **The backtracking engine may take 100 million steps per match** *(milestone 16)*. fancy-regex

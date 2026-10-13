@@ -185,6 +185,99 @@ fn word_boundaries_stay_ascii_in_the_backtracking_engine() {
     assert_eq!(parse_value(&mut no_boundary, "aé"), None);
 }
 
+#[test]
+fn the_dot_stops_at_every_js_line_terminator() {
+    // JS's `.` (u flag) refuses \n, \r, U+2028 and U+2029; Rust's refuses
+    // only \n, so all three of these used to match.
+    let mut dot = re("dot", "a.b");
+    for text in ["a\rb", "a\nb", "a\u{2028}b", "a\u{2029}b"] {
+        assert!(!dot.test(text), "{text:?}");
+    }
+    assert!(dot.test("a b"));
+    assert!(dot.test("a\u{85}b"));
+}
+
+#[test]
+fn whitespace_is_js_whitespace() {
+    // JS's `\s` has U+FEFF and lacks U+0085; Unicode's White_Space (Rust's
+    // `\s`) is the other way round.
+    let mut space = re("space", r"a\sb");
+    assert!(space.test("a\u{FEFF}b"));
+    assert!(!space.test("a\u{85}b"));
+
+    let mut not_space = re("not-space", r"a\Sb");
+    assert!(!not_space.test("a\u{FEFF}b"));
+    assert!(not_space.test("a\u{85}b"));
+
+    let mut in_class = re("in-class", r"[\s]+");
+    assert_eq!(
+        parse_value(&mut in_class, "\t\u{B}\u{3000}\u{FEFF}\u{85}"),
+        Some("\t\u{B}\u{3000}\u{FEFF}".to_string())
+    );
+}
+
+#[test]
+fn control_escapes_name_control_characters() {
+    let mut newline = re("newline", r"a\cJb");
+    assert!(newline.test("a\nb"));
+    assert!(!newline.test("acJb"));
+}
+
+#[test]
+fn a_set_as_a_class_range_end_is_a_build_error_as_in_js() {
+    // JS's `u` flag rejects `[\d-z]`; Rust would read it as digits, `-`, `z`.
+    for source in [
+        r"[\d-z]",
+        r"\p{letter}",
+        r"a{,3}",
+        r"\-",
+        r"\x{41}",
+        r"(?=a)*",
+    ] {
+        let error = Regex::new("r", source).unwrap_err();
+        assert!(
+            matches!(error, PatternError::InvalidRegex { .. }),
+            "{source}: {error:?}"
+        );
+    }
+    let error = Regex::new("r", r"[\d-z]").unwrap_err();
+    assert!(
+        error.to_string().contains("Invalid character class"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_backreference_to_a_group_that_did_not_match_reads_as_empty() {
+    // JS reads an unset group as empty; fancy-regex alone would fail.
+    let mut optional = re("optional", r"(a)?b\1");
+    assert_eq!(parse_value(&mut optional, "b"), Some("b".to_string()));
+    assert_eq!(parse_value(&mut optional, "aba"), Some("aba".to_string()));
+    let mut forward = re("forward", r"\1(a)");
+    assert_eq!(parse_value(&mut forward, "a"), Some("a".to_string()));
+}
+
+#[test]
+fn a_backreference_a_repetition_resets_is_refused() {
+    // JS clears group 1 on every round, so `abb` matches there; fancy-regex
+    // keeps the first round's `a`. Refused rather than matched differently.
+    let error = Regex::new("r", r"(?:(a)|b)+\1").unwrap_err();
+    assert!(
+        error.to_string().contains("can't match it the same way"),
+        "{error}"
+    );
+}
+
+#[test]
+fn modifier_groups_keep_their_js_meaning() {
+    let mut multiline = re("multiline", r"(?m:a$)");
+    assert_eq!(parse_value(&mut multiline, "a\rb"), Some("a".to_string()));
+    let mut dot_all = re("dot-all", r"(?s:a.b)");
+    assert!(dot_all.test("a\u{2028}b"));
+    let mut folded = re("folded", r"(?i:\w)");
+    assert!(folded.test("\u{17F}"), "JS's \\w under i takes the long s");
+}
+
 /// The value `pattern` matches at the start of `text`, if any.
 fn parse_value(pattern: &mut Pattern, text: &str) -> Option<String> {
     let mut cursor = Cursor::new(text);

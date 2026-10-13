@@ -32,6 +32,12 @@ grammars, `RightAssociated`, `TakeUntil`, `Block`, and `Custom` for your own pat
 `CustomParse` whose own code fails stops the parse with `Cursor::halt_custom`, and `exec`
 returns `PatternError::CustomFailed`).
 
+A `Regex` source is JavaScript regex syntax, as v12 compiles it (the `u` flag): it is parsed as
+JS reads it, so what JS rejects (`[\d-z]`, `\p{letter}`, `a{,3}`) is a `PatternError`, and `.`,
+`\s`, `\d`, `\w`, `\b`, `\cX`, `(?ims-ims:…)` and backreferences mean what they mean in JS. The
+few sources JS accepts that no Rust engine matches the same way (a backreference to a group a
+repetition resets) are refused when built; DESIGN.md §6 has the full mapping.
+
 Everything below behaves as clarity-pattern-parser v12 does, checked by running both on 140 349
 cases from real test suites ([Conformance with v12](#conformance-with-v12)); the few
 differences are listed and explained in `conformance/allowlist.json` and DESIGN.md §23.
