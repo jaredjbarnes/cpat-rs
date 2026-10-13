@@ -581,3 +581,91 @@ fn an_operator_from_an_implicit_target_resolves_its_parts_at_home() {
     assert_eq!(intro.at(&at(&[0, 0])).unwrap().name(), "op-postfix");
     assert_eq!(intro.next_tokens(&at(&[0, 0, 0])), ["U"]);
 }
+
+// ─── Roles (v12's Expression accessors) ───
+
+fn roles_at(root: &Pattern, path: &[u32]) -> Option<Vec<cpat_core::ChoiceRole>> {
+    root.introspect().choice_roles(&PatternPath::new(path))
+}
+
+fn names_at(root: &Pattern, path: &[u32], count: usize) -> Vec<String> {
+    (0..count as u32)
+        .map(|i| {
+            let mut child = path.to_vec();
+            child.push(i);
+            root.introspect()
+                .at(&PatternPath::new(&child))
+                .unwrap()
+                .name()
+                .to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn roles_partition_the_children_as_v12_classifies_them() {
+    // Expression.test.ts 'Accessor: infixPatterns, prefixPatterns,
+    // postfixPatterns': one of each, named as v12 names them (checked by
+    // running v12's build() on the same grammar).
+    use cpat_core::ChoiceRole::*;
+    let root = expression(vec![add(), negate(), factorial(), variable()]);
+
+    assert_eq!(
+        roles_at(&root, &[]),
+        Some(vec![Infix, Prefix, Postfix, Atom])
+    );
+    assert_eq!(
+        names_at(&root, &[], 4),
+        [
+            "add-delimiter",
+            "negate-prefix",
+            "factorial-postfix",
+            "variable"
+        ]
+    );
+}
+
+#[test]
+fn roles_agree_with_the_choices_own_accessors() {
+    let Pattern::Choice(choice) = expression(vec![add(), negate(), factorial(), variable()]) else {
+        unreachable!()
+    };
+    let names = |it: Vec<&str>| it.into_iter().map(str::to_string).collect::<Vec<_>>();
+    assert_eq!(
+        names(choice.infix_patterns().map(|s| s.name()).collect()),
+        ["add-delimiter"]
+    );
+    assert_eq!(
+        names(choice.prefix_patterns().map(|s| s.name()).collect()),
+        ["negate-prefix"]
+    );
+    assert_eq!(
+        names(choice.postfix_patterns().map(|s| s.name()).collect()),
+        ["factorial-postfix"]
+    );
+    assert_eq!(choice.atom_patterns().count(), 1);
+}
+
+#[test]
+fn a_choice_waiting_for_its_first_parse_is_classified_on_demand() {
+    // v12's build(): a reference alternative is resolved to see whether it
+    // is an operator, before anything has parsed.
+    use cpat_core::ChoiceRole::*;
+    let root = context(
+        "root",
+        expression(vec![reference("add"), variable()]),
+        vec![add()],
+    );
+
+    assert_eq!(roles_at(&root, &[0]), Some(vec![Infix, Atom]));
+}
+
+#[test]
+fn only_a_choice_has_roles() {
+    assert_eq!(roles_at(&wrapped(options()), &[]), None);
+    assert_eq!(
+        roles_at(&wrapped(options()), &[0]),
+        Some(vec![cpat_core::ChoiceRole::Atom; 3])
+    );
+    assert_eq!(roles_at(&options(), &[7]), None);
+}

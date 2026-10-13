@@ -84,6 +84,13 @@
 > JS's `u` flag reads it: what JS rejects (`[\d-z]`, `\p{letter}`, `\-`) is a build error, and
 > `.`, `\s`/`\S`, `\cX`, modifier groups and backreferences to unmatched groups mean what they
 > mean in JS. Backreferences JS resets on each repetition are refused (a deviation, §6).
+> Gap 1-2 (the rest of v12's JS class surface) is implemented; see §22. `Repeat` has `min`,
+> `max` (the bounds as given, as v12's facade reports them: `Repeat::requested_min`/`_max`,
+> §10), `pattern` and `options`; `Expression` has v12's classified accessors (places among its
+> children, classified by `Introspection::choice_roles`) and `originalPatterns`; `Cursor` steps a
+> grapheme at a time with the parser's boundaries (`grapheme_starts`) and has v12's history and
+> choice-scope methods. Every public member of v12's `Cursor` and pattern classes is in JS but
+> two, listed in §22 and pinned by `js/index.test.mjs`.
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -397,7 +404,11 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
     `TypeError` in v12. Here the failed slot is dropped like any trailing failure: a zero-width
     success.
   - `Repeat::min()` reports the clamped minimum. v12's `Repeat` facade reports the unclamped
-    option while its implementation uses the clamped one.
+    option while its implementation uses the clamped one. *(Gap 1-2:)* the options as given are
+    kept too, `requested_min()`/`requested_max()`, because JS `Repeat.min`/`max` are v12's
+    facade's: `{ min: 0, max: 0 }` reads 0 and 0 and parses as exactly one. The grammar's `*`
+    now asks its inner repeat for min 0, as v12's does (it parses the same; only
+    `requested_min` sees it).
   - No `startedOnIndex`: patterns keep no position for others to read (§2).
   - A `Custom` pattern that returns a zero-width node gets a zero-width success instead (no
     node, cursor back where it began), which is what its contract asks for. Kept as a node, it
@@ -1598,6 +1609,54 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   applied to v12's answers in the test and pinned to the four cases they change: emoji sort
   after letters (§17), and a literal that runs out of text inside an emoji fails at its start
   (§17's positions).
+- **The rest of v12's class surface** *(gap 1-2)*. `js/index.test.mjs` lists every public member
+  of v12's `Cursor` and pattern classes (each prototype chain's names not starting with `_`)
+  and fails when one is missing and not a deviation below, or when a deviation isn't named here.
+  - `Repeat.min`/`max` are the bounds as given (`max` `Infinity` when unbounded), read from the
+    core's `requested_min`/`requested_max` (§10); a clone keeps them. `pattern` and
+    `options.divider` are copies, as v12's are the patterns as given and not children (a bounded
+    repeat's children are slots, and one of at most one has no divider slot). `options` is
+    `{ min, max }` plus `divider` when there is one and `trimDivider` when it is on: an explicit
+    `trimDivider: false` isn't kept (wasm doesn't store whether it was given; v12 keeps the key).
+  - `Repeat.getTokensAfter`/`getPatternsAfter` answer `getNextTokens`/`getNextPatterns`, as
+    v12's facade does whatever child is named (the children's parent there is the inner repeat).
+    The core answers the inner repeat's question (§16), which AutoComplete needs; only the JS
+    facade method differs.
+  - `Expression`'s `atomPatterns`, `prefixPatterns`, `postfixPatterns`, `infixPatterns` (and the
+    deprecated `binaryPatterns`, the same array) are its `children` filtered by role, from wasm
+    `choiceRolesAt` over `Introspection::choice_roles` (§16's classified children). Frozen arrays
+    of the same place objects, read once per object. *Why introspection rather than the
+    `Choice` accessors:* a choice with a reference alternative stays unclassified until its
+    first parse, and v12's `build()` classifies on demand; the introspection classifies as that
+    parse would (pinned against the `Choice` accessors in `tests/introspect_choice.rs`).
+    `build()` is there and does nothing. `originalPatterns` are copies of the alternatives as
+    given: an operator's alternative keeps its self-references, so it is no place in the
+    classified tree. A `RightAssociated` original reads as the pattern it marks (a marker is no
+    place, §16), where v12 answers the marker (type `right-associated`, name "").
+  - `Reference.getReferencePatternSafely()` is the reference's only child place, or throws
+    v12's `Couldn't find 'x' pattern within tree.` (wasm `referenceTargetAt` names `x`).
+  - `Cursor` steps by grapheme: `currentChar`, `hasNext`, `next`, `hasPrevious`, `previous`, a
+    `moveTo` that snaps to a character's start, and `getCharStartIndex`/`EndIndex`/`LastIndex`
+    are v12's code over v12's `_charMap`/`_charSize`, so out-of-range answers are v12's
+    (`undefined`, `NaN`). The tables are built the first time a character method asks, from
+    wasm `graphemeStarts` (the core's `grapheme_starts`, the boundaries the parser uses).
+    *Rejected:* `Intl.Segmenter`, v12's source, whose Unicode version is the host's: the cursor
+    could disagree with the parse about where a character ends. Compared with v12 on ASCII,
+    emoji, a skin-tone sequence, CRLF and accented text, every unit (`js/cursor.test.mjs`).
+    A direct `parse(cursor)` now leaves the cursor through `moveTo(lastIndex)`, as v12's
+    patterns do, so a match ending in an emoji leaves it at the emoji's start.
+  - `recordMatch`, `recordErrorAt`, `recordSummaryErrorAt` and `resolveError` are v12's
+    `CursorHistory` over the cursor's report, and the choice-scope methods (`pushChoiceScope`,
+    `popChoiceScope`, `markCut`, `isCutInCurrentScope`, `clearCut`, `getCut`, `setCut`) v12's
+    flag stack, so code that drives a cursor by hand sees v12's answers (compared: leaf-match
+    ties by place, summary errors, the scopes). No wasm parse calls them, a parse keeps its own
+    scopes (§4) and history (§15), and the next parse's report replaces what was recorded by hand
+    (v12's parse appends). `startRecording`/`stopRecording` now also apply after a parse has
+    reported, where the first version kept answering the report's flag.
+  - Not in JS: `Sequence.childBlockedAtEndOfText` (v12's `Expression` asks it mid-parse with a
+    live cursor; the parse runs in wasm, where the choice asks its sequence itself), and the
+    `parent` setter on every pattern (a place's parent is its path; assigning throws in strict
+    code). The test pins both as absent.
 - **Not yet:** builds for targets other than Node (`js/wasm.mjs` loads `pkg-node`).
 
 ## 23. The conformance harness and the speed report *(milestone 16)*

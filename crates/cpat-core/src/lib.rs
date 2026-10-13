@@ -81,6 +81,7 @@ pub use grammar::{
     Decorator, Decorators, Grammar, GrammarError, GrammarFile, GrammarOptions, ImportResolver,
     InMemoryImports, Patterns, cpat_grammar, patterns, patterns_with,
 };
+pub use graphemes::grapheme_starts;
 pub use halt::{DEFAULT_MAX_DEPTH, Limits, TooDeep};
 pub use history::HistoryRecord;
 pub use intellisense::{
@@ -95,8 +96,8 @@ pub use pattern_error::PatternError;
 pub use pattern_id::{Meta, PatternId};
 pub use pattern_path::PatternPath;
 pub use patterns::{
-    Block, Choice, ChoiceMode, Context, Custom, CustomParse, Cut, Literal, Not, Optional,
-    Reference, Regex, Repeat, RepeatOptions, RightAssociated, Sequence, TakeUntil,
+    Block, Choice, ChoiceMode, ChoiceRole, Context, Custom, CustomParse, Cut, Literal, Not,
+    Optional, Reference, Regex, Repeat, RepeatOptions, RightAssociated, Sequence, TakeUntil,
 };
 pub use query::{Query, Selector, SelectorError};
 /// The JSON a decorator's argument is (`@name(json)`).

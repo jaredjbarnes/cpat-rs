@@ -9,7 +9,7 @@
 
 use std::cell::RefCell;
 
-use cpat_core::{Handle, Introspection, Pattern, PatternPath};
+use cpat_core::{ChoiceRole, Handle, Introspection, Pattern, PatternPath};
 use wasm_bindgen::prelude::*;
 
 use crate::JsPattern;
@@ -99,6 +99,111 @@ impl JsPattern {
     pub fn regex_at(&self, path: Vec<u32>) -> Option<String> {
         self.read(&path, |handle| match handle.pattern {
             Pattern::Regex(regex) => Some(regex.source().to_string()),
+            _ => None,
+        })
+        .flatten()
+    }
+
+    /// What each child of the choice at `path` is: `"atom"`, `"prefix"`,
+    /// `"postfix"` or `"infix"`, in `children` order (v12's `Expression`
+    /// accessors filter its children by it). `undefined` for anything but
+    /// a choice.
+    #[wasm_bindgen(js_name = choiceRolesAt)]
+    pub fn choice_roles_at(&self, path: Vec<u32>) -> Option<Vec<String>> {
+        let roles = Introspection::new(&self.inner).choice_roles(&PatternPath::new(&path))?;
+        Some(
+            roles
+                .into_iter()
+                .map(|role| {
+                    match role {
+                        ChoiceRole::Atom => "atom",
+                        ChoiceRole::Prefix => "prefix",
+                        ChoiceRole::Postfix => "postfix",
+                        ChoiceRole::Infix => "infix",
+                    }
+                    .to_string()
+                })
+                .collect(),
+        )
+    }
+
+    /// A choice's alternatives as they were given (v12 `originalPatterns`),
+    /// each a copy of its own: operators keep their self-references, so
+    /// they are no place among the classified children. Empty for anything
+    /// else.
+    #[wasm_bindgen(js_name = originalPatternsAt)]
+    pub fn original_patterns_at(&self, path: Vec<u32>) -> Vec<JsPattern> {
+        self.read(&path, |handle| match handle.pattern {
+            Pattern::Choice(choice) => choice
+                .original_alternatives()
+                .iter()
+                .map(|alternative| alternative.clone().into())
+                .collect(),
+            _ => Vec::new(),
+        })
+        .unwrap_or_default()
+    }
+
+    /// A repeat's `[min, max]` as its options gave them, `max` `Infinity`
+    /// when unbounded: v12's `Repeat.min`/`max`, which report the options
+    /// while the parse uses them clamped (DESIGN §10). `undefined` for
+    /// anything but a repeat.
+    #[wasm_bindgen(js_name = repeatBoundsAt)]
+    pub fn repeat_bounds_at(&self, path: Vec<u32>) -> Option<Vec<f64>> {
+        self.read(&path, |handle| match handle.pattern {
+            Pattern::Repeat(repeat) => Some(vec![
+                repeat.requested_min() as f64,
+                repeat
+                    .requested_max()
+                    .map_or(f64::INFINITY, |max| max as f64),
+            ]),
+            _ => None,
+        })
+        .flatten()
+    }
+
+    /// A copy of the pattern the repeat at `path` repeats (v12's `pattern`,
+    /// the pattern as given rather than a slot among its children: a bounded
+    /// repeat has one slot per repetition). `undefined` for anything but a
+    /// repeat.
+    #[wasm_bindgen(js_name = repeatPatternAt)]
+    pub fn repeat_pattern_at(&self, path: Vec<u32>) -> Option<JsPattern> {
+        self.read(&path, |handle| match handle.pattern {
+            Pattern::Repeat(repeat) => Some(repeat.child().clone().into()),
+            _ => None,
+        })
+        .flatten()
+    }
+
+    /// A copy of the repeat's divider (v12's `options.divider`); `undefined`
+    /// without one. A bounded repeat of at most one has no divider slot, so
+    /// this is the only way to see it.
+    #[wasm_bindgen(js_name = repeatDividerAt)]
+    pub fn repeat_divider_at(&self, path: Vec<u32>) -> Option<JsPattern> {
+        self.read(&path, |handle| match handle.pattern {
+            Pattern::Repeat(repeat) => repeat.divider().map(|divider| divider.clone().into()),
+            _ => None,
+        })
+        .flatten()
+    }
+
+    /// Whether the repeat at `path` trims a trailing divider; `undefined`
+    /// for anything but a repeat.
+    #[wasm_bindgen(js_name = trimDividerAt)]
+    pub fn trim_divider_at(&self, path: Vec<u32>) -> Option<bool> {
+        self.read(&path, |handle| match handle.pattern {
+            Pattern::Repeat(repeat) => Some(repeat.trim_divider()),
+            _ => None,
+        })
+        .flatten()
+    }
+
+    /// The name a reference at `path` looks up (v12's
+    /// `referencePatternName`), or `undefined` for anything else.
+    #[wasm_bindgen(js_name = referenceTargetAt)]
+    pub fn reference_target_at(&self, path: Vec<u32>) -> Option<String> {
+        self.read(&path, |handle| match handle.pattern {
+            Pattern::Reference(reference) => Some(reference.target_name().to_string()),
             _ => None,
         })
         .flatten()

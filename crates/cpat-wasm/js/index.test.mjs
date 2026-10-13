@@ -2,6 +2,7 @@
 // src/index.ts exports. A name missing here fails the import itself.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   isTokenizablePattern,
   Block,
@@ -109,4 +110,116 @@ test("the exported grammar reads cpat text", () => {
   const { ast } = grammar.exec(`name = "John"`);
   assert.equal(ast.value, `name = "John"`);
   assert.ok(ast.find(n => n.name === "patternName"));
+});
+
+// ─── Every public member of v12's Cursor and pattern classes ───
+//
+// Listed from v12 by walking each class's prototype chain for names not
+// starting with `_` (TS-private members are `_`-prefixed there). Each is
+// either on the JS object here or a deviation below, which DESIGN §22 must
+// name. A member that disappears, or a deviation that stops being one,
+// fails the test.
+
+const PATTERN_MEMBERS = [
+  "children", "clone", "exec", "find", "getNextPatterns", "getNextTokens", "getPatterns",
+  "getPatternsAfter", "getTokens", "getTokensAfter", "id", "isEqual", "name", "parent", "parse",
+  "startedOnIndex", "test", "type",
+];
+
+const V12_MEMBERS = {
+  Cursor: [
+    "allMatchedNodes", "allMatchedPatterns", "clearCut", "currentChar", "error", "errors",
+    "furthestError", "getCharEndIndex", "getCharLastIndex", "getCharStartIndex", "getCut",
+    "getLastIndex", "hasError", "hasNext", "hasPrevious", "index", "isCutInCurrentScope",
+    "isOnFirst", "isOnLast", "isRecording", "leafMatch", "leafMatches", "length", "markCut",
+    "moveTo", "moveToFirstChar", "moveToLastChar", "next", "popChoiceScope", "previous",
+    "pushChoiceScope", "recordErrorAt", "recordMatch", "recordSummaryErrorAt", "records",
+    "resolveError", "rootMatch", "setCut", "startRecording", "stopRecording", "substring", "text",
+  ],
+  Literal: [...PATTERN_MEMBERS, "token"],
+  Regex: [...PATTERN_MEMBERS, "regex", "setTokens"],
+  Sequence: [...PATTERN_MEMBERS, "childBlockedAtEndOfText"],
+  Expression: [
+    ...PATTERN_MEMBERS, "atomPatterns", "binaryPatterns", "build", "infixPatterns",
+    "originalPatterns", "postfixPatterns", "prefixPatterns",
+  ],
+  Optional: PATTERN_MEMBERS,
+  Not: PATTERN_MEMBERS,
+  Cut: PATTERN_MEMBERS,
+  Repeat: [...PATTERN_MEMBERS, "max", "min", "options", "pattern"],
+  Reference: [...PATTERN_MEMBERS, "getReferencePatternSafely"],
+  Context: [...PATTERN_MEMBERS, "getPatternWithinContext", "getPatternsWithinContext"],
+  RightAssociated: PATTERN_MEMBERS,
+  Block: PATTERN_MEMBERS,
+  TakeUntil: [...PATTERN_MEMBERS, "setTokens"],
+};
+
+// What v12 has that JS doesn't, and why (each named in DESIGN §22).
+const MEMBER_DEVIATIONS = {
+  "Sequence.childBlockedAtEndOfText":
+    "v12's Expression asks it mid-parse with a live cursor; the parse runs in wasm, where the choice asks the sequence itself",
+};
+
+// v12's one public setter, `parent =` on every pattern: a place's parent is
+// its path (DESIGN §22), so it has none.
+const SETTER_DEVIATION = "`parent` setter";
+
+const lit = () => new Literal("a", "a");
+const INSTANCES = {
+  Cursor: () => new Cursor("x"),
+  Literal: lit,
+  Regex: () => new Regex("r", "a"),
+  Sequence: () => new Sequence("s", [lit()]),
+  Expression: () => new Expression("e", [lit()]),
+  Optional: () => new Optional("o", lit()),
+  Not: () => new Not("n", lit()),
+  Cut: () => new Cut(),
+  Repeat: () => new Repeat("r", lit()),
+  Reference: () => new Reference("a"),
+  Context: () => new Context("c", lit(), []),
+  RightAssociated: () => new RightAssociated(lit()),
+  Block: () => new Block("b", new Literal("o", "{"), null, new Literal("c", "}")),
+  TakeUntil: () => new TakeUntil("t", lit()),
+};
+
+function designSection22() {
+  const design = readFileSync(new URL("../../../docs/DESIGN.md", import.meta.url), "utf8");
+  const start = design.indexOf("## 22. ");
+  const end = design.indexOf("## 23. ", start);
+  return design.slice(start, end);
+}
+
+test("every v12 Cursor and pattern member is in JS, or a deviation DESIGN §22 names", () => {
+  for (const [className, members] of Object.entries(V12_MEMBERS)) {
+    const instance = INSTANCES[className]();
+    for (const member of members) {
+      const key = `${className}.${member}`;
+      const deviation = Object.hasOwn(MEMBER_DEVIATIONS, key);
+      assert.equal(member in instance, !deviation, deviation ? `${key} is listed as a deviation but exists` : `${key} is missing`);
+    }
+  }
+  for (const key of Object.keys(MEMBER_DEVIATIONS)) {
+    const [className, member] = key.split(".");
+    assert.ok(V12_MEMBERS[className].includes(member), `${key} isn't a v12 member`);
+  }
+});
+
+test("patterns have no parent setter, as DESIGN §22 says", () => {
+  for (const [className, make] of Object.entries(INSTANCES)) {
+    if (className === "Cursor") {
+      continue;
+    }
+    const pattern = make();
+    assert.throws(() => {
+      "use strict";
+      pattern.parent = null;
+    }, TypeError, className);
+  }
+});
+
+test("DESIGN §22 names every member deviation", () => {
+  const section = designSection22();
+  for (const key of [...Object.keys(MEMBER_DEVIATIONS), SETTER_DEVIATION]) {
+    assert.ok(section.includes(key), `DESIGN §22 doesn't mention ${key}`);
+  }
 });

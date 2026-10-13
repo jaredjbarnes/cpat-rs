@@ -41,6 +41,55 @@ export class Expression extends PatternBase {
   constructor(name, patterns) {
     super(WasmPattern.choice(name, patterns.map(owned)));
   }
+
+  // v12's classified alternatives, as places among `children` (the same
+  // objects): operands, and operators without their self-references
+  // (`<name>-prefix`, `-postfix`, `-delimiter`).
+
+  get atomPatterns() {
+    return this._childrenWithRole("atom");
+  }
+
+  get prefixPatterns() {
+    return this._childrenWithRole("prefix");
+  }
+
+  get postfixPatterns() {
+    return this._childrenWithRole("postfix");
+  }
+
+  get infixPatterns() {
+    return this._childrenWithRole("infix");
+  }
+
+  /** @deprecated v12's old name for `infixPatterns` (the same array). */
+  get binaryPatterns() {
+    return this.infixPatterns;
+  }
+
+  /** The alternatives as given, operators with their self-references: each
+   * a copy of its own, since an operator's alternative is no place among
+   * the classified children. */
+  get originalPatterns() {
+    if (this._originalPatterns === undefined) {
+      this._originalPatterns = Object.freeze(this._root.originalPatternsAt(this._path).map(p => wrap(p)));
+    }
+    return this._originalPatterns;
+  }
+
+  /** v12 classifies on the first parse or on `build()`. Here the accessors
+   * classify when first read (a reference alternative resolved as a parse
+   * would), so there is nothing left to do. */
+  build() {}
+
+  _childrenWithRole(role) {
+    this._byRole ??= {};
+    if (this._byRole[role] === undefined) {
+      const roles = this._root.choiceRolesAt(this._path) ?? [];
+      this._byRole[role] = Object.freeze(this.children.filter((_, i) => roles[i] === role));
+    }
+    return this._byRole[role];
+  }
 }
 
 export class Optional extends PatternBase {
@@ -74,11 +123,74 @@ export class Repeat extends PatternBase {
       })
     );
   }
+
+  // v12's facade answers these two for itself: what may follow its inner
+  // repeat, whatever child is named (the children's parent is the inner
+  // repeat, never the facade). cpat has no facade, so they are answered
+  // here as v12's are.
+
+  getTokensAfter(_childReference) {
+    return this.getNextTokens();
+  }
+
+  getPatternsAfter(_childReference) {
+    return this.getNextPatterns();
+  }
+
+  /** As given, as v12's facade reports it: `{ min: 0 }` says 0, though the
+   * repeat parses as one or more. */
+  get min() {
+    return this._root.repeatBoundsAt(this._path)[0];
+  }
+
+  /** As given; `Infinity` when unbounded, as in v12. */
+  get max() {
+    return this._root.repeatBoundsAt(this._path)[1];
+  }
+
+  /** The pattern repeated, as given: a copy, not one of the `children`
+   * (a bounded repeat has a child slot per repetition). */
+  get pattern() {
+    if (this._pattern === undefined) {
+      this._pattern = wrap(this._root.repeatPatternAt(this._path));
+    }
+    return this._pattern;
+  }
+
+  /** v12's `{ ...options, min, max }`: `divider` (a copy) when there is one,
+   * and `trimDivider` when it is on. A `trimDivider: false` you passed
+   * isn't kept (wasm doesn't store whether it was given). */
+  get options() {
+    if (this._options === undefined) {
+      const [min, max] = this._root.repeatBoundsAt(this._path);
+      const divider = this._root.repeatDividerAt(this._path);
+      const options = { min, max };
+      if (divider != null) {
+        options.divider = wrap(divider);
+      }
+      if (this._root.trimDividerAt(this._path)) {
+        options.trimDivider = true;
+      }
+      this._options = Object.freeze(options);
+    }
+    return this._options;
+  }
 }
 
 export class Reference extends PatternBase {
   constructor(name, referencePatternName) {
     super(WasmPattern.reference(name, referencePatternName));
+  }
+
+  /** What this reference resolves to, as a parse would resolve it here
+   * (its only child, named after the reference); throws v12's error when
+   * the name resolves to nothing. */
+  getReferencePatternSafely() {
+    const target = this.children[0];
+    if (target == null) {
+      throw new Error(`Couldn't find '${this._root.referenceTargetAt(this._path)}' pattern within tree.`);
+    }
+    return target;
   }
 }
 

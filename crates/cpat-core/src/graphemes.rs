@@ -60,3 +60,12 @@ impl Boundaries {
         i
     }
 }
+
+/// The byte offset where each grapheme of `text` starts, in order: the
+/// boundaries a parse positions on (`Boundaries`), for a host that steps
+/// through a text a character at a time as v12's `Cursor` does
+/// (`currentChar`, `next`, `previous`). The same segmentation as the
+/// parser's, so a host never disagrees with it about where a character ends.
+pub fn grapheme_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
+    text.grapheme_indices(true).map(|(start, _)| start)
+}

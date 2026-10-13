@@ -36,6 +36,7 @@ use crate::name::Name;
 use crate::pattern::Pattern;
 use crate::pattern_id::{Meta, PatternId};
 use crate::pattern_path::PatternPath;
+use crate::patterns::ChoiceRole;
 
 use frames::{FrameRef, LiveScope};
 use loc::Loc;
@@ -191,6 +192,17 @@ impl<'r> Introspection<'r> {
         self.start()
             .find_from(&self.root_loc(), &predicate)
             .map(|loc| handle(&loc))
+    }
+
+    /// What each child of the choice at `path` is, in `Pattern::at_path`
+    /// numbering (v12's `atomPatterns`, `prefixPatterns`, `postfixPatterns`
+    /// and `infixPatterns` partition the children by it); `None` when the
+    /// place isn't a choice. A choice that waits for its first parse to be
+    /// classified (a reference alternative) is classified here as that
+    /// parse would classify it, as v12's `build()` does on demand.
+    pub fn choice_roles(&self, path: &PatternPath) -> Option<Vec<ChoiceRole>> {
+        let loc = self.start().walk(path)?;
+        self.roles(&loc)
     }
 
     /// Starts a query: it gets the whole budget, and the depth limit counts

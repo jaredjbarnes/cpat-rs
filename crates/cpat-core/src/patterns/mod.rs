@@ -16,6 +16,7 @@ mod take_until;
 pub use block::Block;
 pub(crate) use choice::classify::{operator_name, operator_part, role_of, sequence_children};
 pub(crate) use choice::pratt::Role;
+pub use choice::pratt::Role as ChoiceRole;
 pub use choice::{Choice, ChoiceMode};
 pub use context::Context;
 pub use custom::{Custom, CustomParse};

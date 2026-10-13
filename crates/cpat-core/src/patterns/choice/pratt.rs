@@ -57,12 +57,19 @@ impl Operator {
     }
 }
 
-/// What a classified alternative became, in declaration order.
+/// What a choice's alternative became when it was classified (exported as
+/// `ChoiceRole`): v12 sorts an `Expression`'s alternatives into
+/// `atomPatterns`, `prefixPatterns`, `postfixPatterns` and `infixPatterns`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Role {
+pub enum Role {
+    /// An operand: no self-reference at either end, or not a sequence.
     Atom,
+    /// `"-" expr`: a sequence whose only self-reference is its last child.
     Prefix,
+    /// `expr "!"`: a sequence whose only self-reference is its first child.
     Postfix,
+    /// `expr "+" expr`: a sequence that starts and ends with a
+    /// self-reference and has something between them.
     Infix,
 }
 

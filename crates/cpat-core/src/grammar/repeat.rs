@@ -13,7 +13,8 @@ use super::syntax::is_skipped;
 enum Count {
     /// `+`
     OneOrMore,
-    /// `*`: an optional one-or-more, as v12 builds it.
+    /// `*`: an optional around a repeat asked for zero or more (which
+    /// parses as one or more), as v12 builds it.
     ZeroOrMore,
     /// `{…}`
     Bounds { min: usize, max: Option<usize> },
@@ -59,6 +60,9 @@ impl<'a, 't> Builder<'a, 't> {
         match count(quantifier) {
             Count::OneOrMore => Ok(Repeat::new(name, item, options).into()),
             Count::ZeroOrMore => {
+                // v12 asks its inner repeat for zero or more; the repeat
+                // clamps to one, so only `requested_min` sees the 0.
+                options.min = 0;
                 let repeat = Repeat::new(&format!("inner-optional-{name}"), item, options);
                 Ok(Optional::new(name, repeat.into()).into())
             }

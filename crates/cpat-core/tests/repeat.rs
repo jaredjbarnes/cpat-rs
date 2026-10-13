@@ -1535,3 +1535,48 @@ fn a_custom_zero_width_node_is_a_zero_width_success_so_a_repeat_ends() {
     assert!(parse(&mut bounded, "abc").nodes.is_none());
     assert_eq!(calls.get(), 1);
 }
+
+// ─── The bounds as given (v12's `Repeat` facade `min`/`max`) ───
+
+#[test]
+fn requested_bounds_are_the_options_as_given_while_the_parse_clamps() {
+    // v12's facade reports `{ min: 0, max: 0 }` as given; its finite repeat
+    // parses with min 1, max 1.
+    let repeat = Repeat::new("r", digits(), bounded(0, 0));
+    assert_eq!(
+        (repeat.requested_min(), repeat.requested_max()),
+        (0, Some(0))
+    );
+    assert_eq!((repeat.min(), repeat.max()), (1, Some(1)));
+
+    let unbounded = Repeat::new("r", digits(), at_least(0)).clone();
+    assert_eq!(
+        (unbounded.requested_min(), unbounded.requested_max()),
+        (0, None)
+    );
+    assert_eq!(unbounded.min(), 1);
+}
+
+#[test]
+fn a_grammars_star_asks_its_inner_repeat_for_zero_or_more() {
+    // v12: `(a)*` is an optional around a repeat built with min 0 (checked
+    // with tsx); `{,3}` asks for 0 to 3.
+    let patterns = cpat_core::patterns!(
+        r#"
+        a = "a"
+        star = (a)*
+        up-to = (a){,3}
+        "#
+    )
+    .unwrap();
+    let repeat_in = |pattern: &Pattern| -> (usize, Option<usize>) {
+        let found = pattern.find(|p| matches!(p, Pattern::Repeat(_)));
+        match found.expect("a repeat").pattern {
+            Pattern::Repeat(r) => (r.requested_min(), r.requested_max()),
+            _ => unreachable!(),
+        }
+    };
+    assert_eq!(repeat_in(&patterns["star"]), (0, None));
+    assert_eq!(repeat_in(&patterns["upTo"]), (0, Some(3)));
+    assert!(patterns["star"].clone().test(""));
+}

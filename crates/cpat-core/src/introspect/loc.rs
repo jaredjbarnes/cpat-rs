@@ -260,6 +260,20 @@ impl<'r> Introspection<'r> {
         true
     }
 
+    /// The roles of the classified children of the choice at `loc`, or
+    /// `None` when `loc` holds something else.
+    pub(super) fn roles(&self, loc: &Rc<Loc<'r>>) -> Option<Vec<Role>> {
+        match loc.node {
+            Node::Pattern(Pattern::Choice(choice)) => Some(
+                self.classified(loc, choice)
+                    .into_iter()
+                    .map(|child| child.role)
+                    .collect(),
+            ),
+            _ => None,
+        }
+    }
+
     /// A choice's children in v12's classified order: atoms are the
     /// alternatives themselves, operators their sequences without the
     /// self-references; alternatives that are neither are left out. A

@@ -12,6 +12,7 @@ mod custom;
 mod exec_result;
 mod flat_tree;
 mod grammar;
+mod graphemes;
 mod host;
 mod live;
 mod place;
@@ -30,6 +31,7 @@ use repeat_options::JsRepeatOptions;
 pub use auto_complete::{JsAutoComplete, SuggestionResult};
 pub use exec_result::ExecResult;
 pub use grammar::GrammarRecord;
+pub use graphemes::grapheme_starts;
 pub use live::live_results;
 
 /// A pattern living in wasm memory. Composite constructors take ownership of

@@ -143,7 +143,9 @@ export class PatternBase {
       return null;
     }
     const node = view.toNode();
-    cursor._index = node.lastIndex;
+    // v12 leaves the cursor on the match's last character: the start of
+    // the grapheme holding its last unit (`moveTo` snaps).
+    cursor.moveTo(node.lastIndex);
     return node;
   }
 

@@ -22,6 +22,10 @@ pub use options::RepeatOptions;
 pub struct Repeat {
     pub(crate) meta: Meta,
     strategy: Strategy,
+    // The bounds as given, before clamping: v12's `Repeat` facade reports
+    // these (`min`, `max`) while its implementation parses with the
+    // clamped ones, so a host showing v12's API needs both.
+    requested: (usize, Option<usize>),
 }
 
 #[derive(Clone, Debug)]
@@ -34,6 +38,7 @@ impl Repeat {
     pub fn new(name: &str, child: Pattern, options: RepeatOptions) -> Repeat {
         // v12 clamps in both implementations: zero-or-more is an optional
         // around one-or-more, never a repeat with min 0.
+        let requested = (options.min, options.max);
         let min = options.min.max(1);
         let divider = options.divider.map(|d| Box::new(d.adopted()));
         let child = Box::new(child.adopted());
@@ -53,6 +58,7 @@ impl Repeat {
         Repeat {
             meta: Meta::new(name),
             strategy,
+            requested,
         }
     }
 
@@ -70,6 +76,18 @@ impl Repeat {
             Strategy::Unbounded(_) => None,
             Strategy::Bounded(s) => Some(s.max),
         }
+    }
+
+    /// `min` as the options gave it, before clamping (v12's `Repeat.min`):
+    /// 0 for the repeat inside a grammar's `*` or `{,n}`.
+    pub fn requested_min(&self) -> usize {
+        self.requested.0
+    }
+
+    /// `max` as the options gave it, before clamping to `min` (v12's
+    /// `Repeat.max`, with `None` for its `Infinity`).
+    pub fn requested_max(&self) -> Option<usize> {
+        self.requested.1
     }
 
     pub fn child(&self) -> &Pattern {

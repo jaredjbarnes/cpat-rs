@@ -24,7 +24,7 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 16)
+## What's in the box (milestone 16, gaps 1-1 and 1-2)
 
 `Literal`, `Regex`, `Sequence`, `Choice`, `Repeat` (unbounded or bounded, with an optional
 divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for recursive
@@ -41,6 +41,12 @@ repetition resets) are refused when built; DESIGN.md §6 has the full mapping.
 Everything below behaves as clarity-pattern-parser v12 does, checked by running both on 140 349
 cases from real test suites ([Conformance with v12](#conformance-with-v12)); the few
 differences are listed and explained in `conformance/allowlist.json` and DESIGN.md §23.
+
+`Introspection::choice_roles` says what each of a choice's classified children is
+(`ChoiceRole::Atom`, `Prefix`, `Postfix`, `Infix`), classifying a choice that waits for its first
+parse as that parse would. `Repeat::requested_min`/`requested_max` keep the bounds as given
+(v12's `Repeat.min`/`max`) while `min`/`max` are the clamped ones the parse uses, and
+`grapheme_starts(text)` lists where each character starts, as the parser positions on them.
 
 `Choice` is ordered (the first alternative that matches wins) unless some alternatives are
 operators: sequences that start or end with a reference to the choice itself (`expr "+" expr`,
@@ -330,6 +336,13 @@ const grammar = await Grammar.parse(`import { name } from "names.cpat"\nhi = "hi
   what it returns that isn't a pattern is ignored. A function that throws, or answers anything
   but `null` or an end in the text, stops the parse: `exec` throws `custom pattern \`name\`
   failed: …`.
+- The classes have v12's members: `Repeat`'s `min`, `max` (`Infinity` when unbounded), `pattern`
+  and `options`; `Expression`'s `atomPatterns`, `prefixPatterns`, `postfixPatterns`,
+  `infixPatterns` (places among its `children`) and `originalPatterns`; and a `Cursor` that steps
+  a grapheme at a time (`currentChar`, `next`, `previous`, `getCharStartIndex`, …) with the
+  parser's own boundaries, plus v12's `recordErrorAt`/`recordMatch`/choice-scope methods for
+  code that drives a cursor by hand. `js/index.test.mjs` checks every public member of v12's
+  `Cursor` and pattern classes; the two not here are listed in DESIGN.md §22.
 - `AutoComplete.suggestFor(text)` answers v12's `Suggestion`: `options` (`text`, `startIndex` in
   UTF-16, and `suggestionSequence` segments whose `pattern` is a place with `name` and `type`),
   `error`, `errorAtIndex`, `isComplete`, `ast` and a recording `cursor` with the parse's errors
