@@ -276,3 +276,46 @@ test("every pattern class builds with v12's constructor signature", () => {
   ]);
   assert.equal(new Repeat("words", word).type, "infinite-repeat");
 });
+
+// v12's `test` is `!cursor.hasError`, and its exec returns before parsing
+// empty text, so `test("")` is true for every pattern while `exec("")` has
+// no ast and no error. Values checked against v12 on the same patterns.
+test("test on empty text passes for every pattern, as exec reports no error", () => {
+  const a = () => new Literal("a", "a");
+  const g = greeting();
+  const all = [
+    a(),
+    new Regex("digits", "\\d+"),
+    new Repeat("as", a(), { min: 1 }),
+    new Sequence("s", [a()]),
+    new Optional("maybe", a()),
+    new Not("not-a", a()),
+    g,
+    g.children[2],
+    Grammar.parseString('a = "a"\nb = a').b,
+  ];
+
+  for (const pattern of all) {
+    assert.equal(pattern.test(""), true, pattern.name);
+    assert.equal(pattern.test("", true), true, pattern.name);
+    const { ast, cursor } = pattern.exec("");
+    assert.equal(ast, null, pattern.name);
+    assert.equal(cursor.hasError, false, pattern.name);
+  }
+  assert.equal(a().test("b"), false);
+  assert.equal(a().test("a"), true);
+});
+
+test("test throws what exec throws when a reference names nothing, as v12's does", () => {
+  const dangling = new Reference("x");
+
+  assert.throws(() => dangling.test("x"), { message: "Couldn't find 'x' pattern within tree." });
+  assert.throws(() => dangling.test("x", true), {
+    message: "Couldn't find 'x' pattern within tree.",
+  });
+  assert.throws(() => dangling.exec("x"), { message: "Couldn't find 'x' pattern within tree." });
+  const holder = new Sequence("s", [new Reference("x")]);
+  assert.throws(() => holder.children[0].test("x"), {
+    message: "Couldn't find 'x' pattern within tree.",
+  });
+});

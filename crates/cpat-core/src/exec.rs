@@ -38,6 +38,13 @@ impl<'t> ParseResult<'t> {
         self.text
     }
 
+    /// v12's `test` answer, `!cursor.hasError`: no error, and the parse
+    /// ran to its end. Not `is_match`: empty text has no tree and no
+    /// error, and v12's `test("")` is true for every pattern.
+    pub fn passed(&self) -> bool {
+        self.error.is_none() && self.pattern_error.is_none() && self.too_deep.is_none()
+    }
+
     /// The limits the parse ran under (`Limits::default()` for `exec`).
     pub fn limits(&self) -> Limits {
         self.limits

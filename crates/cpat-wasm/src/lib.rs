@@ -181,12 +181,10 @@ impl JsPattern {
         ExecResult::from_result(text, &result)
     }
 
-    pub fn test(&mut self, text: &str, record: Option<bool>) -> bool {
-        if record.unwrap_or(false) {
-            self.inner.test_recording(text)
-        } else {
-            self.inner.test(text)
-        }
+    /// v12 `test(text, record?)`: `!cursor.hasError`, so empty text
+    /// passes. Throws what `exec` throws when the pattern can't run.
+    pub fn test(&mut self, text: &str, record: Option<bool>) -> Result<bool, JsError> {
+        run::test(&mut self.inner, text, record.unwrap_or(false))
     }
 }
 

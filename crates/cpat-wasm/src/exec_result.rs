@@ -24,7 +24,7 @@ pub struct ExecResult {
     furthest_error: Option<Vec<u32>>,
     error_names: Vec<String>,
     pattern_error: Option<String>,
-    missing_name: Option<String>,
+    thrown_message: Option<String>,
     too_deep: Option<Vec<u32>>,
     cursor: String,
 }
@@ -75,11 +75,11 @@ impl ExecResult {
         self.pattern_error.clone()
     }
 
-    /// The name a reference looked up and found nowhere, when that is the
-    /// `patternError` (JS throws v12's message for it).
-    #[wasm_bindgen(getter, js_name = missingName)]
-    pub fn missing_name(&self) -> Option<String> {
-        self.missing_name.clone()
+    /// What JS throws for `patternError`: v12's own message where v12
+    /// throws one (a reference that names nothing), else cpat's reason.
+    #[wasm_bindgen(getter, js_name = thrownMessage)]
+    pub fn thrown_message(&self) -> Option<String> {
+        self.thrown_message.clone()
     }
 
     /// `[maxDepth, position]` (UTF-16) when the input nested deeper than
@@ -123,10 +123,7 @@ impl ExecResult {
             furthest_error: result.furthest_error.as_ref().map(error_of),
             error_names: vec![name_of(&result.error), name_of(&result.furthest_error)],
             pattern_error: result.pattern_error.as_ref().map(ToString::to_string),
-            missing_name: match &result.pattern_error {
-                Some(PatternError::UnknownReference { target, .. }) => Some(target.to_string()),
-                _ => None,
-            },
+            thrown_message: result.pattern_error.as_ref().map(thrown_message),
             // Saturating: a depth past u32 can't be asked for from JS anyway.
             too_deep: result.too_deep.map(|too_deep| {
                 vec![
@@ -136,5 +133,17 @@ impl ExecResult {
             }),
             cursor: cursor_json(result, &offsets),
         }
+    }
+}
+
+/// The message v12 throws when a pattern can't run: for a reference that
+/// names nothing, `Reference.ts`'s own words, so JS code matching on them
+/// keeps working.
+pub(crate) fn thrown_message(error: &PatternError) -> String {
+    match error {
+        PatternError::UnknownReference { target, .. } => {
+            format!("Couldn't find '{target}' pattern within tree.")
+        }
+        _ => error.to_string(),
     }
 }

@@ -52,11 +52,7 @@ function decodePaths(flat, root) {
 /** v12 throws when a reference names nothing; so does this, with its
  * message. Anything else wrong with the pattern says what in cpat's words. */
 function throwPatternError(result) {
-  const missing = result.missingName;
-  if (missing != null) {
-    throw new Error(`Couldn't find '${missing}' pattern within tree.`);
-  }
-  throw new Error(result.patternError);
+  throw new Error(result.thrownMessage);
 }
 
 /** v12's `ParseResult`: `{ ast, cursor }`. `ast` becomes a `Node` the

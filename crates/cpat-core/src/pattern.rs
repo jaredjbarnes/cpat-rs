@@ -106,14 +106,16 @@ impl Pattern {
         crate::exec::exec(self, text, limits, Record::Yes)
     }
 
+    /// v12 `test(text)`: whether `exec` ends without an error
+    /// (`ParseResult::passed`), so empty text passes.
     pub fn test(&mut self, text: &str) -> bool {
-        self.exec(text).is_match()
+        self.exec(text).passed()
     }
 
     /// `test` on a recording parse (v12 `test(text, true)`): the same
     /// answer; only the work done to reach it differs.
     pub fn test_recording(&mut self, text: &str) -> bool {
-        self.exec_recording(text).is_match()
+        self.exec_recording(text).passed()
     }
 
     /// The pattern instance `path` leads to from this one, as a parse from

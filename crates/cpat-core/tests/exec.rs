@@ -1,6 +1,7 @@
 mod common;
 
 use common::*;
+use cpat_core::RepeatOptions;
 
 #[test]
 fn empty_text_is_no_match_and_no_error() {
@@ -10,6 +11,42 @@ fn empty_text_is_no_match_and_no_error() {
 
     assert!(result.tree.is_none());
     assert!(result.error.is_none());
+}
+
+// v12's `test` is `!cursor.hasError`, and its exec returns before parsing
+// empty text, so `test("")` is true for every pattern (checked against v12):
+// a pass with no tree.
+#[test]
+fn empty_text_passes_test_for_every_pattern() {
+    let mut patterns = vec![
+        lit("a", "a"),
+        re("digits", r"\d+"),
+        rep("as", lit("a", "a"), RepeatOptions::default()),
+        seq("s", vec![lit("a", "a")]),
+        not("n", lit("a", "a")),
+    ];
+
+    for pattern in &mut patterns {
+        assert!(pattern.test(""), "{}", pattern.name());
+        assert!(pattern.test_recording(""), "{}", pattern.name());
+        assert!(!pattern.exec("").is_match(), "{}", pattern.name());
+    }
+}
+
+#[test]
+fn test_fails_on_any_error_and_passes_a_full_match() {
+    let mut a = lit("a", "a");
+
+    assert!(a.test("a"));
+    assert!(!a.test("b"));
+    assert!(!a.test("ab"));
+}
+
+#[test]
+fn test_fails_when_the_pattern_cannot_run() {
+    let mut pattern = seq("s", vec![reference_to("r", "nowhere")]);
+
+    assert!(!pattern.test("a"));
 }
 
 // BasePattern.test.ts "exec keeps the real furthest error": the first two

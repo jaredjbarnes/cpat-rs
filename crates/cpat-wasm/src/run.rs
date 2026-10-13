@@ -7,7 +7,7 @@ use cpat_core::{Cursor, Match, PatternPath, generate_error_message_after};
 use wasm_bindgen::prelude::*;
 
 use crate::JsPattern;
-use crate::exec_result::ExecResult;
+use crate::exec_result::{ExecResult, thrown_message};
 use crate::utf16::byte_of;
 
 impl JsPattern {
@@ -44,15 +44,9 @@ impl JsPattern {
 
     /// v12 `test(text, record)` on the pattern at `path`.
     #[wasm_bindgen(js_name = testAt)]
-    pub fn test_at(&mut self, path: Vec<u32>, text: &str, record: bool) -> bool {
-        self.run_at(&path, |pattern| {
-            if record {
-                pattern.test_recording(text)
-            } else {
-                pattern.test(text)
-            }
-        })
-        .unwrap_or(false)
+    pub fn test_at(&mut self, path: Vec<u32>, text: &str, record: bool) -> Result<bool, JsError> {
+        self.run_at(&path, |pattern| test(pattern, text, record))
+            .unwrap_or(Ok(false))
     }
 
     /// v12 `parse(cursor)`: the pattern at `path` parses `text` from UTF-16
@@ -105,5 +99,24 @@ impl JsPattern {
             leaf.as_ref(),
             cpat_core::Limits::default(),
         ))
+    }
+}
+
+/// v12 `test`: the parse ended without an error (`ParseResult::passed`).
+/// A pattern that can't run throws, as v12's does and as `exec` does here,
+/// instead of answering false.
+pub(crate) fn test(
+    pattern: &mut cpat_core::Pattern,
+    text: &str,
+    record: bool,
+) -> Result<bool, JsError> {
+    let result = if record {
+        pattern.exec_recording(text)
+    } else {
+        pattern.exec(text)
+    };
+    match &result.pattern_error {
+        Some(error) => Err(JsError::new(&thrown_message(error))),
+        None => Ok(result.passed()),
     }
 }

@@ -60,6 +60,8 @@
 > ports of `Query`/`Selector` over it) is implemented; see §22. v12's `Grammar.test.ts`,
 > `patterns.test.ts`, `Node.test.ts`, `query.test.ts`, `selector.test.ts` and `Context.test.ts`
 > run in JS (`js/*.test.mjs`) with two adjusted assertions, each a documented deviation.
+> Its fix round makes `test` v12's `!cursor.hasError` (so `test("")` is true, as in v12) and
+> makes JS `test` throw what `exec` throws for a pattern that can't run (§22).
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -1344,6 +1346,16 @@ build error naming the pattern.
 - **Composites take copies.** v12's constructors clone their children, so JS passes a wasm clone
   (`owned`), and the original stays usable and separate. `params` and decorators' patterns are
   copied the same way. A copy keeps its id, as v12's clone does.
+- **`test` is v12's `!cursor.hasError`, not "there is a tree"** (fix round 1).
+  `ParseResult::passed` is no error, no pattern error, no halt; `Pattern::test` and JS `test`
+  answer it. The two differ only where v12's exec returns early: on empty text there is no tree
+  and no error, so `test("")` is true for every pattern, as v12's is, and agrees with
+  `exec("")`'s own `hasError`. The first version answered `is_match` and said false there.
+  A pattern that can't run makes JS `test` throw `exec`'s error (v12's message for a reference
+  that names nothing) instead of answering false; v12's `test` throws there too. The one
+  difference left is §11's: cpat reports a dangling reference even on empty text, where v12
+  returns before it could notice, so `new Reference("x").test("")` throws here and is true in
+  v12. The core `test` answers false there (it has no exceptions).
 - **Running a place below the root runs a copy** of the pattern there, as the core runs a
   pattern taken out of its tree (§11): `exec`, `test`, `parse` and `generateErrorMessage` on a
   child. The root itself runs in place, so what its parse resolves stays resolved.
