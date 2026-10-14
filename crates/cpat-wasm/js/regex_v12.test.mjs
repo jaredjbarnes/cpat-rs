@@ -150,6 +150,11 @@ const V12 = [
   [".{0,65535}", "abc", "abc"],
   ["(?=a)\\p{L}{1,1000}", "abc", "abc"],
   ["(a)\\1.{0,65535}", "aab", "aab"],
+  // fancy-regex hands the run after the lookahead to the `regex` crate as one
+  // program of about 86 MB, so this builds only under the raised delegate limit.
+  ["(?=a)(?:\\p{L}{1000}){2}", "abc", null],
+  ["(?=a)(?:\\p{L}{1000}){2}", "a".repeat(1999), null],
+  ["(?=a)(?:\\p{L}{1000}){2}", "a".repeat(2001), "a".repeat(2000)],
   // Groups nested as deep as the translator allows (gap 3-1).
   [nested(250), "a", "a"],
   [nested(255), "a", "a"],

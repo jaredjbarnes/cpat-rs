@@ -28,7 +28,9 @@ const BACKTRACK_LIMIT: usize = 100_000_000;
 /// though v12 builds both. 128 MiB covers them with room to spare, and still
 /// ends a truly huge program (`a{4294967295}`) as a build error after
 /// about 140 MB and a fraction of a second, rather than exhausting memory
-/// (DESIGN §6).
+/// (DESIGN §6). As a DFA limit it is only a cache capacity: a cache too
+/// small makes the crate search with a slower engine, never a different
+/// answer, so it keeps big programs fast rather than making them build.
 const SIZE_LIMIT: usize = 128 << 20;
 
 /// How deeply the `regex` crate lets the translation nest, counting every

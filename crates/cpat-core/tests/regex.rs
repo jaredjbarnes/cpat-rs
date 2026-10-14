@@ -327,7 +327,6 @@ fn modest_counted_repetitions_build_and_match_as_in_v12() {
         (r"\p{L}{1,500}", "abc", "abc"),
         (r"\p{L}{1,1000}", "abc", "abc"),
         (".{0,65535}", "abc", "abc"),
-        // The backtracking engine hands its plain parts to the same limits.
         (r"(?=a)\p{L}{1,1000}", "abc", "abc"),
         (r"(a)\1.{0,65535}", "aab", "aab"),
     ];
@@ -342,6 +341,23 @@ fn modest_counted_repetitions_build_and_match_as_in_v12() {
     let mut thousand = re("r", r"\p{L}{1000}");
     let letters = "a".repeat(1001);
     assert_eq!(parse_value(&mut thousand, &letters), Some("a".repeat(1000)));
+}
+
+/// fancy-regex compiles the lookaround itself and hands the plain run after
+/// it to the `regex` crate as one program, here about 86 MB: past that
+/// crate's 10 MB default, so it builds only because the delegated parts get
+/// the same raised limits as a fast matcher (DESIGN §6). The rows above
+/// don't reach this: fancy-regex keeps them small or matches them itself.
+/// v12's answers, recorded under tsx.
+#[test]
+fn the_backtracking_engine_delegates_under_the_same_size_limits() {
+    let mut pattern = re("r", r"(?=a)(?:\p{L}{1000}){2}");
+    assert_eq!(parse_value(&mut pattern, "abc"), None);
+    assert_eq!(parse_value(&mut pattern, &"a".repeat(1999)), None);
+    assert_eq!(
+        parse_value(&mut pattern, &"a".repeat(2001)),
+        Some("a".repeat(2000))
+    );
 }
 
 /// A program past the size limit is refused when built, not compiled until

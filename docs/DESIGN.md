@@ -332,7 +332,14 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
     `a{4294967295}` as a build error after about 140 MB and a fraction of a second, where an
     unlimited build would run out of memory. A bigger limit buys longer counted repetitions at
     the price of what a hostile source can make a build allocate, in wasm memory that never
-    shrinks.
+    shrinks. The program limits are observable and pinned on both engines: `\p{L}{1,1000}`
+    builds as a fast matcher, and `(?=a)(?:\p{L}{1000}){2}` builds only because fancy-regex
+    hands the run after the lookahead (about 86 MB) to the `regex` crate under
+    `delegate_size_limit`. The two DFA limits are not observable, so no test pins them: they set
+    only the lazy DFA's cache capacity, and a cache too small for a program makes the crate drop
+    that engine and search with another one (`regex-automata`'s `meta/wrappers.rs`), which finds
+    the same matches more slowly. They are raised to match so a big program keeps its fast
+    search; a test could tell them apart only by timing it, which tests never do.
   - *Nesting: 264 levels* (`nest_limit`, `MAX_GROUP_DEPTH + 8`). The `regex` crate's compiler
     recurses once a level, and its nesting limit is what keeps a deep source a build error
     instead of a stack overflow, which aborts the process or the wasm instance. So it can't
