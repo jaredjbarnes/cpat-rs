@@ -1,3 +1,4 @@
 /target
 /crates/cpat-wasm/pkg
 /crates/cpat-wasm/pkg-node
+/crates/cpat-wasm/pkg-web

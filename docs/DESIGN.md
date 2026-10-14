@@ -98,6 +98,9 @@
 > in source order and every number is the double v12's `JSON.parse` gives, in Rust and in JS. Its fix round
 > reads a lone surrogate escape in an argument as U+FFFD (a documented deviation, §9) instead of
 > failing the build.
+> Gap 1-5 (the JS API outside Node) is implemented: `js/web.mjs` serves the same API over
+> wasm-pack's `web` build after an async `init`, with no Node built-in in anything it imports;
+> `js/index.mjs` stays Node's ready-on-import entry. See §22's "Two entries".
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -1513,7 +1516,8 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   exports), `pattern.mjs` (the base class, places), `patterns.mjs` (the classes), `cursor.mjs`,
   `parse_error.mjs`, `grammar.mjs`, `template.mjs`, `node.mjs` (v12's `Node`), `tree.mjs` (the
   read-only view and `toNode`), `query.mjs`, `selector.mjs`, `compact.mjs`,
-  `error_message.mjs`, `auto_complete.mjs`, `wasm.mjs` (loads `pkg-node`). Milestone 15 adds
+  `error_message.mjs`, `auto_complete.mjs`, `wasm.mjs` (the build's bindings; gap 1-5 split
+  the exports into `api.mjs` and two entries, see "Two entries" below). Milestone 15 adds
   `src/custom.rs` (a JS function as a `CustomParse`) and `CustomPattern` in `patterns.mjs`.
 - **A JS pattern is a place: a wasm root and a path.** v12 hands out live children that know
   their parents. Wasm patterns have no parents (§2), so a child is `{ root, path }`, read with
@@ -1719,7 +1723,34 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
     live cursor; the parse runs in wasm, where the choice asks its sequence itself), and the
     `parent` setter on every pattern (a place's parent is its path; assigning throws in strict
     code). The test pins both as absent.
-- **Not yet:** builds for targets other than Node (`js/wasm.mjs` loads `pkg-node`).
+- **Two entries, one API** (gap 1-5). v12 is plain JS that runs in browsers and bundlers; the
+  first wasm layer required `pkg-node` through `node:module`. Now:
+  - `js/api.mjs` exports the API and imports no build. `js/wasm.mjs` holds the build's bindings
+    as live `let` exports that an entry fills with `install(build)`; before that each is a
+    stand-in that throws "wasm isn't loaded", so a use before `init` says what's missing.
+  - `js/index.mjs` (Node) imports `load_pkg_node.mjs`, which requires `pkg-node` synchronously
+    and installs it, then re-exports `api.mjs`: ready on import, as before.
+  - `js/web.mjs` (browsers, bundlers) imports `pkg-web` (`wasm-pack build --target web`) and
+    re-exports `api.mjs`, plus a default `init(source?)` (wasm-bindgen's: a URL, a `Response`,
+    bytes or a `WebAssembly.Module`; with none it fetches the `.wasm` next to the glue) and
+    `initSync(bytesOrModule)`.
+  - Nothing may call wasm while modules evaluate, because on the web it isn't there yet. The
+    one thing that did, v12's exported `grammar` (a pattern wasm builds), moved to
+    `cpat_grammar.mjs` as a live binding the entry sets after installing. It is `undefined`
+    before `init`: a deviation only in when it exists, since v12 has no init at all.
+  - `install` refuses a second, different build: patterns from two wasm instances can't be
+    mixed (each owns its memory), so loading both entries in one program throws.
+  - Tests: `js/web.test.mjs` runs the web entry in Node as a browser would (init from a fetch
+    `Response` of the bytes) and parses through patterns, `Grammar`, `AutoComplete` and
+    `grammar`, with v12's results; `js/web_sync.test.mjs` does it through `initSync` and checks
+    the export list is the API's plus `init`/`initSync`; `js/web_imports.test.mjs` walks every
+    module `web.mjs` reaches, `pkg-web`'s glue included, and fails on a `node:` or bare import or
+    a Node-only global.
+  - *Rejected:* wasm-pack's `bundler` target, whose glue imports the `.wasm` as an ES module
+    (the wasm ESM integration): webpack needs `asyncWebAssembly`, Vite a plugin, and browsers
+    without a bundler can't load it, while the `web` target's `init` works in all three.
+    Top-level `await` in the web entry, which would hide `init`, was rejected too: the entry
+    can't know where the `.wasm` is served or whether the caller already has its bytes.
 
 ## 23. The conformance harness and the speed report *(milestone 16)*
 

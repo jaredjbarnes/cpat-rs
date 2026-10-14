@@ -6,7 +6,7 @@ WebAssembly build for JavaScript.
 | Crate | What it is |
 |---|---|
 | `crates/cpat-core` | The parser: patterns, cursor, read-only tree. No platform code. |
-| `crates/cpat-wasm` | wasm-bindgen layer plus `js/index.mjs`, clarity-pattern-parser's JS API over it. |
+| `crates/cpat-wasm` | wasm-bindgen layer plus clarity-pattern-parser's JS API over it: `js/index.mjs` for Node, `js/web.mjs` for browsers and bundlers. |
 | `conformance` | The differential conformance harness (TS v12 vs native vs wasm), its corpus, and the speed report. |
 
 ## Quick start
@@ -24,7 +24,7 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 16, gaps 1-1 to 1-4)
+## What's in the box (milestone 16, gaps 1-1 to 1-5)
 
 `Literal`, `Regex`, `Sequence`, `Choice`, `Repeat` (unbounded or bounded, with an optional
 divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for recursive
@@ -278,6 +278,10 @@ let mut block: Pattern = Block::new(
 assert!(block.test("{{{}}}"));
 ```
 
+From JavaScript, all of it is clarity-pattern-parser v12's API, in Node (`js/index.mjs` over
+wasm-pack's `nodejs` build) and in browsers and bundlers (`js/web.mjs` over its `web` build,
+after `await init()`); see [The JS API](#the-js-api).
+
 ## The JS API
 
 `crates/cpat-wasm/js/index.mjs` exports what clarity-pattern-parser v12's `src/index.ts` exports,
@@ -289,8 +293,28 @@ async `parse` and `import`, `resolveImport`/`resolveImportSync`, `params` as JS 
 `decorators`), `patterns` and `createPatternsTemplate`, `Node`, `compact`, `remove`, `Query`,
 `$`, `Selector`, `Cursor`, `ParseError`, `AutoComplete` (with its static `suggestFor` and
 `suggestForWithCursor`), `generateErrorMessage`, `isTokenizablePattern` and `grammar`; and one
-class v12 doesn't have, `CustomPattern`, for patterns written in JS. Build it with
-`wasm-pack build --target nodejs --release --out-dir pkg-node` in `crates/cpat-wasm`.
+class v12 doesn't have, `CustomPattern`, for patterns written in JS.
+
+The same API comes from two entries, one per wasm-pack target (build in `crates/cpat-wasm`):
+
+| Where | Build | Entry | Loading |
+|---|---|---|---|
+| Node | `wasm-pack build --target nodejs --release --out-dir pkg-node` | `js/index.mjs` | Ready on import (the wasm loads synchronously). |
+| Browsers and bundlers | `wasm-pack build --target web --release --out-dir pkg-web` | `js/web.mjs` | `await init()` before using it. No Node built-ins anywhere it reaches. |
+
+```js
+import init, { patterns } from "./crates/cpat-wasm/js/web.mjs";
+
+await init(); // fetches pkg-web/cpat_wasm_bg.wasm, found next to the glue via import.meta.url
+// or: await init(fetch(wasmUrl)) / await init(wasmBytes) / initSync(wasmBytes or a WebAssembly.Module)
+const { num } = patterns`num = /\\d+/`;
+```
+
+Bundlers that understand `new URL("…", import.meta.url)` (Vite, webpack 5, esbuild with a file
+loader, Parcel) copy the `.wasm` for `init()`; otherwise pass `init` the URL you serve it from.
+Until `init` resolves, every pattern constructor and parse throws "wasm isn't loaded", and
+`grammar` is `undefined`. Use one entry per program: loading the other one too throws, because
+patterns from two wasm instances can't be mixed.
 
 ```js
 import { patterns, Grammar, $ } from "./crates/cpat-wasm/js/index.mjs";
@@ -395,7 +419,8 @@ is the slow spot.
 cargo test --workspace                       # Rust tests
 cd crates/cpat-wasm
 wasm-pack build --target nodejs --release --out-dir pkg-node
-node --test js/*.test.mjs                     # JS tests against the wasm build
+wasm-pack build --target web --release --out-dir pkg-web
+node --test js/*.test.mjs                     # JS tests against both wasm builds
 cd ../.. && node conformance/run.mjs          # parity with TS v12 (needs v12's checkout)
 ```
 
