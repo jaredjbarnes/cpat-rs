@@ -13,7 +13,7 @@ use super::js_property_names::{BINARY_PROPERTIES, GENERAL_CATEGORY_VALUES, SCRIP
 
 /// How deeply groups may nest. JS has no limit, but every pass here is
 /// recursive, and a source is text a grammar author (or its user) wrote.
-const MAX_DEPTH: usize = 256;
+pub(crate) const MAX_DEPTH: usize = 256;
 
 /// The largest repetition count Rust can write. JS allows up to 2^53 - 1.
 const MAX_COUNT: u64 = u32::MAX as u64;

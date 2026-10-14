@@ -317,6 +317,111 @@ fn a_negated_property_under_i_complements_before_folding() {
     }
 }
 
+/// Rust writes out every copy of a counted repetition where V8 loops, so
+/// these modest JS sources are programs of tens of megabytes, past the
+/// crates' 10 MB default. v12 builds them; so does cpat-rs (DESIGN §6).
+/// v12's answers, recorded under tsx.
+#[test]
+fn modest_counted_repetitions_build_and_match_as_in_v12() {
+    let rows: &[(&str, &str, &str)] = &[
+        (r"\p{L}{1,500}", "abc", "abc"),
+        (r"\p{L}{1,1000}", "abc", "abc"),
+        (".{0,65535}", "abc", "abc"),
+        // The backtracking engine hands its plain parts to the same limits.
+        (r"(?=a)\p{L}{1,1000}", "abc", "abc"),
+        (r"(a)\1.{0,65535}", "aab", "aab"),
+    ];
+    for &(source, text, expected) in rows {
+        let mut pattern = re("r", source);
+        assert_eq!(
+            parse_value(&mut pattern, text).as_deref(),
+            Some(expected),
+            "{source}"
+        );
+    }
+    let mut thousand = re("r", r"\p{L}{1000}");
+    let letters = "a".repeat(1001);
+    assert_eq!(parse_value(&mut thousand, &letters), Some("a".repeat(1000)));
+}
+
+/// A program past the size limit is refused when built, not compiled until
+/// memory runs out. JS builds it (and matches nothing shorter).
+#[test]
+fn a_program_too_large_to_compile_is_a_build_error() {
+    let error = Regex::new("huge", "a{4294967295}").unwrap_err();
+    assert_eq!(
+        error,
+        PatternError::InvalidRegex {
+            name: "huge".to_string(),
+            source: "a{4294967295}".to_string(),
+            reason: "Compiled regex exceeds size limit of 134217728 bytes.".to_string(),
+        }
+    );
+}
+
+/// The translator's refusal past 256 is the one nesting boundary for the
+/// linear engine: v12 builds 250, 255 and 256 nested groups, and so does
+/// cpat-rs; 257 is the documented refusal (DESIGN §6).
+#[test]
+fn groups_nest_256_deep_and_no_deeper() {
+    let nested = |depth: usize| format!("{}a{}", "(".repeat(depth), ")".repeat(depth));
+    for depth in [250, 255, 256] {
+        let mut pattern = re("r", &nested(depth));
+        assert_eq!(
+            parse_value(&mut pattern, "a").as_deref(),
+            Some("a"),
+            "{depth}"
+        );
+    }
+    assert_eq!(
+        Regex::new("r", &nested(257)).unwrap_err(),
+        PatternError::InvalidRegex {
+            name: "r".to_string(),
+            source: nested(257),
+            reason: "JavaScript accepts it, but cpat-rs can't match it the same way: \
+                     groups nested more than 256 deep"
+                .to_string(),
+        }
+    );
+}
+
+/// The innermost of 256 groups may hold an alternation, quantifiers, a
+/// class and a word boundary, each a level more in Rust.
+#[test]
+fn the_innermost_of_256_groups_may_hold_anything() {
+    let source = format!(r"{}x|[a-z]+|\bc|.{}", "(".repeat(256), ")".repeat(256));
+    let mut pattern = re("r", &source);
+    assert_eq!(parse_value(&mut pattern, "abc").as_deref(), Some("abc"));
+    assert_eq!(parse_value(&mut pattern, "#").as_deref(), Some("#"));
+}
+
+/// The `regex` crate's compiler recurses once per level, and a quantified
+/// group is three (`(?:(…))+`), so its nesting limit, which keeps a deep
+/// source from overflowing the stack, refuses 88 quantified groups that JS
+/// builds (a documented deviation, DESIGN §6).
+#[test]
+fn quantified_groups_nest_87_deep_and_no_deeper() {
+    let quantified = |depth: usize| format!("{}a{}", "(".repeat(depth), ")+".repeat(depth));
+    let mut deepest = re("r", &quantified(87));
+    assert_eq!(parse_value(&mut deepest, "aa").as_deref(), Some("aa"));
+    let error = Regex::new("r", &quantified(88)).unwrap_err().to_string();
+    assert!(
+        error.ends_with("exceed the maximum number of nested parentheses/brackets (264)"),
+        "{error}"
+    );
+}
+
+/// fancy-regex parses the source itself and refuses more than 62 nested
+/// groups, a limit it doesn't let us raise (DESIGN §6).
+#[test]
+fn a_backtracking_regex_nests_62_groups_deep_and_no_deeper() {
+    let looking = |depth: usize| format!("(?=a){}a{}", "(".repeat(depth), ")".repeat(depth));
+    let mut deepest = re("r", &looking(62));
+    assert_eq!(parse_value(&mut deepest, "a").as_deref(), Some("a"));
+    let error = Regex::new("r", &looking(63)).unwrap_err().to_string();
+    assert!(error.ends_with("Pattern too deeply nested"), "{error}");
+}
+
 /// The value `pattern` matches at the start of `text`, if any.
 fn parse_value(pattern: &mut Pattern, text: &str) -> Option<String> {
     let mut cursor = Cursor::new(text);

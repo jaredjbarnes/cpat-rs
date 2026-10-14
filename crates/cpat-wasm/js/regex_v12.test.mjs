@@ -6,6 +6,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Cursor, Regex } from "./index.mjs";
 
+const nested = (depth) => "(".repeat(depth) + "a" + ")".repeat(depth);
+const quantified = (depth) => "(".repeat(depth) + "a" + ")+".repeat(depth);
+const looking = (depth) => "(?=a)" + nested(depth);
+
 const V12 = [
   ["a.b", "a\rb", null],
   ["a.b", "a\nb", null],
@@ -139,16 +143,38 @@ const V12 = [
   ["[\\w-a]", "a", "error"],
   ["\\e", "e", "error"],
   ["(?i)a", "a", "error"],
+  // Programs of tens of megabytes in Rust, which writes out every copy of a
+  // counted repetition (gap 3-1).
+  ["\\p{L}{1,500}", "abc", "abc"],
+  ["\\p{L}{1,1000}", "abc", "abc"],
+  [".{0,65535}", "abc", "abc"],
+  ["(?=a)\\p{L}{1,1000}", "abc", "abc"],
+  ["(a)\\1.{0,65535}", "aab", "aab"],
+  // Groups nested as deep as the translator allows (gap 3-1).
+  [nested(250), "a", "a"],
+  [nested(255), "a", "a"],
+  [nested(256), "a", "a"],
+  ["(".repeat(256) + "x|[a-z]+|\\bc|." + ")".repeat(256), "abc", "abc"],
+  [quantified(87), "aa", "aa"],
+  [looking(62), "a", "a"],
 ];
 
-// JavaScript accepts these, but no Rust engine matches them as it does, so
-// cpat-rs refuses to build them (DESIGN §6). v12's answers, for the record.
+// JavaScript accepts these, but cpat-rs refuses to build them (DESIGN §6):
+// no Rust engine matches the first ones as JS does, and the last ones pass
+// the limits that keep a build from exhausting memory or the stack. v12's
+// answers, for the record.
 const REFUSED = [
   ["(?:(a)|b)+\\1", "abb", "abb"],
   ["(?:(a?))*b\\1", "aba", "aba"],
   ["(a)(?<=\\1)", "a", "a"],
   ["\\p{CWKCF}", "A", "A"],
   ["\\p{sc=Zzzz}", "\u0378", "\u0378"],
+  // Past the size limit, the translator's 256 groups, the `regex` crate's
+  // nesting limit and fancy-regex's (gap 3-1).
+  ["a{4294967295}", "aaa", null],
+  [nested(257), "a", "a"],
+  [quantified(88), "aa", "aa"],
+  [looking(63), "a", "a"],
 ];
 
 // Where cpat-rs follows the spec and V8 doesn't: [source, text, v12's

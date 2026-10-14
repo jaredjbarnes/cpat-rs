@@ -24,7 +24,7 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 16, gaps 1-1 to 1-6)
+## What's in the box (milestone 16, gaps 1-1 to 3-1)
 
 `Literal`, `Regex`, `Sequence`, `Choice`, `Repeat` (unbounded or bounded, with an optional
 divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for recursive
@@ -36,7 +36,11 @@ A `Regex` source is JavaScript regex syntax, as v12 compiles it (the `u` flag): 
 JS reads it, so what JS rejects (`[\d-z]`, `\p{letter}`, `a{,3}`) is a `PatternError`, and `.`,
 `\s`, `\d`, `\w`, `\b`, `\cX`, `(?ims-ims:…)` and backreferences mean what they mean in JS. The
 few sources JS accepts that no Rust engine matches the same way (a backreference to a group a
-repetition resets) are refused when built; DESIGN.md §6 has the full mapping.
+repetition resets) are refused when built; DESIGN.md §6 has the full mapping. A compiled regex
+may take 128 MiB, so `\p{L}{1,1000}` and `.{0,65535}` build, and groups nest 256 deep; a
+program past that size (`a{4294967295}`) or a translation nested past what the compiler's stack
+survives (88 nested quantified groups) is a build error rather than an out-of-memory or
+stack-overflow abort (DESIGN.md §6, "Compile limits").
 
 Everything below behaves as clarity-pattern-parser v12 does, checked by running both on 156 364
 cases from real test suites and a generated non-ASCII corpus

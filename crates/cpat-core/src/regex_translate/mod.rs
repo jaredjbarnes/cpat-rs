@@ -20,6 +20,7 @@ mod mode;
 mod parser;
 
 pub(crate) use error::TranslateError;
+pub(crate) use parser::MAX_DEPTH as MAX_GROUP_DEPTH;
 
 /// Which engine a translation is for. They spell an ASCII word boundary
 /// differently: `regex` switches Unicode off for it (`(?-u:\b)`), which
