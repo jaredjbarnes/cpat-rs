@@ -1197,6 +1197,78 @@ fn deviation_a_branching_greedy_join_stops_at_the_budget() {
     assert!(options(&suggestion).is_empty());
 }
 
+#[test]
+fn deviation_a_never_ending_join_with_a_way_out_offers_one_option_per_depth() {
+    // DESIGN §17. A greedy child of a repeat followed by ";": every join
+    // may leave the loop for ";", so each depth below `MAX_GREEDY_DEPTH`
+    // offers one option and only the innermost join offers nothing: 32
+    // options, "a;" to 32 "a"s and ";". v12 throws RangeError (checked).
+    let pattern = seq(
+        "s",
+        vec![
+            rep("r", lit("a", "a"), RepeatOptions::default()),
+            lit("semi", ";"),
+        ],
+    );
+    let suggestion = auto_complete_with(pattern, &["a"]).suggest_for("");
+
+    let mut texts: Vec<String> = suggestion.options.iter().map(|o| o.text.clone()).collect();
+    texts.sort_by_key(String::len);
+    let expected: Vec<String> = (1..=32).map(|n| format!("{};", "a".repeat(n))).collect();
+    assert_eq!(texts, expected);
+}
+
+/// A sequence of `n` greedy literals `g` and then a literal `x`.
+fn greedy_chain(n: usize) -> AutoComplete {
+    let names: Vec<String> = (0..n).map(|i| format!("g{i}")).collect();
+    let mut children: Vec<Pattern> = names.iter().map(|name| lit(name, "g")).collect();
+    children.push(lit("x", "x"));
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    auto_complete_with(seq("s", children), &names)
+}
+
+#[test]
+fn a_finite_chain_of_32_greedy_joins_completes() {
+    // v12 offers the whole chain: 32 "g"s and "x".
+    let suggestion = greedy_chain(32).suggest_for("");
+
+    let texts: Vec<&str> = suggestion.options.iter().map(|o| o.text.as_str()).collect();
+    assert_eq!(texts, [format!("{}x", "g".repeat(32))]);
+}
+
+#[test]
+fn deviation_a_finite_chain_of_33_greedy_joins_offers_nothing() {
+    // DESIGN §17. The 33rd join is past `MAX_GREEDY_DEPTH`, offers
+    // nothing, and so does the chain. v12 offers 33 "g"s and "x" (checked;
+    // it completes 40 as well).
+    let suggestion = greedy_chain(33).suggest_for("");
+
+    assert!(suggestion.options.is_empty());
+}
+
+#[test]
+fn deviation_a_finite_join_of_more_than_10000_places_is_cut_short() {
+    // DESIGN §17. A greedy "a" joined with a choice of 12 000 keywords:
+    // the choice and its keywords are places inside the join, counted
+    // against `BUDGET` (10 000) in the order they are expanded, so the
+    // choice and its first 9 999 keywords are joined and the rest offer
+    // nothing. v12 offers all 12 000, "ak00000" to "ak11999" (checked).
+    let keywords: Vec<String> = (0..12_000).map(|i| format!("k{i:05}")).collect();
+    let pattern = seq(
+        "s",
+        vec![
+            lit("g", "a"),
+            choice("kw", keywords.iter().map(|k| lit("kw", k)).collect()),
+        ],
+    );
+    let suggestion = auto_complete_with(pattern, &["g"]).suggest_for("");
+
+    let texts: Vec<&str> = suggestion.options.iter().map(|o| o.text.as_str()).collect();
+    assert_eq!(texts.len(), 9_999);
+    assert_eq!(texts.first(), Some(&"ak00000"));
+    assert_eq!(texts.last(), Some(&"ak09998"));
+}
+
 fn auto_complete_with(pattern: Pattern, greedy_names: &[&str]) -> AutoComplete {
     auto_complete(pattern, greedy(greedy_names))
 }
@@ -1442,8 +1514,10 @@ fn locale_compare_ignores_control_characters_and_ties_stay_in_order() {
 
 #[test]
 fn a_large_choice_offers_every_literal() {
-    // Only greedy joins are budgeted: a pattern expands to its leaves once
-    // each, so a long keyword list is never cut short.
+    // Only places inside a greedy join are budgeted: outside one, a pattern
+    // expands to its leaves once each, so a long keyword list offered on
+    // its own is never cut short (inside a join it is, see
+    // `deviation_a_finite_join_of_more_than_10000_places_is_cut_short`).
     let keywords: Vec<String> = (0..20_000).map(|i| format!("k{i:05}")).collect();
     let pattern = choice("keywords", keywords.iter().map(|k| lit("kw", k)).collect());
     let suggestion = suggest(pattern, "k1999");

@@ -8,7 +8,7 @@
 mod common;
 
 use common::*;
-use cpat_core::{Cursor, NodeKind, Pattern, TakeUntil, Tokenizable};
+use cpat_core::{Cursor, Grammar, GrammarOptions, NodeKind, Pattern, TakeUntil, Tokenizable};
 
 fn script_content() -> Pattern {
     take_until("script-content", lit("close-script-tag", "</script"))
@@ -279,8 +279,10 @@ fn a_successful_take_is_the_leaf_match() {
 
 #[test]
 fn the_terminator_is_probed_inside_the_take_until_frame_at_every_grapheme() {
-    // v12 makes the take-until its terminator's parent, so the recursion
-    // guards see it on the chain. Every probe starts on a new grapheme.
+    // The terminator is the take-until's child 0, so its probe runs in the
+    // take-until's frame and the recursion guards see it on the chain (v12
+    // leaves the terminator parentless, DESIGN §14). Every probe starts on
+    // a new grapheme.
     let (spy, seen) = frame_spy();
     let mut pattern = take_until("t", spy);
     let id = pattern.id();
@@ -316,6 +318,49 @@ fn a_reference_finds_a_pattern_inside_the_terminator() {
         exec_shape(&mut line, "ab;"),
         "line:sequence@0..3[body:take-until@0..2 semi:literal@2..3]"
     );
+}
+
+#[test]
+fn deviation_a_reference_in_the_terminator_resolves_through_the_context() {
+    // DESIGN §14. v12's TakeUntil never makes itself its terminator's
+    // parent, so a Reference there can't walk up to the Context and v12's
+    // exec throws "Couldn't find 'end' pattern within tree." (checked with
+    // v12 on this pattern and text). Here names resolve against the scope
+    // the Context pushed, wherever the reference sits.
+    let mut pattern = context(
+        "ctx",
+        seq(
+            "s",
+            vec![
+                take_until("t", reference_to("end", "end")),
+                reference("end"),
+            ],
+        ),
+        vec![lit("end", "end")],
+    );
+
+    assert_eq!(
+        exec_shape(&mut pattern, "abc end"),
+        "s:sequence@0..7[t:take-until@0..4 end:literal@4..7]"
+    );
+}
+
+#[test]
+fn deviation_a_terminator_naming_a_later_rule_resolves_in_a_grammar() {
+    // DESIGN §14. A rule defined later is a Reference in the terminator;
+    // v12 throws "Couldn't find 'end' pattern within tree." on exec (checked
+    // with v12), cpat-rs finds the rule.
+    let patterns = Grammar::parse_string(
+        "t = ?->| end\nend = \"end\"\nline = t + end\n",
+        GrammarOptions::default(),
+    )
+    .expect("the grammar builds");
+    let mut line = patterns["line"].clone();
+
+    let result = line.exec("abc end");
+
+    assert!(result.pattern_error.is_none(), "{:?}", result.pattern_error);
+    assert_eq!(result.tree().unwrap().root().value(), "abc end");
 }
 
 #[test]

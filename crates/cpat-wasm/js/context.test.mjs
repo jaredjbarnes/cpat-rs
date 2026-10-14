@@ -3,7 +3,7 @@
 // with `node --test js/*.test.mjs` after building pkg-node. Where cpat
 // deliberately differs, the assertion says so (DESIGN §22).
 import { describe, test, expect } from "./testing/expect.mjs";
-import { patterns, Context, Literal, Reference, Sequence, Regex } from "./index.mjs";
+import { patterns, Context, Literal, Reference, Sequence, Regex, TakeUntil } from "./index.mjs";
 
 
 describe("Context", () => {
@@ -142,5 +142,30 @@ describe("Context", () => {
     const patterns = context.getPatterns();
     expect(patterns).toHaveLength(1);
     expect(patterns[0].name).toBe("x");
+  });
+});
+
+describe("Context deviations from v12 (DESIGN §14)", () => {
+  // v12's TakeUntil never makes itself its terminator's parent, so a
+  // Reference in the terminator can't walk up to the Context: v12's exec
+  // throws "Couldn't find 'end' pattern within tree." on both of these
+  // (checked by running v12). cpat resolves the name in the Context's scope.
+  test("a Reference in a TakeUntil terminator resolves through the Context", () => {
+    const body = new Sequence("s", [new TakeUntil("t", new Reference("end", "end")), new Reference("end")]);
+    const context = new Context("ctx", body, [new Literal("end", "end")]);
+
+    const { ast } = context.exec("abc end");
+
+    expect(ast?.children.map(n => [n.name, n.value])).toEqual([["t", "abc "], ["end", "end"]]);
+  });
+
+  test("a terminator naming a later grammar rule resolves", () => {
+    const { line } = patterns`
+            t = ?->| end
+            end = "end"
+            line = t + end
+        `;
+
+    expect(line.exec("abc end").ast?.value).toBe("abc end");
   });
 });

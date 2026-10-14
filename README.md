@@ -88,7 +88,7 @@ parse under the same `Limits` can make one (`Introspection::with_limits` for `ex
 
 `AutoComplete` suggests what could come next in a text, as v12's does: build it with a pattern
 and `AutoCompleteOptions` (`greedy_pattern_names` join a pattern's suggestions with what may
-follow it, `custom_tokens` add suggestions by pattern name, `disable_dedupe` keeps duplicates),
+follow it, up to 32 joins deep and 10 000 places per suggestion, DESIGN.md §17, `custom_tokens` add suggestions by pattern name, `disable_dedupe` keeps duplicates),
 then `suggest_for(text)` returns a `Suggestion`: whether the text is complete, the options (each
 a `text` to insert at `start_index`, a byte offset, with the tokens it is made of and the path
 of the pattern each came from), where the text stops making sense (`error`, `error_at_index`),
@@ -122,8 +122,8 @@ which inserts a cut), `a | b`, `(p)+`, `(p)*`, `(p, divider trim){m,n}`, `!p`, `
 `?->| p`, `["{"] p ["}"]` and `["{"] ... ["}"]`, groups, aliases and exports. Mistakes are a
 `GrammarError` with v12's message: a syntax error with its line, column and hint, a removed `<|>`,
 a name no rule defines, rules that only rename each other in a loop, and a literal an earlier,
-shorter one hides (`"=" | "=="`). Text nested deeper than 10 levels of parentheses, or more
-than 256 operators deep, is refused too (`GrammarError::NestedTooDeep`), where v12 overflows or
+shorter one hides (`"=" | "=="`). Text nested deeper than 10 levels of parentheses (9 of
+divided repeats, 7 of blocks), or more than 256 operators deep, is refused too (`GrammarError::NestedTooDeep`), where v12 overflows or
 runs out of memory. The hand-written cpat grammar itself is `cpat_grammar()`.
 
 ```rust

@@ -116,6 +116,14 @@
 > skipped between two leaves is incomplete in both (§5e); every generated case also runs
 > AutoComplete on the whole input, and a `split-graphemes` grammar puts each joiner after each
 > character (§23).
+> Gap 1-7 (every known deviation recorded accurately) is implemented. Each correction was checked
+> by running v12 and pinned by a test: a `Reference` inside a `TakeUntil` terminator resolves
+> here and throws in v12 (§14, Rust and JS); a literal that runs out of text inside an emoji
+> reports its error one UTF-16 unit earlier than v12 in JS (§22); the query's index attributes
+> are byte offsets in Rust (§21); a finite greedy join deeper than 32 joins offers nothing and
+> one of more than 10 000 places is cut short, where v12 completes both, and a never-ending
+> join with a way out offers 32 options (§17); and the text-nesting limit allows 10 levels of
+> parentheses, 9 of divided repeats, 7 of blocks and 255 `?->|` (§18).
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -832,7 +840,8 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
 ## 14. TakeUntil and Block *(milestone 6)*
 
 - **`TakeUntil` is v12's loop on half-open positions.** At each grapheme it probes the
-  terminator inside its own frame (v12 makes it the terminator's parent), then puts back the cut
+  terminator inside its own frame (the terminator is its child 0; v12 leaves the terminator
+  parentless, see the deviations below and §15), then puts back the cut
   it saw before the probe, resolves the error and rewinds: a probe is never kept, so nothing it
   commits survives (Cut.test.ts's TakeUntil case is pinned in `tests/cut.rs`). It stops at the
   first grapheme where the terminator returns a node (a terminator that succeeds without one, an
@@ -878,6 +887,21 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   that fails after the open must leave `pos` at the start, as v12's `cursor.index`) and CRLF as
   one grapheme in ASCII text (§5c); both now fail a test when removed.
 - **Deviations from v12:**
+  - *(Gap 1-7.)* A `Reference` inside a take-until's terminator resolves like any other
+    reference: against the scopes of the contexts around it (§11). v12's
+    `TakeUntil` never makes itself its terminator's parent (§15), so a reference there can't
+    walk up to a `Context` or to the root, and finds a name only inside the terminator itself:
+    `new Context("ctx", new Sequence("s", [new TakeUntil("t", new Reference("end", "end")),
+    new Reference("end")]), [new Literal("end", "end")]).exec("abc end")` throws "Couldn't find
+    'end' pattern within tree." in v12, and so does a grammar whose terminator names a rule
+    defined later (`t = ?->| end`, then `end = "end"`; a rule defined earlier is copied in and
+    works in both). Here both match `abc end`. *Why not reproduce the throw:* names resolve
+    against the scope the `Context` pushes, not through parent pointers (decisions 2 and 3), and a
+    failure only v12's missing link causes is a bug, not behavior a grammar relies on. Pinned in
+    `tests/take_until.rs` (`deviation_a_reference_in_the_terminator_…`,
+    `deviation_a_terminator_naming_a_later_rule_…`) and `js/context.test.mjs`. (A reference
+    elsewhere that names a pattern inside a terminator is found in both: v12's root search walks
+    `children`, which include the terminator; `a_reference_finds_a_pattern_inside_the_terminator`.)
   - *(No longer a deviation since gap 1-6.)* A block whose content is an absent `Optional` keeps
     only `open` and `close`, skipping the text between them, as in v12, and `exec` of `{1}` is
     no match with v12's error `[2, 3]` (§5e). Pinned in `tests/block.rs`.
@@ -953,8 +977,9 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   - v12's `TakeUntil` never makes itself its terminator's parent (it doesn't call
     `_assignChildrenToParent`), so the terminator has no parent there and records with a path
     that stops at it. Here the terminator is the take-until's child 0 like every other child,
-    so paths go through the take-until. The same missing link would stop a reference inside a
-    terminator from searching past it in v12. *Changed in milestone 9:* the leaf matches' tie
+    so paths go through the take-until. The same missing link stops a reference inside a
+    terminator from searching past it in v12, which then throws (§14's deviation).
+    *Changed in milestone 9:* the leaf matches' tie
     rule now follows v12's chain, which stops at the terminator (each kept match carries the
     length of the terminator's path it was recorded in, its `floor`, set by
     `Cursor::detached` around the probe). Milestone 7 made the terminator's parent the
@@ -1222,13 +1247,32 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   everything it would (a mutant that removed it survived every test, and no input can tell).
 - **Greedy joins are bounded, by counts.** v12 recurses without limit: a greedy pattern whose
   continuation leads back to it (a greedy child of a repeat; `list = item sep list?` through a
-  reference) recurses until it throws `RangeError`. Joins nest at most `MAX_GREEDY_DEPTH` (32)
-  deep and the innermost offers nothing, so the whole chain does, as a greedy pattern with
-  nothing after it does in v12. Joins that branch (`item = "a" | "b"`, both greedy, recursing)
-  make 2^32 places before that depth, so the places expanded inside joins are also counted:
-  past `BUDGET` (10 000) per composite suggestion a place offers nothing. Only places inside a
-  join count; outside one, a pattern expands to its leaves once each, which is linear in the
-  grammar, so a long keyword list is never cut short. Every v12 test joins a few dozen places.
+  reference) recurses until it throws `RangeError`. Here two counts bound every join, finite or
+  not (`intellisense/composite.rs`); neither can tell a finite join from a never-ending one, so
+  both also cut finite joins short (*corrected in gap 1-7*, which checked each case against
+  v12; the first text said only never-ending joins were affected):
+  - *Depth.* Joins nest at most `MAX_GREEDY_DEPTH` (32) deep: the join that would be the 33rd
+    offers nothing, as a greedy pattern with nothing after it does in v12, and so does a join
+    whose every continuation runs into it. A chain that never leaves the loop (a greedy child of a repeat with nothing
+    after the repeat; the list through a reference) therefore offers nothing. A chain with a way
+    out offers what the way out allows at each depth below the limit: a greedy `"a"` in a repeat
+    followed by `";"` offers 32 options, `a;` to 32 `a`s and `;` (v12 throws). A finite chain of
+    33 or more nested greedy joins (33 greedy literals in a row, then `x`) offers nothing, where
+    v12 offers the whole chain; 32 complete as in v12.
+  - *Places.* Joins that branch (`item = "a" | "b"`, both greedy, recursing) make 2^32 places
+    before that depth, so every place expanded inside a join (a pattern a join reaches, and each
+    of its leaves) is also counted, per composite suggestion, in the order they are expanded:
+    from the 10 001st (`BUDGET`) on, a place offers nothing. So a finite join of more than
+    10 000 places is cut short: a greedy `"a"` followed by a choice of 12 000 keywords offers
+    the choice's first 9 999 (the choice is the first place), where v12 offers all 12 000.
+    Places outside any join aren't counted (a pattern expands to its leaves once each, linear
+    in the grammar), so a keyword list offered on its own is never cut short (20 000 pinned).
+    *Why not complete finite joins:* telling a never-ending join from a long finite one would
+    need a structural cycle check across references (each turn through a reference is a new,
+    deeper place), and a finite join can still be exponential; a count gives the same answer on
+    every machine and bounds memory. A grammar that offers a very long list after a greedy
+    pattern can leave that pattern out of `greedyPatternNames`. Every v12 test joins a few
+    dozen places.
 - **Checked against v12** by running both (a TS runner against v12's `src` and a scratch Rust
   binary, reading one JSON spec of grammars, options and inputs, with shared instances where
   v12's tests share them) on 57 grammars and 364 inputs, many as every prefix of a full input:
@@ -1259,8 +1303,13 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   ready instead of checking the whole grammar a second time: on the TypeScript grammar the first
   suggestion went from about 10 ms to 0.5 ms (release build), the same as every later one. Same errors (an unknown name fails `new`, as before).
 - **Deviations from v12:**
-  - A greedy join that never ends offers nothing (above); v12 throws `RangeError`. Pinned in
-    `tests/autocomplete.rs`.
+  - A greedy join that never ends offers nothing, or, with a way out of the loop, one option per
+    depth below 32 (above); v12 throws `RangeError`. A finite chain of more than 32 nested
+    greedy joins offers nothing, and a finite join of more than 10 000 places is cut short to
+    its first places; v12 offers all of both (above). Pinned in `tests/autocomplete.rs`
+    (`deviation_a_greedy_join_that_never_ends_…`, `deviation_a_never_ending_join_with_a_way_out_…`,
+    `deviation_a_finite_chain_of_33_greedy_joins_…`, `deviation_a_finite_join_of_more_than_10000_…`,
+    `deviation_a_branching_greedy_join_…`).
   - Unknown names fail `AutoComplete::new` (above); v12 throws when a parse or query reaches
     one.
   - Characters outside the exact set above (ASCII, the letters of U+00C0–U+017F, their marks)
@@ -1349,10 +1398,16 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
     would change what `(a)+` means, merging them would change the trees (which must stay v12's),
     and sharing instances between references is §1's settled question. So the cpat grammar reads
     a grammar's text under `Limits { max_depth: 38 }`: 8 composites for a statement and 3 per
-    level of `( … )`, `[…] … […]` or `?->|`, which is 10 levels of parentheses (about 40 MB at
-    most). Past that the parse halts at once (§11) and the build fails with
+    level of `( … )`, which is 10 levels of parentheses (about 40 MB at most). Other constructs
+    cost the parse other amounts, so the same 38 allow 9 levels of divided repeats (`(p, d)+`
+    inside one another) and 7 of blocks (`[…] p […]` as a block's content), and fewer when they
+    mix. `?->|` is a prefix operator in the cpat grammar, a
+    loop in its parse rather than nesting, so only the builder's limit below bounds it (255 in a
+    row build). *Corrected in gap 1-7:* this said blocks and `?->|` cost 3 per level as
+    parentheses do. Past the limit the parse halts at once (§11) and the build fails with
     `GrammarError::NestedTooDeep` at the line and column where the level too many begins. The
-    deepest text in the fixture corpus needs 13 of the 38.
+    deepest text in the fixture corpus needs 13 of the 38. Each count is pinned in
+    `tests/grammar_depth.rs`; v12 builds all of them, one level more of each too.
   - *Operator runs overflow the builder.* Prefix and postfix operators (`!!!…`, `…???`,
     `… right right`) are a loop in the Pratt choice, not nesting in the parse, so the text is
     fine, but the builder recurses once per operator: 8000 `!` overflowed the 8 MB main stack, a
@@ -1368,7 +1423,8 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   - Nesting deeper than the limits above is `GrammarError::NestedTooDeep` ("[Invalid Grammar]
     the grammar nests too deeply at line L, column C; give the inner expression a rule of its
     own."). v12 has no such error: it builds 11 to about 15 levels of parentheses (with memory
-    doubling per level) and 256 `!` in a row, and throws a `RangeError` for 8000.
+    doubling per level), 8 levels of blocks, 10 of divided repeats, and 256 `!` or `?->|` in a
+    row, and throws a `RangeError` for 8000 `!`.
   - A repeat's divider and quantifier are its own children. v12 searches the repeat's whole
     subtree (`node.find`), so a repeat whose item is itself a repeat took the item's divider and
     quantifier: `x = (("a", ",")+, ";"){2}` built a `,`-divided one-or-more and refused
@@ -1546,6 +1602,11 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   The properties are v12's `Node` getters: `id`, `type`, `name`, `value`, `firstIndex`,
   `lastIndex`, `startIndex`, `endIndex`, `hasChildren`, `isLeaf`, and `parent`/`children`
   through their `toString()` (a node is its value; a list joins with commas).
+  *Deviation:* the four index attributes are the tree's byte offsets (§5), where v12's are
+  UTF-16 units, so on non-ASCII text they name other numbers: in `é b`, `b` starts at 3 here
+  and at 2 in v12, so `[startIndex>=2]` also selects the space here and `[endIndex>3]` selects
+  `b` and the root, where v12 selects nothing (checked; `index_attributes_are_byte_offsets` in
+  `tests/selector.rs`). The JS port (§22) reads v12's UTF-16 offsets, as v12 does.
   *Deviation:* any other name (a method, a private field such as `_value`) matches nothing,
   where v12 would read the JS function or field. No selector in v12's tests or docs does.
 - **A `Query` holds handles, not the tree.** Every method takes the `EditableTree` it reads or
@@ -1713,6 +1774,14 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   - The core's deviations show through: a literal sharing only a high surrogate fails at the
     start (§13, pinned in `js/utf16.test.mjs`), and options with characters outside cpat's
     collation tables sort after letters (§17, pinned in `js/compare_v12.test.mjs`).
+  - A literal that runs out of text inside an emoji fails at the emoji's start, one UTF-16 unit
+    before v12 (milestone 15; §17's positions). v12's `Literal` compares UTF-16 units, so `👍🏽`
+    against a text ending in `👍` gets one unit in and records its error's `lastIndex` at the
+    low surrogate; cpat compares `char`s and records it at the emoji's start. On
+    `Jane loves 👍` the suggestion's error is `[11, 11]` and its `errorAtIndex` 11 here, `[12,
+    12]` and 12 in v12, and the cursor's recorded `👍🏽` error is `[11, 11]` rather than
+    `[11, 12]`; the options (`🏽` at 13) are the same. Pinned in `js/autocomplete.test.mjs`
+    (`cpatExpects`, and the test that only that case and emoji order change).
   - Pattern ids are numbers as text (`"12"`), v12's are `type-n`. A choice's operator, which
     has no id of its own, answers with its place.
   - `CustomPattern` is cpat's (v12's custom patterns implement the whole `Pattern` interface,

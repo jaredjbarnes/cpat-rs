@@ -378,3 +378,30 @@ fn filter_not_and_parents_of_nothing_are_nothing() {
     assert!(selector.not(&tree, &none).is_empty());
     assert!(selector.parents(&tree, &none).is_empty());
 }
+
+#[test]
+fn index_attributes_are_byte_offsets() {
+    // DESIGN §21: the tree's offsets are bytes (§5), so on non-ASCII text
+    // an index attribute names other numbers than v12's UTF-16 ones. "b"
+    // after "é " starts at byte 3 and the space at 2; in v12 they start at
+    // 2 and 1, and the text ends at 3.
+    let mut pattern = common::seq(
+        "s",
+        vec![
+            common::lit("e", "é"),
+            common::lit("space", " "),
+            common::lit("b", "b"),
+        ],
+    );
+    let result = pattern.exec("é b");
+    let tree = result.tree().unwrap().to_mut();
+    let root = tree.root().unwrap();
+
+    let at = |selector: &str| {
+        let found = Selector::new(selector).unwrap().find(&tree, &[root]);
+        joined(&tree, &found)
+    };
+    // v12: "b" alone, and nothing.
+    assert_eq!(at("[startIndex>=2]"), " ,b");
+    assert_eq!(at("[endIndex>3]"), "b,é b");
+}

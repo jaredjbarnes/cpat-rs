@@ -71,6 +71,70 @@ fn a_take_until_chain_is_nesting_too() {
     ));
 }
 
+// Each construct costs the cpat grammar's parse its own number of levels,
+// so the 38 allow different depths of each (v12 builds all of these).
+
+fn blocks(levels: usize) -> String {
+    format!(
+        "x = {}\"a\"{}",
+        "[\"{\"] ".repeat(levels),
+        " [\"}\"]".repeat(levels)
+    )
+}
+
+fn divided_repeats(levels: usize) -> String {
+    let mut pattern = "\"a\"".to_string();
+    for _ in 0..levels {
+        pattern = format!("({pattern}, \",\")+");
+    }
+    format!("x = {pattern}")
+}
+
+#[test]
+fn seven_levels_of_blocks_build() {
+    let mut patterns = build(&blocks(7)).expect("seven levels are allowed");
+    let text = format!("{}a{}", "{".repeat(7), "}".repeat(7));
+    let result = patterns["x"].exec(&text);
+    assert_eq!(
+        result.tree().map(|tree| tree.root().value()),
+        Some(text.as_str())
+    );
+}
+
+#[test]
+fn eight_levels_of_blocks_are_refused_at_the_innermost_content() {
+    // `x = ` and eight `["{"] ` end at column 52; the content is at 53.
+    assert_eq!(build(&blocks(8)).unwrap_err(), nested_too_deep(1, 53));
+}
+
+#[test]
+fn nine_levels_of_divided_repeats_build() {
+    let mut patterns = build(&divided_repeats(9)).expect("nine levels are allowed");
+    let result = patterns["x"].exec("a");
+    assert_eq!(result.tree().map(|tree| tree.root().value()), Some("a"));
+}
+
+#[test]
+fn ten_levels_of_divided_repeats_are_refused_at_the_innermost_divider() {
+    // `x = `, ten `(`, `"a", ` end at column 19; the divider is at 20.
+    assert_eq!(
+        build(&divided_repeats(10)).unwrap_err(),
+        nested_too_deep(1, 20)
+    );
+}
+
+#[test]
+fn take_until_is_an_operator_so_only_the_builder_limits_it() {
+    // `?->|` is a prefix operator in the cpat grammar: a run of them is a
+    // loop in its parse, not nesting, so 255 build and the 256th is
+    // refused at the operand, as a run of `!` is.
+    assert!(build(&format!("x = {}\"a\"", "?->| ".repeat(255))).is_ok());
+    assert_eq!(
+        build(&format!("x = {}\"a\"", "?->| ".repeat(256))).unwrap_err(),
+        nested_too_deep(1, 4 + 256 * 5 + 1)
+    );
+}
+
 // Prefix and postfix operators nest the built pattern without nesting the
 // cpat grammar's parse, so the builder has its own limit: 256 patterns
 // inside one another, the innermost operand included.

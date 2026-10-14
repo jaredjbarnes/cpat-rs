@@ -4,8 +4,12 @@
 use crate::halt::Limits;
 
 /// The most composites the cpat grammar may have parsing at once while it
-/// reads a grammar's text: a statement takes 8 and each level of `( … )`,
-/// `[…] … […]` or `?->|` 3 more, so this allows 10 levels of parentheses.
+/// reads a grammar's text: a statement takes 8 and each level of `( … )` 3
+/// more, so this allows 10 levels of parentheses. Other constructs cost
+/// other amounts: it allows 9 levels of divided repeats (`(p, d)+`) and 7
+/// of blocks (`[…] p […]`), while `?->|` is a prefix operator, a loop in
+/// the parse rather than nesting, so only `MAX_BUILD_DEPTH` bounds a run
+/// of it (all pinned in `tests/grammar_depth.rs`).
 ///
 /// Why so few: `patternExpr` tries `( p , divider )+` before `( p )`, so
 /// every `(` parses its whole inside twice, and every reference reached
