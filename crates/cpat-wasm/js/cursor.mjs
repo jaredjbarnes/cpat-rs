@@ -25,8 +25,23 @@ export function setPlaceWrapper(wrap) {
 
 const NOTHING = Object.freeze({ pattern: null, node: null });
 
+// v12's "nothing matched": a history starts with one empty leaf match,
+// which the first recorded match replaces, so `leafMatch` is never
+// undefined. Its own object per history, as v12's is.
+function noLeafMatches() {
+  return [{ pattern: null, node: null }];
+}
+
 function emptyHistory() {
-  return { error: null, furthestError: null, errors: [], records: [], leafMatches: [], rootMatch: null, matches: [] };
+  return {
+    error: null,
+    furthestError: null,
+    errors: [],
+    records: [],
+    leafMatches: noLeafMatches(),
+    rootMatch: null,
+    matches: [],
+  };
 }
 
 // v12's `_charMap` and `_charSize`: for every UTF-16 unit, where its
@@ -123,7 +138,7 @@ export class Cursor {
 
   get leafMatch() {
     const leaves = this.leafMatches;
-    return leaves.length === 0 ? NOTHING : leaves[leaves.length - 1];
+    return leaves[leaves.length - 1];
   }
 
   get rootMatch() {
@@ -386,7 +401,7 @@ export class Cursor {
       furthestError: error(raw.furthestError),
       errors: raw.errors.map(error),
       records,
-      leafMatches: raw.leafMatches.map(found),
+      leafMatches: raw.leafMatches.length === 0 ? noLeafMatches() : raw.leafMatches.map(found),
       rootMatch: found(raw.rootMatch),
       matches,
     };

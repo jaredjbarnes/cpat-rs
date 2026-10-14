@@ -669,3 +669,88 @@ fn only_a_choice_has_roles() {
     );
     assert_eq!(roles_at(&options(), &[7]), None);
 }
+
+// ─── v12's build(): a reference alternative that names nothing ───
+// Each answer below is v12's, from running `build()` on the same pattern.
+
+fn check_alternatives_at(root: &Pattern, path: &[u32]) -> Result<(), String> {
+    root.introspect()
+        .check_alternatives(&PatternPath::new(path))
+        .map_err(|error| match error {
+            cpat_core::PatternError::UnknownReference { target, .. } => target,
+            other => other.to_string(),
+        })
+}
+
+#[test]
+fn check_alternatives_reports_a_reference_alternative_that_names_nothing() {
+    // v12: `new Expression("x", [new Reference("nope"), n]).build()` throws
+    // "Couldn't find 'nope' pattern within tree."
+    let root = choice("x", vec![reference("nope"), lit("n", "1")]);
+
+    assert_eq!(check_alternatives_at(&root, &[]), Err("nope".to_string()));
+}
+
+#[test]
+fn check_alternatives_sees_through_right_association() {
+    let root = choice("x", vec![right(reference("nope")), lit("n", "1")]);
+
+    assert_eq!(check_alternatives_at(&root, &[]), Err("nope".to_string()));
+}
+
+#[test]
+fn check_alternatives_leaves_deeper_references_to_the_parse() {
+    // v12's build() resolves only the alternatives themselves: these two
+    // build without a throw (their exec throws).
+    let in_sequence = choice(
+        "x",
+        vec![
+            seq("s", vec![lit("a", "a"), reference("nope")]),
+            lit("n", "1"),
+        ],
+    );
+    let in_operator = choice(
+        "x",
+        vec![
+            seq("p", vec![lit("m", "-"), reference("x"), reference("nope")]),
+            lit("n", "1"),
+        ],
+    );
+
+    assert_eq!(check_alternatives_at(&in_sequence, &[]), Ok(()));
+    assert_eq!(check_alternatives_at(&in_operator, &[]), Ok(()));
+    assert!(in_sequence.check().is_err());
+}
+
+#[test]
+fn check_alternatives_resolves_from_the_place_as_a_parse_would() {
+    // v12: a child expression's reference finds a sibling through its
+    // parent, and finds the expression itself.
+    let sibling = seq(
+        "s",
+        vec![
+            choice("x", vec![reference("y"), lit("n", "1")]),
+            lit("y", "y"),
+        ],
+    );
+    let missing = seq(
+        "s",
+        vec![choice("x", vec![reference("nope"), lit("n", "1")])],
+    );
+    let itself = choice("x", vec![reference("x"), lit("n", "1")]);
+
+    assert_eq!(check_alternatives_at(&sibling, &[0]), Ok(()));
+    assert_eq!(
+        check_alternatives_at(&missing, &[0]),
+        Err("nope".to_string())
+    );
+    assert_eq!(check_alternatives_at(&itself, &[]), Ok(()));
+}
+
+#[test]
+fn check_alternatives_is_ok_anywhere_but_a_choice() {
+    let root = seq("s", vec![reference("nope")]);
+
+    assert_eq!(check_alternatives_at(&root, &[]), Ok(()));
+    assert_eq!(check_alternatives_at(&root, &[9]), Ok(()));
+}

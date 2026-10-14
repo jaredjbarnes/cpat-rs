@@ -13,6 +13,7 @@ use cpat_core::{ChoiceRole, Handle, Introspection, Pattern, PatternPath};
 use wasm_bindgen::prelude::*;
 
 use crate::JsPattern;
+use crate::exec_result::thrown_message;
 use crate::host::PatternPredicate;
 
 /// Paths as one flat array for JS: each path's length, then its steps.
@@ -125,6 +126,17 @@ impl JsPattern {
                 })
                 .collect(),
         )
+    }
+
+    /// v12 `Expression.build()` on the choice at `path`: throws v12's
+    /// message when an alternative is a reference that names nothing,
+    /// resolved from this place as a parse would. Nothing to do otherwise:
+    /// the choice is classified already (DESIGN §22).
+    #[wasm_bindgen(js_name = buildAt)]
+    pub fn build_at(&self, path: Vec<u32>) -> Result<(), JsError> {
+        Introspection::new(&self.inner)
+            .check_alternatives(&PatternPath::new(&path))
+            .map_err(|error| JsError::new(&thrown_message(&error)))
     }
 
     /// A choice's alternatives as they were given (v12 `originalPatterns`),

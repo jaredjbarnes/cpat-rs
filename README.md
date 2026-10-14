@@ -373,7 +373,10 @@ const grammar = await Grammar.parse(`import { name } from "names.cpat"\nhi = "hi
   `infixPatterns` (places among its `children`) and `originalPatterns`; and a `Cursor` that steps
   a grapheme at a time (`currentChar`, `next`, `previous`, `getCharStartIndex`, …) with the
   parser's own boundaries, plus v12's `recordErrorAt`/`recordMatch`/choice-scope methods for
-  code that drives a cursor by hand. `js/index.test.mjs` checks every public member of v12's
+  code that drives a cursor by hand (a cursor that matched nothing has v12's one empty leaf
+  match). `Expression.build()` throws v12's message for an alternative that is a reference naming
+  nothing; its accessors are filled before `build()`, where v12's are empty (DESIGN.md §22).
+  `js/index.test.mjs` checks every public member of v12's
   `Cursor` and pattern classes; the two not here are listed in DESIGN.md §22.
 - `AutoComplete.suggestFor(text)` answers v12's `Suggestion`: `options` (`text`, `startIndex` in
   UTF-16, and `suggestionSequence` segments whose `pattern` is a place with `name` and `type`),

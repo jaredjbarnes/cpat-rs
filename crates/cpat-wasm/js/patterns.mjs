@@ -77,10 +77,14 @@ export class Expression extends PatternBase {
     return this._originalPatterns;
   }
 
-  /** v12 classifies on the first parse or on `build()`. Here the accessors
-   * classify when first read (a reference alternative resolved as a parse
-   * would), so there is nothing left to do. */
-  build() {}
+  /** v12 classifies on the first parse or on `build()`, and throws v12's
+   * `Couldn't find 'x' pattern within tree.` when an alternative is a
+   * reference that names nothing. Here the accessors classify when first
+   * read (DESIGN §22), so what is left is that check, made from this place
+   * as a parse would resolve the names. */
+  build() {
+    this._root.buildAt(this._path);
+  }
 
   _childrenWithRole(role) {
     this._byRole ??= {};

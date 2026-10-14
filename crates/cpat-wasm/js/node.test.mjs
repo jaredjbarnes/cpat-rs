@@ -3,7 +3,7 @@
 // with `node --test js/*.test.mjs` after building pkg-node. Where cpat
 // deliberately differs, the assertion says so (DESIGN §22).
 import { describe, test, expect } from "./testing/expect.mjs";
-import { Node } from "./index.mjs";
+import { Node, patterns } from "./index.mjs";
 
 
 describe("Node", () => {
@@ -552,5 +552,23 @@ describe("Node", () => {
 
     expect(shorter.isEqual(longer)).toBe(false);
     expect(longer.isEqual(shorter)).toBe(false);
+  });
+});
+
+// v12's order, printed by running v12's src with tsx on the same grammar:
+// a node's children (each subtree first) before the node itself.
+describe("Node findAll order, compared with v12", () => {
+  test("children before their parent, over an operator tree", () => {
+    const { e } = patterns`
+      n = /\\d/
+      add = e + "+" + e
+      mul = e + "*" + e
+      e = mul | add | n
+    `;
+    const { ast } = e.exec("1+2*3+4");
+
+    const order = ast.findAll(() => true).map(node => `${node.name}:${node.value}`);
+
+    expect(order.join(" ")).toBe("n:1 +:+ n:2 *:* n:3 mul:2*3 add:1+2*3 +:+ n:4 add:1+2*3+4");
   });
 });

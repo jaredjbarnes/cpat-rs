@@ -34,6 +34,7 @@ use std::rc::Rc;
 use crate::halt::Limits;
 use crate::name::Name;
 use crate::pattern::Pattern;
+use crate::pattern_error::PatternError;
 use crate::pattern_id::{Meta, PatternId};
 use crate::pattern_path::PatternPath;
 use crate::patterns::ChoiceRole;
@@ -192,6 +193,18 @@ impl<'r> Introspection<'r> {
         self.start()
             .find_from(&self.root_loc(), &predicate)
             .map(|loc| handle(&loc))
+    }
+
+    /// v12's `Expression.build()`: classifying the choice at `path`
+    /// resolves each alternative that is a reference, and one that names
+    /// nothing is an error (v12 throws). `Ok` for any other place, and for
+    /// a reference deeper inside an alternative: `Pattern::check` and
+    /// `exec` report those.
+    pub fn check_alternatives(&self, path: &PatternPath) -> Result<(), PatternError> {
+        match self.start().walk(path) {
+            Some(loc) => self.unresolved_alternative(&loc).map_or(Ok(()), Err),
+            None => Ok(()),
+        }
     }
 
     /// What each child of the choice at `path` is, in `Pattern::at_path`

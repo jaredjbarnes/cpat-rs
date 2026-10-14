@@ -124,6 +124,12 @@
 > one of more than 10 000 places is cut short, where v12 completes both, and a never-ending
 > join with a way out offers 32 options (§17); and the text-nesting limit allows 10 levels of
 > parentheses, 9 of divided repeats, 7 of blocks and 255 `?->|` (§18).
+> Gap 2-1 (JS edge parity) is implemented; see §22's "JS edges". A cursor that matched nothing
+> has v12's one empty leaf match (`[{ pattern: null, node: null }]`, which is `leafMatch`);
+> `Expression.build()` throws v12's `Couldn't find 'x' pattern within tree.` for an alternative
+> that is a reference naming nothing (wasm `buildAt` over `Introspection::check_alternatives`);
+> the role accessors stay filled before `build()`, a recorded deviation; and `Node.findAll`'s
+> children-before-parent order is pinned against v12.
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -1818,7 +1824,7 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
     `Choice` accessors:* a choice with a reference alternative stays unclassified until its
     first parse, and v12's `build()` classifies on demand; the introspection classifies as that
     parse would (pinned against the `Choice` accessors in `tests/introspect_choice.rs`).
-    `build()` is there and does nothing. `originalPatterns` are copies of the alternatives as
+    `build()` only checks (see "JS edges" below). `originalPatterns` are copies of the alternatives as
     given: an operator's alternative keeps its self-references, so it is no place in the
     classified tree. A `RightAssociated` original reads as the pattern it marks (a marker is no
     place, §16), where v12 answers the marker (type `right-associated`, name "").
@@ -1846,6 +1852,36 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
     live cursor; the parse runs in wasm, where the choice asks its sequence itself), and the
     `parent` setter on every pattern (a place's parent is its path; assigning throws in strict
     code). The test pins both as absent.
+- **JS edges** *(gap 2-1)*. Three differences JS code could see, each compared with v12 by
+  running its `src` with tsx on the same calls:
+  - *The empty leaf match: matched.* v12's `CursorHistory` starts with
+    `[{ pattern: null, node: null }]` and the first recorded match replaces it, so `leafMatch` is
+    never `undefined`. A fresh `Cursor`, and a parse whose report has no leaf match, now answer
+    that one entry (its own object per cursor, as v12's), and `leafMatch` is the last entry with
+    no special case. Pinned in `js/cursor.test.mjs`.
+  - *`Expression.build()` on a dangling reference: matched.* v12's `build()` classifies, and
+    classifying resolves each alternative that is a reference (through a `RightAssociated`
+    marker too); the first that names nothing throws `Couldn't find 'x' pattern within tree.`.
+    A reference deeper inside an alternative is not resolved there, so v12 builds and `exec`
+    throws. `build()` now calls wasm `buildAt(path)`, which asks
+    `Introspection::check_alternatives`: the same alternatives, resolved from the choice's place
+    as the classified accessors resolve them (so a child expression finds a sibling, as v12's
+    finds it through its parent). *Rejected:* `Pattern::check` (what `exec` runs), which also
+    reports the deeper references v12's `build()` lets through. Pinned in
+    `tests/introspect_choice.rs` and `js/expression.test.mjs`.
+  - *Role accessors before `build()`: a deviation, kept.* v12's `atomPatterns`,
+    `prefixPatterns`, `postfixPatterns`, `infixPatterns`/`binaryPatterns` (and `children`, §16)
+    are `[]` until `build()` or the first parse; here they classify when first read, as that
+    parse would. *Why:* a JS pattern object is a place (a root and a path), not an instance with
+    state of its own: `children`, `find`, the cursor's matches and the accessors each hand out
+    new objects for the same place, so a "built" flag on one would make two handles on one
+    pattern disagree, and the Rust choice is classified at construction (or as its first parse
+    would, §8) and has nothing to defer. An empty answer before `build()` would only reproduce
+    a v12 ordering requirement (v12's own tests call `build()` first). Pinned by
+    `js/expression.test.mjs`, which asserts the filled answer before `build()` equals v12's after.
+  - *`Node.findAll` order: already v12's, now pinned.* Children (each subtree first) before their
+    parent: over `e = mul | add | n` on `1+2*3+4`, `n:1 +:+ n:2 *:* n:3 mul:2*3 add:1+2*3 +:+ n:4
+    add:1+2*3+4` (`js/node.test.mjs`).
 - **Two entries, one API** (gap 1-5). v12 is plain JS that runs in browsers and bundlers; the
   first wasm layer required `pkg-node` through `node:module`. Now:
   - `js/api.mjs` exports the API and imports no build. `js/wasm.mjs` holds the build's bindings

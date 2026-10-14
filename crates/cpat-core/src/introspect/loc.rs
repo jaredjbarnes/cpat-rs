@@ -12,6 +12,7 @@ use std::rc::Rc;
 
 use crate::name::Name;
 use crate::pattern::Pattern;
+use crate::pattern_error::PatternError;
 use crate::pattern_id::{Meta, PatternId};
 use crate::pattern_path::{PatternPath, step};
 use crate::patterns::{Choice, Role, operator_name, operator_part, role_of, sequence_children};
@@ -272,6 +273,33 @@ impl<'r> Introspection<'r> {
             ),
             _ => None,
         }
+    }
+
+    /// The first alternative of the choice at `loc` that is a reference
+    /// naming nothing, as an `UnknownReference`; `None` when every
+    /// reference alternative resolves or `loc` holds no choice. Only the
+    /// alternatives themselves: v12's `build()` resolves them to classify
+    /// and throws for the first that names nothing, while a reference
+    /// deeper down is left for the parse to find.
+    pub(super) fn unresolved_alternative(&self, loc: &Rc<Loc<'r>>) -> Option<PatternError> {
+        let Node::Pattern(Pattern::Choice(choice)) = loc.node else {
+            return None;
+        };
+        choice
+            .original_alternatives()
+            .iter()
+            .find_map(|alternative| {
+                let Pattern::Reference(reference) = unmarked(alternative) else {
+                    return None;
+                };
+                match frames::resolve(reference, &loc.frames, &self.live) {
+                    Some(_) => None,
+                    None => Some(PatternError::UnknownReference {
+                        name: alternative.name().to_string(),
+                        target: reference.target_name().to_string(),
+                    }),
+                }
+            })
     }
 
     /// A choice's children in v12's classified order: atoms are the

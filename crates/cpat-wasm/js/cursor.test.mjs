@@ -320,3 +320,42 @@ describe("Cursor history by hand, as v12's CursorHistory keeps it", () => {
     expect(seen).toEqual([false, true, false, true, false, true, false, false]);
   });
 });
+
+// v12's `CursorHistory` starts with one empty leaf match, which the first
+// recorded match replaces; answers printed by running v12's src with tsx.
+describe("Cursor's empty leaf match, compared with v12", () => {
+  test("a fresh cursor has one, and it is the leaf match", () => {
+    const cursor = new Cursor("abc");
+
+    expect(cursor.leafMatches).toEqual([{ pattern: null, node: null }]);
+    expect(cursor.leafMatch).toEqual({ pattern: null, node: null });
+    expect(cursor.leafMatch).toBe(cursor.leafMatches[0]);
+  });
+
+  test("a parse that matched nothing leaves it", () => {
+    const { cursor } = new Literal("a", "a").exec("b");
+
+    expect(cursor.leafMatches).toHaveLength(1);
+    expect(cursor.leafMatches[0].pattern).toBeNull();
+    expect(cursor.leafMatches[0].node).toBeNull();
+    expect(cursor.leafMatch).toBe(cursor.leafMatches[0]);
+  });
+
+  test("a parse that matched something replaces it, even when it fails later", () => {
+    const sequence = new Sequence("s", [new Literal("a", "a"), new Literal("b", "b")]);
+    const { cursor } = sequence.exec("ac");
+
+    expect(cursor.leafMatches.map(m => [m.pattern.name, m.node.value])).toEqual([["a", "a"]]);
+  });
+
+  test("the first match recorded by hand replaces it", () => {
+    const cursor = new Cursor("Hello");
+    const pattern = new Literal("h", "H");
+    const node = new Node("literal", "h", 0, 0, [], "H");
+
+    cursor.recordMatch(pattern, node);
+
+    expect(cursor.leafMatches).toHaveLength(1);
+    expect(cursor.leafMatch.node).toBe(node);
+  });
+});

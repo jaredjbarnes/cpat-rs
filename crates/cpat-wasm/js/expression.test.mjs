@@ -222,3 +222,69 @@ describe("Expression accessors, compared with v12", () => {
     expect(expression.infixPatterns).toEqual([]);
   });
 });
+
+describe("Expression build(), compared with v12", () => {
+  test("throws v12's message for an alternative that is a reference naming nothing", () => {
+    const expression = new Expression("x", [new Reference("nope"), new Literal("n", "1")]);
+
+    expect(() => expression.build()).toThrow(/^Couldn't find 'nope' pattern within tree\.$/);
+  });
+
+  test("throws it for a right-associated reference, and at a child place", () => {
+    const marked = new Expression("x", [new RightAssociated(new Reference("nope")), new Literal("n", "1")]);
+    const wrapper = new Sequence("s", [new Expression("x", [new Reference("gone"), new Literal("n", "1")])]);
+
+    expect(() => marked.build()).toThrow(/^Couldn't find 'nope' pattern within tree\.$/);
+    expect(() => wrapper.children[0].build()).toThrow(/^Couldn't find 'gone' pattern within tree\.$/);
+  });
+
+  test("resolves from its place, as v12's does through its parent", () => {
+    const wrapper = new Sequence("s", [
+      new Expression("x", [new Reference("y"), new Literal("n", "1")]),
+      new Literal("y", "y"),
+    ]);
+    const itself = new Expression("x", [new Reference("x"), new Literal("n", "1")]);
+
+    expect(() => wrapper.children[0].build()).not.toThrow();
+    expect(() => itself.build()).not.toThrow();
+  });
+
+  test("leaves a reference deeper inside an alternative to exec, as v12's does", () => {
+    const expression = new Expression("x", [
+      new Sequence("s", [new Literal("a", "a"), new Reference("nope")]),
+      new Literal("n", "1"),
+    ]);
+
+    expect(() => expression.build()).not.toThrow();
+    expect(() => expression.exec("1")).toThrow(/^Couldn't find 'nope' pattern within tree\.$/);
+  });
+});
+
+// v12's accessors are [] until build() or the first parse classifies the
+// alternatives. Here they classify when first read, as that parse would
+// (a deviation, DESIGN §22): a pattern object is a place, and two objects
+// for the same place must not disagree about whether it was "built".
+describe("Expression accessors before build() (a deviation from v12)", () => {
+  test("are filled at once, and build() changes nothing", () => {
+    const operators = () =>
+      new Expression("x", [new Sequence("p", [new Literal("m", "-"), new Reference("x")]), new Literal("n", "1")]);
+    const fresh = operators();
+    const built = operators();
+    built.build();
+
+    // v12 before build(): every accessor [] (and no children).
+    const before = roles(fresh);
+    expect(before).toEqual({
+      atom: ["literal:n"],
+      prefix: ["sequence:p-prefix"],
+      postfix: [],
+      infix: [],
+      original: ["sequence:p", "literal:n"],
+      children: ["sequence:p-prefix", "literal:n"],
+    });
+    expect(names(fresh.binaryPatterns)).toEqual([]);
+    // v12 after build(): the same answer.
+    expect(roles(built)).toEqual(before);
+  });
+});
+
