@@ -4,12 +4,12 @@
 use std::collections::HashMap;
 
 use cpat_core::{
-    AutoComplete, AutoCompleteOptions, Grammar, GrammarOptions, Pattern, Patterns,
-    generate_error_message,
+    AutoComplete, AutoCompleteOptions, Grammar, Pattern, Patterns, generate_error_message,
 };
 use serde_json::{Map, Value, json};
 
 use crate::normalize::{ast_rows, error_triple};
+use crate::replay;
 use crate::utf16::Utf16;
 
 /// A deliberate fault for the harness's self-test: the first tree reported
@@ -24,17 +24,8 @@ pub fn run(corpus: &Value, mut fault: Fault) -> Vec<Value> {
     let mut lines = Vec::new();
     for file in array(&corpus["files"]) {
         for grammar in array(&file["grammars"]) {
-            let built = Grammar::parse_string(str_of(&grammar["text"]), GrammarOptions::default());
-            let (mut patterns, error) = match built {
-                Ok(patterns) => (Some(patterns), Value::Null),
-                // v12 throws an `Error` whose message is the grammar error.
-                Err(error) => (None, Value::from(format!("Error: {error}"))),
-            };
-            lines.push(json!({
-                "build": grammar["key"],
-                "error": error,
-                "rules": patterns.as_ref().map(|p| p.names().collect::<Vec<_>>()),
-            }));
+            let (mut patterns, build) = build(grammar);
+            lines.push(build);
             // One AutoComplete per rule and options, reused as an editor would.
             let mut auto_completes = HashMap::new();
             for case in array(&grammar["cases"]) {
@@ -48,6 +39,32 @@ pub fn run(corpus: &Value, mut fault: Fault) -> Vec<Value> {
         }
     }
     lines
+}
+
+/// The grammar built as it was captured, and its build line: the error,
+/// the rule names, and what its recording decorators received.
+fn build(grammar: &Value) -> (Option<Patterns>, Value) {
+    let options = &grammar["options"];
+    let built = replay::options(options).map(|(grammar_options, decorated)| {
+        let built = Grammar::parse_string(str_of(&grammar["text"]), grammar_options)
+            // v12 throws an `Error` whose message is the grammar error.
+            .map_err(|error| format!("Error: {error}"));
+        (built, decorated)
+    });
+    let (patterns, error, decorated) = match built {
+        Ok((Ok(patterns), decorated)) => (Some(patterns), Value::Null, decorated),
+        Ok((Err(error), decorated)) => (None, Value::from(error), decorated),
+        Err(error) => (None, Value::from(error), Default::default()),
+    };
+    let mut line = object(json!({
+        "build": grammar["key"],
+        "error": error,
+        "rules": patterns.as_ref().map(|p| p.names().collect::<Vec<_>>()),
+    }));
+    if !options["decorators"].is_null() {
+        line.insert("decorated".into(), Value::from(decorated.take()));
+    }
+    (patterns, Value::Object(line))
 }
 
 type AutoCompletes = HashMap<String, Result<AutoComplete, String>>;
@@ -206,5 +223,54 @@ mod tests {
         );
         assert_eq!(lines[2]["exec"]["matched"], false);
         assert_eq!(lines[2]["autocomplete"]["complete"], false);
+    }
+
+    /// The keys `conformance/lib/normalize.mjs` writes (and
+    /// `conformance/test/harness.test.mjs` pins), so a field dropped here is
+    /// a test failure, not a silent hole in the comparison.
+    #[test]
+    fn every_compared_field_is_written() {
+        let deep = "(".repeat(1100);
+        let corpus = json!({ "files": [{ "grammars": [{
+            "key": "g#0",
+            "text": "@mark\nword = /[a-z]+/\nnest = \"(\" + nest + \")\" | word",
+            "options": { "entry": "parseString", "decorators": ["mark"] },
+            "cases": [
+                { "id": 0, "rule": "word", "input": "ab1", "autocomplete": {} },
+                { "id": 1, "rule": "nest", "input": deep, "autocomplete": {} },
+            ],
+        }] }] });
+        let lines = run(&corpus, Fault::None);
+        fn keys(value: &Value) -> Vec<&str> {
+            let mut keys: Vec<&str> = value
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect();
+            keys.sort();
+            keys
+        }
+        assert_eq!(keys(&lines[0]), ["build", "decorated", "error", "rules"]);
+        assert_eq!(
+            lines[0]["decorated"],
+            json!([["mark", "word", "regex", null]])
+        );
+        assert_eq!(
+            keys(&lines[1]["exec"]),
+            ["ast", "error", "furthest", "matched", "message"]
+        );
+        assert_eq!(
+            keys(&lines[1]["autocomplete"]),
+            ["at", "complete", "options"]
+        );
+        assert_eq!(
+            keys(&lines[2]["exec"]),
+            ["ast", "error", "furthest", "matched", "message", "tooDeep"]
+        );
+        assert_eq!(
+            keys(&lines[2]["autocomplete"]),
+            ["at", "complete", "options", "tooDeep"]
+        );
     }
 }

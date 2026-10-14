@@ -37,22 +37,37 @@
     "cites": "DESIGN.md §23, \"v12 bugs the harness found\": a trimmed bounded repeat whose first item fails"
   },
   {
-    "id": "ran-out-at-a-final-surrogate-pair",
-    "kind": "exec.furthest",
-    "file": "shell",
-    "rule": "script",
-    "input": "echo -n \"héllo 🌍",
-    "expected": [
-      8,
-      16,
-      "dqString"
+    "id": "ran-out-inside-a-wide-last-grapheme",
+    "kinds": [
+      "exec.furthest",
+      "autocomplete.at"
     ],
-    "actual": [
-      8,
-      17,
-      "dqString"
+    "check": "ranOutInsideAWideLastGrapheme",
+    "reason": "A sequence that runs out of text records its error's last index past the text's end. v12 spells that as its cursor's index + 1, and its cursor sits on the start of the last grapheme, so when that grapheme is wider than one UTF-16 unit (an emoji, CRLF, a letter and a combining mark) v12's number is inside it; cpat-rs's `last` is the text's length. AutoComplete's errorAtIndex is read off that error. The same position, written two ways; text whose last grapheme is one unit wide gives the same number in both.",
+    "cites": "DESIGN.md §11, deviations: \"A `Sequence` that runs out of text records its error's `last` at the end of the text\"; §23"
+  },
+  {
+    "id": "expression-normalize-over-a-split-grapheme",
+    "kinds": [
+      "exec.error",
+      "exec.message"
     ],
-    "reason": "A sequence that runs out of text records its error's last index past the text's end. v12 spells that as its cursor's index + 1, and its cursor sits on the start of the last grapheme, so after a final emoji (two UTF-16 units) v12 says 16 where the text is 17 long; cpat-rs's `last` is the text's length (17). The same position, written two ways; ASCII text gives the same number in both.",
-    "cites": "DESIGN.md §17, Positions (\"an emoji's low surrogate there\"), and §23"
+    "file": "unicode",
+    "rule": "filter",
+    "inputPattern": "^\\[splits\\((́|🏽)\"",
+    "reason": "A literal `(` matches the base of the grapheme `(` + mark, and the next pattern starts after the whole grapheme, so the mark belongs to no node. v12's Expression then normalizes its node's ranges from the joined values (`node.normalize`), which moves them back over the skipped unit, and moves the cursor to the shifted end: what follows the expression is parsed from inside it, the `]` is missed and the whole parse fails (error from 0). cpat-rs keeps the ranges the text gives, so its parse ends at the `]` and only the skipped mark is unmatched (error from the value's length).",
+    "cites": "DESIGN.md §12, deviations: \"an expression's ranges are not normalized over a skipped part of a grapheme\"; §23"
+  },
+  {
+    "id": "partial-match-length-inside-a-surrogate-pair",
+    "kinds": [
+      "exec.error",
+      "exec.message"
+    ],
+    "file": "unicode",
+    "rule": "calc",
+    "input": "~🏽5",
+    "reason": "v12 starts the error after a partial match at the matched value's length, a count of UTF-16 units used as a position. When the value skipped part of a grapheme (`~` matched the base of `~` + skin-tone modifier), that count can land between the two halves of a surrogate pair, which no byte offset names; cpat-rs reports the pair's start, one unit earlier, and the message's column with it.",
+    "cites": "DESIGN.md §5, \"exec matches as v12 does\" (the summary error's start); §23"
   }
 ]

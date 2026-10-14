@@ -6,6 +6,7 @@ use crate::pattern::Pattern;
 use crate::pattern_error::PatternError;
 use crate::scope::ScopeFrame;
 use crate::tree::Tree;
+use crate::whole_text::{byte_at_utf16, root_value};
 
 /// The outcome of parsing a whole text.
 pub struct ParseResult<'t> {
@@ -140,11 +141,19 @@ pub(crate) fn exec<'t>(
     let (summary, steps) = summary_meta(pattern, Vec::new());
 
     let root = match pattern.parse(&mut cursor) {
-        Some(root) if cursor.node_end(root) == text.len() => Some(root),
-        // Matched, but not all of it: the rest of the text is the error.
         Some(root) => {
-            cursor.record_summary_error(cursor.node_end(root), text.len(), summary, &steps);
-            None
+            let value = root_value(&cursor, root);
+            if value.is_text {
+                Some(root)
+            } else {
+                // Matched, but not all of it (or not every code point of
+                // it: whole_text.rs). v12 starts the error at the matched
+                // value's length, which is the root's end unless a leaf
+                // stopped inside a grapheme.
+                let start = byte_at_utf16(text, value.utf16_len);
+                cursor.record_summary_error(start, text.len(), summary, &steps);
+                None
+            }
         }
         None => {
             cursor.record_summary_error(0, text.len(), summary, &steps);

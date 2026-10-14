@@ -1048,3 +1048,24 @@ fn the_atom_guard_skips_an_atom_already_parsing_here() {
         outlined("-", "expr@0..1", "num@0..0")
     );
 }
+
+#[test]
+fn an_expression_ending_inside_a_grapheme_resumes_after_it() {
+    // `++` matches the start of `+` + combining accent. What follows the
+    // expression starts after that grapheme, never inside it (it used to
+    // start at the operator's end, inside the grapheme). v12 on "1++́!":
+    // error [4, 5], furthest [4, 4] at `++` (the next `++` tried at the
+    // `!`); in bytes 5..6 and 5..5.
+    let mut patterns = cpat_core::Grammar::parse_string(
+        "ws = /\\s+/\nnum = /\\d/\npost = expr + \"++\"\nexpr = post | num\nline = expr + ws? + \"!\"",
+        cpat_core::GrammarOptions::default(),
+    )
+    .unwrap();
+    let line = patterns.get_mut("line").unwrap();
+
+    assert_eq!(
+        exec_outline(line, "1++\u{301}!"),
+        outlined("-", "line@5..6", "++@5..5")
+    );
+    assert!(line.exec("1++!").is_match());
+}

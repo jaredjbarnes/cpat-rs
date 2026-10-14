@@ -1,0 +1,42 @@
+{
+ "name": "v12-patterns-test",
+ "suite": "v12-tests",
+ "grammars": [
+  {
+   "id": "72e4b310f34b15b6",
+   "origin": "src/grammar/patterns.test.ts :: Patterns String Template Literal Baseline",
+   "text": "\n        first-name = \"John\"\n        last-name = \"Doe\"\n        space = /\\s+/\n        full-name = first-name + space + last-name\n        ",
+   "cases": [
+    {
+     "rule": "full-name",
+     "input": "John Doe",
+     "origin": "src/grammar/patterns.test.ts :: Patterns String Template Literal Baseline"
+    }
+   ]
+  },
+  {
+   "id": "b676338e0e1872c0",
+   "origin": "src/grammar/patterns.test.ts :: Patterns String Template Literal Expression Pattern",
+   "text": "\n        integer = /\\d+/\n        operator = \"+\" | \"-\" | \"*\" | \"/\"\n        unary-operator = \"+\" | \"-\"\n        postfix-operator = \"++\" | \"--\"\n        binary-expr = expr + operator + expr\n        unary-expr = unary-operator + expr\n        postfix-expr = expr + postfix-operator\n        expr = postfix-expr | unary-expr | binary-expr | integer\n        ",
+   "cases": [
+    {
+     "rule": "expr",
+     "input": "-10++",
+     "origin": "src/grammar/patterns.test.ts :: Patterns String Template Literal Expression Pattern"
+    }
+   ]
+  },
+  {
+   "id": "5f484064a3573e5f",
+   "origin": "src/grammar/patterns.test.ts :: Patterns String Template Literal Simple Markup",
+   "text": "\n        tag-name = /[a-zA-Z_-]+[a-zA-Z0-9_-]*/\n        space = /\\s+/\n        opening-tag = \"<\" + tag-name + space? + \">\"\n        closing-tag = \"</\" + tag-name + space? + \">\"\n        child = space? + element + space?\n        children = (child)*\n        element = opening-tag + children + closing-tag\n        body = space? + element + space?\n        ",
+   "cases": [
+    {
+     "rule": "body",
+     "input": "\n        <div>\n            <div></div>\n            <div></div>    \n        </div>\n        ",
+     "origin": "src/grammar/patterns.test.ts :: Patterns String Template Literal Simple Markup"
+    }
+   ]
+  }
+ ]
+}

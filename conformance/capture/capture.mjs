@@ -52,7 +52,7 @@ writeFileSync(
   preset: "ts-jest",
   testEnvironment: "node",
   roots: ["<rootDir>/src"],
-  testMatch: ["**/typescript.test.ts", "**/Grammar.test.ts", "**/AutoComplete.test.ts", "**/Cut.test.ts"],
+  testMatch: ["**/typescript.test.ts", "**/Grammar.test.ts", "**/AutoComplete.test.ts", "**/Cut.test.ts", "**/patterns.test.ts"],
   transform: { "^.+\\\\.(ts|tsx)$": ["ts-jest", { diagnostics: false }] },
   setupFilesAfterEnv: [${JSON.stringify(join(scratch, "jest_setup.ts"))}],
 };

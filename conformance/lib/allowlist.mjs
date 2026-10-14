@@ -1,15 +1,17 @@
 // The allowlist: every difference from TS v12 that is explained. An entry
-// matches differences by kind and, optionally, by engine, corpus file,
-// rule, input and the two values; each must cite the decision behind it.
+// matches differences by kind (or kinds) and, optionally, by engine, corpus
+// file, rule, input (exact or by regex), the two values and a named check
+// (allowlist_checks.mjs); each must cite the decision behind it.
 // An entry that explains nothing is stale and fails the run too, so the
 // list can only describe differences that really occur.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { CHECKS } from "./allowlist_checks.mjs";
 import { conformanceDir } from "./paths.mjs";
 
 export const allowlistPath = join(conformanceDir, "allowlist.json");
 
-const REQUIRED = ["id", "kind", "reason", "cites"];
+const REQUIRED = ["id", "reason", "cites"];
 
 export function loadAllowlist(path = allowlistPath) {
   const entries = JSON.parse(readFileSync(path, "utf8"));
@@ -18,6 +20,13 @@ export function loadAllowlist(path = allowlistPath) {
       if (typeof entry[key] !== "string" || entry[key].length === 0) {
         throw new Error(`allowlist entry ${JSON.stringify(entry.id)} needs a non-empty \`${key}\``);
       }
+    }
+    const kinds = entry.kinds ?? [entry.kind];
+    if (kinds.length === 0 || kinds.some(kind => typeof kind !== "string" || kind.length === 0)) {
+      throw new Error(`allowlist entry ${entry.id} needs a \`kind\` or a non-empty \`kinds\``);
+    }
+    if (entry.check !== undefined && CHECKS[entry.check] == null) {
+      throw new Error(`allowlist entry ${entry.id} names an unknown check ${JSON.stringify(entry.check)}`);
     }
     if (!/DESIGN\.md|MIGRATION-v12\.md/.test(entry.cites)) {
       throw new Error(`allowlist entry ${entry.id} must cite DESIGN.md or MIGRATION-v12.md`);
@@ -32,11 +41,13 @@ const valueMatches = (value, exact, pattern) =>
 
 export function explains(entry, difference) {
   return (
-    entry.kind === difference.kind &&
+    (entry.kinds ?? [entry.kind]).includes(difference.kind) &&
     (entry.engines === undefined || entry.engines.includes(difference.engine)) &&
     (entry.file === undefined || entry.file === difference.file) &&
     (entry.rule === undefined || entry.rule === difference.rule) &&
     (entry.input === undefined || entry.input === difference.input) &&
+    (entry.inputPattern === undefined || new RegExp(entry.inputPattern, "u").test(difference.input ?? "")) &&
+    (entry.check === undefined || CHECKS[entry.check](difference)) &&
     valueMatches(difference.expected, entry.expected, entry.expectedPattern) &&
     valueMatches(difference.actual, entry.actual, entry.actualPattern) &&
     // Fields the cpat engine's whole result must have, beyond the one that

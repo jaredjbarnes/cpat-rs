@@ -101,6 +101,17 @@
 > Gap 1-5 (the JS API outside Node) is implemented: `js/web.mjs` serves the same API over
 > wasm-pack's `web` build after an async `init`, with no Node built-in in anything it imports;
 > `js/index.mjs` stays Node's ready-on-import entry. See §22's "Two entries".
+> Gap 1-6 (conformance coverage) is implemented; see §23. The harness now captures and replays
+> grammars built with imports (through a recorded resolver), params and decorators (each custom
+> decorator replaced by a recording one whose calls are compared), including v12's
+> `patterns.test.ts`; runs a generated corpus of non-ASCII and unusual-whitespace inputs
+> (`corpus/unicode.json`); and its own tests fail when a compared field is dropped. Last run:
+> 156 364 cases (82 from grammars with imports, 56 with params, 9 with decorators; 15 863 from
+> the generated corpus), 0 unexplained differences. The new corpus found two things, both fixed:
+> `exec` matched text whose combining mark no node covered (it now matches as v12 does, §5e),
+> and what follows an expression could start inside a grapheme (§12). Two new allowlist entries
+> name the deviations left (§12, §5e), and the one for a position past the end inside a wide
+> last grapheme now covers every such grapheme by a named check (§11, §23).
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -182,6 +193,19 @@ work commits nothing. A cut reached at the end of input still fires.
   form, so no other ASCII text needs the table. As in v12, literals `"\r"` then `"\n"` can't
   split a CRLF either (`tests/literal.rs`).
 - **5d:** JS gets UTF-16 offsets, converted at the wasm boundary.
+- **5e: exec matches as v12 does** *(gap 1-6)*. A literal can match the base of a grapheme (`~`
+  of `~` + combining accent, or of `~` + skin-tone modifier), and the next pattern starts after
+  the whole grapheme (§5c), so the mark belongs to no node. v12's `exec` matches only when
+  `ast.value === text`, where a value is the leaves' values joined, so it reports no match;
+  comparing the root's end with the text's length accepted it. `exec` now walks the root's
+  leaves (`whole_text.rs`, iteratively) and matches only when they tile the text. Node values
+  stay slices (§7). The summary error after a partial match starts, as in v12, at the matched
+  value's length, a count of UTF-16 units used as a position: the root's end when nothing was
+  skipped, else the text position at that many units. *Deviation:* when that count falls between
+  the halves of a surrogate pair (`~` + skin-tone modifier), no byte offset names it, and the
+  error starts at the pair, one unit before v12's (pinned in `tests/exec.rs`; allowlisted as
+  `partial-match-length-inside-a-surrogate-pair`, §23). The conformance harness's non-ASCII
+  corpus found this.
 
 ## 6. Regex
 
@@ -463,9 +487,11 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
     children's values. They differ when the span holds text no child covers: a literal `e`
     matching the base of `e` + combining accent skips the accent, and an unbounded repeat whose
     node starts where the repeat started can begin with text only a nodeless child consumed.
-    `exec` compares the value's length with the text's, so it can match here where v12 reports
-    "did not consume all the text" (`(e){1,3}` on `"ée"`, `((a?)+, ",")+` on `"aa,"`). Slices are
-    a settled decision, and the slice is the honest value: it is what the node's range covers.
+    Slices are a settled decision, and the slice is the honest value: it is what the node's
+    range covers. *Since gap 1-6* `exec` no longer compares the span with the text: it asks, as
+    v12 does, whether the leaves are the text (§5e), so `(e){1,3}` on `"ée"` and
+    `((a?)+, ",")+` on `"aa,"` are no match here either, with v12's errors (`[2, 3]` and
+    `[1, 3]`, checked against v12).
 - **JS:** `Pattern.repeat(name, child, { min, max, divider, trimDivider })` takes a plain object,
   read through imported getters (no `js-sys`). `max: Infinity` is unbounded, as in v12; a count
   that isn't a whole number of zero or more is an error.
@@ -668,7 +694,22 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   (the only re-parenting the arena does). An operand with no operators comes back unwrapped. An
   expression node spans its first child's start to its last child's end; v12's `normalize`
   recomputes ranges from the concatenated values, which is the same span whenever the children
-  are contiguous (they always are, short of the nodeless-child gaps §10 discusses).
+  are contiguous (they always are, short of the nodeless-child gaps §10 discusses, and a leaf
+  that ends inside a grapheme, §5e).
+- **What follows an expression starts on a grapheme boundary** *(fixed in gap 1-6)*. The commit
+  put the cursor at the expression's end, which is inside a grapheme when its last token is a
+  literal matching the start of one (`++` of `+` + combining accent): the next pattern then
+  started inside the grapheme (a debug build's `set_pos` assertion fires there). It now starts
+  after that grapheme, as everywhere else (`tests/expression.rs`). The non-ASCII corpus found it.
+- **Deviation: an expression's ranges are not normalized over a skipped part of a grapheme**
+  *(gap 1-6)*. When a leaf inside an expression skipped a mark (`[splits(` + accent in jq's
+  grammar: the literal `(` matches the base of `(` + accent), v12's `normalize` lays the leaves
+  end to end from the expression's start, which moves every range after the skip back by the
+  skipped units, and then moves the cursor to the shifted end. What follows is parsed from
+  inside the expression: jq's `]` is missed and the whole parse fails (error from 0). Here the
+  ranges are the text's, the parse ends at `]`, and only the mark is unmatched (§5e: error from
+  the value's length). Reproducing it would mean positions that aren't where the text is.
+  Allowlisted as `expression-normalize-over-a-split-grapheme` (§23).
 - **Known limitation, kept:** a prefix that consumes the last token doesn't backtrack, so
   `x = "a" x | "a"` rejects `a` (pinned in `tests/expression.rs`).
 - **Fixed relative to milestone 1:** a committed alternative that left no error (it matched
@@ -824,14 +865,14 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   that fails after the open must leave `pos` at the start, as v12's `cursor.index`) and CRLF as
   one grapheme in ASCII text (§5c); both now fail a test when removed.
 - **Deviations from v12:**
-  - A block whose content is an absent `Optional` keeps only `open` and `close`, skipping the
-    text between them, as in v12. Its value here is the slice it spans (§10), so `exec` matches
-    `{1}` when the content is an optional `[a-z]+`, where v12 compares the joined children
-    (`{}`) with the text and fails. Pinned in `tests/block.rs`.
+  - *(No longer a deviation since gap 1-6.)* A block whose content is an absent `Optional` keeps
+    only `open` and `close`, skipping the text between them, as in v12, and `exec` of `{1}` is
+    no match with v12's error `[2, 3]` (§5e). Pinned in `tests/block.rs`.
   - An open token that ends inside a grapheme (`e` against `e` + combining accent): the content
     starts at the next boundary, where the open literal left the cursor. v12's `moveTo` goes back
-    to the grapheme's start, so its content overlaps the open and its `exec` fails. Positions
-    inside a grapheme don't exist here (§5c). Pinned in `tests/block.rs`.
+    to the grapheme's start, so its content overlaps the open. Positions inside a grapheme don't
+    exist here (§5c). `exec` is no match in both (§5e); v12 starts the error at its overlapping
+    value's length (5, past the text), cpat-rs at its own (3 units). Pinned in `tests/block.rs`.
 - **Deferred to M8 (intellisense), done there (§16):** `getTokens`/`getTokensAfter`/`getPatterns`/`…After`/`find`
   for both, and `isEqual` (Block.test.ts 'autocomplete introspection' and 'equality',
   TakeUntil.test.ts's introspection and equality tests). `Block::record_match` is called as in
@@ -1755,29 +1796,66 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
 ## 23. The conformance harness and the speed report *(milestone 16)*
 
 - **Layout** (`conformance/`): `run.mjs` (the one command), `bench.mjs` (the speed report),
-  `allowlist.json`, `corpus/*.json` (the captured inputs, committed), `capture/` (how the
-  corpus was captured), `lib/` (`corpus.mjs` expands the corpus, `mutate.mjs`, `js_engine.mjs`
-  runs TS v12 or cpat-wasm, `normalize.mjs`, `compare.mjs`, `allowlist.mjs`, `report.mjs`,
-  `bench_spec.mjs`, `bench_engine.mjs`), `native/` (the `cpat-conformance` binary, the native
-  engine and its bench mode, a workspace member) and `test/` (the harness's own tests).
+  `allowlist.json`, `corpus/*.json` (the captured inputs and the generated `unicode.json`,
+  committed), `capture/` (how the corpus was captured; `unicode.mjs` writes the generated file),
+  `lib/` (`corpus.mjs` expands the corpus, `mutate.mjs`, `replay.mjs` rebuilds a grammar from its
+  captured options, `unicode_corpus.mjs`, `features.mjs`, `js_engine.mjs` runs TS v12 or
+  cpat-wasm, `normalize.mjs`, `compare.mjs`, `allowlist.mjs` with `allowlist_checks.mjs`,
+  `report.mjs`, `bench_spec.mjs`, `bench_engine.mjs`), `native/` (the `cpat-conformance` binary,
+  the native engine with `replay.rs` and `js_json.rs`, and its bench mode, a workspace member)
+  and `test/` (the harness's own tests).
 - **The corpus is what real tests ran** (`capture/capture.mjs --scratch <dir>`). agent-harness's
   vitest suite runs with `clarity-pattern-parser` aliased to a shim over v12's `src`, and v12's
   four test files run under jest with a setup file, both configured in the scratch directory
-  only: neither repo changes. Both patch `Grammar.prototype.parseString`, so every plain build
-  (no params, decorators or resolver: the text alone rebuilds it) is logged with every
-  `exec`/`test` on its rules and every `AutoComplete.suggestFor` with its options. agent-harness
+  only: neither repo changes. Both patch `Grammar.prototype.parseString` and `parse`, so every
+  top-level build is logged with every `exec`/`test` on its rules and every
+  `AutoComplete.suggestFor` with its options. *(Gap 1-6)* A build made with options is logged
+  with a record of them that rebuilds it: which entry ran (`parse` or `parseString`), the origin
+  resource, the params by value (literals and regexes; a build with any other param is not
+  logged), the names of its custom decorators, and every answer its import resolvers gave
+  (recorded by wrapping them for the build, failures included). `patterns.test.ts` is captured
+  too. A plain build keeps the id its text alone gives, so the corpus of plain grammars did not
+  change. agent-harness
   grammars are identified by their text against the package's eleven `.cpat` files; ad-hoc
   grammars its tests build are left out. `assemble.mjs` de-duplicates and sorts, one file per
   harness grammar and per v12 test file. v12's `AutoComplete.test.ts` builds its patterns by
   hand, never from a grammar, so it contributes no case; its tests run in JS against cpat-wasm
   already (§22). Two of agent-harness's tests fail under v12, as MIGRATION-v12.md says; what
   they ran is kept.
+- **Replaying options** *(gap 1-6)*: `replay.mjs` (TS and wasm) and `native/src/replay.rs` build
+  the same options from the record: params constructed by value, resolvers that answer from the
+  recorded calls by resource and origin (an import nothing recorded is an error all engines word
+  alike), and each custom decorator replaced by a recording one that keeps
+  `[decorator, pattern name, pattern type, JSON.stringify(argument) or null]` and leaves the
+  pattern as it was. The build's line carries that list (`decorated`), compared as
+  `build.decorated`, so a decorator called in another order, on another pattern or with another
+  argument is a difference. The native engine writes arguments as `JSON.stringify` does
+  (`js_json.rs`: JS number formatting, every number a double). The core builds synchronously,
+  so a grammar v12 built with the async `Grammar.parse` is rebuilt natively with its async
+  resolver's answers given synchronously; TS and wasm call `Grammar.parse` again. *Why replace
+  the test's decorators:* a function can't be stored, and all three engines running the same
+  recording decorator compare what each one hands it, which is the decorator contract. The run
+  reports how many cases come from grammars that use imports, params and decorators (by their
+  text or their options, `features.mjs`).
+- **The generated non-ASCII corpus** *(gap 1-6, `unicode_corpus.mjs` → `corpus/unicode.json`)*.
+  Real tests mostly run ASCII. The generator takes 4 short captured inputs per agent-harness
+  grammar and makes variants: every space swapped for each of `\r`, `\r\n`, `\t`, `\v`, `\f`,
+  U+00A0, U+0085, U+1680, U+200B, U+2028, U+2029, U+202F, U+3000 and U+FEFF; a non-ASCII word
+  inserted (precomposed and combining accents, a skin tone, a ZWJ family, CJK, a letter outside
+  the BMP, `İ`, `ß`, `ﬁ`, Arabic-Indic digits); a surrogate pair, a modifier, a lone mark, a BOM
+  or a CR at the end; a leading BOM. A grammar of regex-heavy rules (`.`, `\s`, `\S`, `\w`,
+  `\b`, `[^\n]`, `\p{L}`, `\p{M}`, `\p{Extended_Pictographic}`, `[\s\S]`, line ends) runs every
+  rule on probes built from the same characters. The variants are mutated like captured inputs.
+  The file is committed and generated from the captured corpus alone; a harness test fails while
+  it differs from what the generator writes. *Why generated, not captured:* the inputs that
+  separate JS's idea of a character, a space and a line end from Rust's are the ones tests don't
+  write; gap 1-1 (JS-faithful regex translation) would have shown up here.
 - **Mutations are generated, not stored** (`lib/mutate.mjs`): for every captured input up to
   2000 UTF-16 units, the empty text and a truncation at every token boundary (between a word
   and a space, and around every punctuation character, never inside a surrogate pair), and up
   to 8 single-character deletions spread over its boundaries. Truncations also run AutoComplete
   (with the options the test used, or the defaults). The same corpus always expands to the same
-  140 349 cases. *Why capped deletions:* a deletion mostly repeats the error of its neighbour;
+  156 364 cases (140 349 before gap 1-6). *Why capped deletions:* a deletion mostly repeats the error of its neighbour;
   8 per input break every kind of token in a typical input without the few long inputs
   dominating the run.
 - **What is compared**, in UTF-16 offsets, as v12 reports them: the build (success or the
@@ -1789,35 +1867,59 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   reused across texts, as an editor would. TS v12 runs under tsx on v12's `src`, cpat-wasm
   through `js/index.mjs`, both by the same `lib/js_engine.mjs`; the native engine reports the
   same shape from the core and converts bytes to UTF-16 itself (it must not share the
-  conversion it checks). TS and wasm run in shards; the whole run takes about 40 s.
-- **The allowlist** names every explained difference by kind and, as needed, engine, corpus file,
-  rule, input, the two values (exact or by regex) and fields the cpat result must have (`got`).
+  conversion it checks). TS and wasm run in shards; the whole run takes about a minute.
+- **The allowlist** names every explained difference by kind (or `kinds`) and, as needed, engine,
+  corpus file, rule, input (exact, or `inputPattern`), the two values (exact or by regex), fields
+  the cpat result must have (`got`) and a named `check` (`allowlist_checks.mjs`) for a rule
+  that follows from the input but no single value or regex states (gap 1-6: v12's position
+  past the end inside a wide last grapheme).
   Each entry needs a reason and a citation of DESIGN.md or MIGRATION-v12.md, checked on load. An
   entry that explains nothing fails the run, so the list can only describe differences that
   occur. The run exits 0 only with no unexplained difference and no stale entry.
 - **It can fail** (`run.mjs --self-test`): the native engine's `--perturb` moves the first
   reported tree's root end by one, and the self-test checks that the run then fails with exactly
   that one unexplained `exec.ast` difference. `test/harness.test.mjs` checks the comparison,
-  the allowlist and the mutations on made-up results; `native/src/engine.rs` checks the fault.
-- **The explained differences** (240, final run):
+  the allowlist, the replay, the generated corpus and the mutations on made-up results;
+  `native/src/engine.rs` checks the fault. *(Gap 1-6)* The observables are written out in the
+  test itself (build: `error`, `rules`, `decorated`; exec: `matched`, `ast`, `error`,
+  `furthest`, `message`, `tooDeep`; AutoComplete: `complete`, `at`, `options`, `tooDeep`), and
+  three tests use that list: normalize's results from v12-shaped values have exactly those keys,
+  changing each observable in the v12-shaped value changes its field, and removing each field
+  in turn from one side is a difference of exactly that kind. Dropping a field from
+  `normalize.mjs` or `compare.mjs` fails one of them (checked by dropping `furthest`,
+  `decorated` and `isComplete`). `native/src/engine.rs` pins the same keys for the native
+  engine.
+- **The explained differences** (556, final run of gap 1-6):
+  - `ran-out-inside-a-wide-last-grapheme` (306: 258 furthest errors, 48 AutoComplete
+    `errorAtIndex`): a sequence that runs out of text records its error's last index past the
+    end. v12 writes that as its cursor's index + 1, and its cursor sits on the start of the last
+    grapheme, so when that grapheme is wider than one UTF-16 unit (an emoji, CRLF, a letter and a
+    combining mark) v12's number is inside it; cpat-rs's `last` is the text's length. One
+    position written two ways (§11). Matched by the named check `ranOutInsideAWideLastGrapheme`
+    (the start and pattern agree, v12's number is the last grapheme's start + 1 and that
+    grapheme is wider than one unit, cpat's is the length). Before gap 1-6 it was
+    `ran-out-at-a-final-surrogate-pair`, two exact shell inputs; the generated corpus showed the
+    rule.
   - `custom-tokens-prototype-key` (230): **a v12 bug.** v12 reads a pattern's custom tokens from
     a plain object (`customTokensMap[pattern.name] ?? []`), so a pattern named `constructor`
     (a literal in the TypeScript and saya grammars) gets `Object.prototype.constructor` and
     AutoComplete throws `customTokens is not iterable`. cpat-rs keeps a map and suggests.
+  - `expression-normalize-over-a-split-grapheme` (8: errors and messages): v12's Expression
+    normalizes its ranges over a skipped mark and parses what follows from inside itself (§12).
   - `v12-trimmed-bounded-repeat-crash` (4): **a v12 bug.** A bounded repeat with a trimmed
     divider whose first item fails takes "no items" for "ended on a divider" (`0 % 2 === 0`),
     pops a node that isn't there and throws a `TypeError`. cpat-rs fails the repeat and the
     choice tries its next alternative.
+  - `partial-match-length-inside-a-surrogate-pair` (4: errors and messages): the summary error's
+    start after a partial match, a count of UTF-16 units, falls inside a surrogate pair (§5e).
   - `depth-limit` (2): jq's 3000-deep paren bomb overflows v12's stack (`RangeError`) and halts
     with `tooDeep` here (§11).
-  - `ran-out-at-a-final-surrogate-pair` (2): a sequence that runs out of text records its
-    error's last index past the end. v12 writes that as its cursor's index + 1, and its cursor
-    sits on the start of the last grapheme, so after a final emoji it says 16 where the text is
-    17 units long; cpat-rs's `last` is the text's length. One position written two ways (§17,
-    Positions); ASCII text gives the same number in both.
   - `empty-literal-message` (2): an empty literal is reported in cpat's words (§18).
 - **What the harness found in cpat-rs**, each fixed with a test that fails without the fix:
-  wasm ran out of memory building and parsing the TypeScript grammar (clones now share a
+  *(gap 1-6, from the generated corpus)* `exec` matched text whose combining mark or skin-tone
+  modifier no node covered (§5e), and what follows an expression ending inside a grapheme started
+  inside it (§12); earlier, wasm ran out of memory building and parsing the TypeScript grammar
+  (clones now share a
   choice's alternatives, §8); the shell grammar's `dqLiteral` gave up on a 500 KB string (the
   backtrack limit, §6); a synchronous loop of wasm parses never freed its results (§22); and
   every first suggestion checked the grammar twice (§17).

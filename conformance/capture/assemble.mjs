@@ -1,6 +1,9 @@
 // Turns capture logs into conformance/corpus: one file per agent-harness
 // grammar and one per v12 test file, each case de-duplicated and sorted so
-// a recapture only changes what really changed.
+// a recapture only changes what really changed. A grammar built with
+// options (imports, params, custom decorators) keeps the record of them
+// that capture.ts wrote. Generated corpus files (suite "generated", from
+// unicode.mjs) are kept.
 import { readdirSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { corpusDir } from "../lib/paths.mjs";
@@ -58,7 +61,7 @@ export function assemble(dirs) {
       ...(g.file != null ? { file: g.file } : {}),
       grammars: new Map(),
     };
-    entry.grammars.set(g.g, { id: g.g, text: g.text, origin: g.origin, cases: new Map() });
+    entry.grammars.set(g.g, { id: g.g, text: g.text, ...(g.options ? { options: g.options } : {}), origin: g.origin, cases: new Map() });
     files.set(name, entry);
   }
 
@@ -78,8 +81,12 @@ export function assemble(dirs) {
     }
   }
 
-  rmSync(corpusDir, { recursive: true, force: true });
   mkdirSync(corpusDir, { recursive: true });
+  for (const file of readdirSync(corpusDir)) {
+    if (file.endsWith(".json") && JSON.parse(readFileSync(join(corpusDir, file), "utf8")).suite !== "generated") {
+      rmSync(join(corpusDir, file));
+    }
+  }
   for (const entry of [...files.values()].sort((a, b) => byText(a.name, b.name))) {
     const out = {
       name: entry.name,
@@ -91,6 +98,7 @@ export function assemble(dirs) {
           id: g.id,
           origin: g.origin,
           text: g.text,
+          ...(g.options ? { options: g.options } : {}),
           cases: [...g.cases.values()].sort(
             (a, b) => byText(a.rule, b.rule) || byText(a.input, b.input) || byText(JSON.stringify(a.autocomplete ?? null), JSON.stringify(b.autocomplete ?? null))
           ),

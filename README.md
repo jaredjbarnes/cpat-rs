@@ -24,7 +24,7 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 16, gaps 1-1 to 1-5)
+## What's in the box (milestone 16, gaps 1-1 to 1-6)
 
 `Literal`, `Regex`, `Sequence`, `Choice`, `Repeat` (unbounded or bounded, with an optional
 divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for recursive
@@ -38,9 +38,12 @@ JS reads it, so what JS rejects (`[\d-z]`, `\p{letter}`, `a{,3}`) is a `PatternE
 few sources JS accepts that no Rust engine matches the same way (a backreference to a group a
 repetition resets) are refused when built; DESIGN.md §6 has the full mapping.
 
-Everything below behaves as clarity-pattern-parser v12 does, checked by running both on 140 349
-cases from real test suites ([Conformance with v12](#conformance-with-v12)); the few
-differences are listed and explained in `conformance/allowlist.json` and DESIGN.md §23.
+Everything below behaves as clarity-pattern-parser v12 does, checked by running both on 156 364
+cases from real test suites and a generated non-ASCII corpus
+([Conformance with v12](#conformance-with-v12)); the few differences are listed and explained in
+`conformance/allowlist.json` and DESIGN.md §23. `exec` matches only when every code point of the
+text is in the tree, as v12's `ast.value === text` does: a literal that matches the base of a
+letter and a combining mark leaves the mark unmatched, and that is no match.
 
 `Introspection::choice_roles` says what each of a choice's classified children is
 (`ChoiceRole::Atom`, `Prefix`, `Postfix`, `Infix`), classifying a choice that waits for its first
@@ -392,19 +395,30 @@ and furthest error, `generateErrorMessage`, and AutoComplete's options, `isCompl
 `errorAtIndex`. It prints a summary and the differences grouped by kind, writes
 `target/conformance/report.md`, and exits 0 only when every difference is explained by
 `conformance/allowlist.json` (each entry cites the decision behind it in DESIGN.md or
-MIGRATION-v12.md) and no entry is stale. Last run: 140 349 cases, 0 unexplained differences.
+MIGRATION-v12.md) and no entry is stale. Last run: 156 364 cases (82 from grammars with
+imports, 56 with params, 9 with decorators; 15 863 from the generated non-ASCII corpus), 0
+unexplained differences.
 
 - `--no-build` reuses the existing builds; `--examples N` prints more examples per group.
 - `--self-test` shifts one native tree range on purpose (`--perturb`) and checks that the run
   fails with exactly that unexplained difference.
 - The corpus (`conformance/corpus/*.json`) is what real tests ran: every input agent-harness's
   vitest suite runs through its 11 `.cpat` grammars, and every input v12's
-  `typescript.test.ts`, `Grammar.test.ts` and `Cut.test.ts` run through their grammars. The
+  `typescript.test.ts`, `Grammar.test.ts`, `Cut.test.ts` and `patterns.test.ts` run through
+  their grammars. A grammar built with imports, params or custom decorators is recorded with
+  them and replayed: imports are answered from the resolver's recorded answers, and each custom
+  decorator is replaced by one that records what it received, compared across engines. The
   run adds a truncation at every token boundary (also run through AutoComplete) and a few
   single-character deletions of each input. `node conformance/capture/capture.mjs --scratch
   <dir>` recaptures it, configuring both test runs in `<dir>` only (set `AGENT_HARNESS` if
   agent-harness's `packages/harness` isn't at `../agent-harness/packages/harness`).
-- `node --test conformance/test/*.test.mjs` tests the harness itself.
+- `corpus/unicode.json` is generated (`node conformance/capture/unicode.mjs`): captured inputs
+  with every space swapped for `\r`, `\r\n`, U+0085, U+2028/2029, U+FEFF and other unusual
+  whitespace, non-ASCII words inserted (combining marks, skin tones, CJK, letters outside the
+  BMP) and surrogate pairs at the end, plus a grammar of regex-heavy rules run on the same
+  characters.
+- `node --test conformance/test/*.test.mjs` tests the harness itself, including that dropping
+  any compared field from the normalization or the comparison fails a test.
 
 `node conformance/bench.mjs --out <dir>` is the speed report, not a test (nothing is asserted):
 grammar build, `exec` throughput and AutoComplete for every corpus grammar in TS v12, native

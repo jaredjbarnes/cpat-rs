@@ -214,7 +214,10 @@ impl Pratt {
 
         let node = self.tree.commit(cursor);
         if let Some(node) = node {
-            cursor.set_pos(cursor.node_end(node));
+            // A literal operator can end inside a grapheme (`++` before a
+            // combining mark); the next pattern starts after that
+            // grapheme, as everywhere else (v12's `moveTo` then `next`).
+            cursor.set_pos(cursor.snap_forward(cursor.node_end(node)));
         }
         (node, false)
     }

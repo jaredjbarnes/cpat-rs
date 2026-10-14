@@ -2,6 +2,9 @@
 // A difference names its kind (which observable disagreed), the case, and
 // both values, so the allowlist can explain it precisely.
 
+/** The fields of a build after its error: the rule names, and what each
+ * custom decorator received. */
+const BUILD_FIELDS = ["rules", "decorated"];
 /** The fields of an exec result, each its own kind of difference. */
 const EXEC_FIELDS = ["matched", "ast", "error", "furthest", "message", "tooDeep"];
 /** AutoComplete's, likewise. */
@@ -31,10 +34,15 @@ export function compare(corpus, expected, actual, engine) {
       const want = expected.builds.get(grammar.key);
       const got = actual.builds.get(grammar.key);
       counts.builds++;
+      // A different error is one difference; the fields after it mean nothing.
       if (!same(want?.error, got?.error)) {
         differences.push({ ...where, kind: "build.error", expected: want?.error, actual: got?.error });
-      } else if (!same(want?.rules, got?.rules)) {
-        differences.push({ ...where, kind: "build.rules", expected: want?.rules, actual: got?.rules });
+      } else {
+        for (const field of BUILD_FIELDS) {
+          if (!same(want?.[field], got?.[field])) {
+            differences.push({ ...where, kind: `build.${field}`, expected: want?.[field] ?? null, actual: got?.[field] ?? null });
+          }
+        }
       }
 
       for (const c of grammar.cases) {

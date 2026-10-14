@@ -9,7 +9,9 @@
 
 mod bench;
 mod engine;
+mod js_json;
 mod normalize;
+mod replay;
 mod utf16;
 
 use std::fs;

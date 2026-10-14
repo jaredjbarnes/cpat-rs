@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use cpat_core::RepeatOptions;
+use cpat_core::{Pattern, RepeatOptions};
 
 #[test]
 fn empty_text_is_no_match_and_no_error() {
@@ -114,4 +114,56 @@ fn a_direct_parse_finishes_into_a_result_as_exec_returns_one() {
     let result = cursor.finish(root);
     assert!(result.tree().is_none());
     assert_eq!(result.error.expect("an error").pattern.name, "world");
+}
+
+// ─── A match must be the text itself, every code point (v12's isMatch) ──
+// A literal can match the base of a grapheme (`~` of `~` + combining
+// accent); the next pattern starts after the whole grapheme, so the accent
+// belongs to no node. v12's exec compares the joined values with the text
+// and reports no match. Each expectation below was checked against v12
+// (UTF-16 offsets converted to bytes).
+
+fn tilde_digit() -> Pattern {
+    seq("s", vec![lit("tilde", "~"), re("digit", r"\d")])
+}
+
+#[test]
+fn a_mark_no_node_covers_is_no_match() {
+    let mut pattern = tilde_digit();
+
+    // v12: no match, error and furthest error [2, 3]: from the value's
+    // length ("~5", 2 units, which is the `5` at byte 3) to the end.
+    assert_eq!(
+        exec_outline(&mut pattern, "~\u{301}5"),
+        outlined("-", "s@3..4", "s@3..4")
+    );
+    assert!(!pattern.test("~\u{301}5"));
+    assert!(pattern.exec("~5").is_match());
+}
+
+#[test]
+fn a_partial_match_still_starts_its_error_at_the_values_end() {
+    let mut pattern = seq("s", vec![lit("a", "a")]);
+
+    assert_eq!(
+        exec_outline(&mut pattern, "ab"),
+        outlined("-", "s@1..2", "s@1..2")
+    );
+    assert_eq!(
+        exec_outline(&mut pattern, "a\u{301}b"),
+        outlined("-", "s@1..4", "s@1..4")
+    );
+}
+
+#[test]
+fn deviation_a_value_length_inside_a_surrogate_pair_starts_at_the_pair() {
+    // v12: [2, 4]. The value "~5" is 2 units long, and unit 2 is the second
+    // half of the skin-tone modifier: no byte offset names it, so the error
+    // starts at the modifier (unit 1). DESIGN §5.
+    let mut pattern = tilde_digit();
+
+    assert_eq!(
+        exec_outline(&mut pattern, "~\u{1F3FD}5"),
+        outlined("-", "s@1..6", "s@1..6")
+    );
 }

@@ -15,7 +15,7 @@ export function loadCorpusFiles(dir = corpusDir) {
     .map(f => JSON.parse(readFileSync(join(dir, f), "utf8")));
 }
 
-/** `{ files: [{ name, suite, grammars: [{ key, text, cases }] }] }` where
+/** `{ files: [{ name, suite, grammars: [{ key, text, options?, cases }] }] }` where
  * each case is `{ id, rule, input, kind, autocomplete }` and `id` is unique
  * across the corpus. */
 export function expandCorpus(files) {
@@ -38,7 +38,8 @@ export function expandCorpus(files) {
           for (const t of truncations(c.input)) add(c.rule, t, "truncation", c.autocomplete ?? DEFAULT_AUTOCOMPLETE);
           for (const d of deletions(c.input)) add(c.rule, d, "deletion", null);
         }
-        return { key: `${file.name}#${index}`, text: grammar.text, cases };
+        const options = grammar.options == null ? {} : { options: grammar.options };
+        return { key: `${file.name}#${index}`, text: grammar.text, ...options, cases };
       }),
     })),
   };

@@ -240,6 +240,54 @@
    "cases": []
   },
   {
+   "id": "5fd80f09b821c235",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Custom Named Decorator",
+   "text": "\n            @record\n            spaces = /\\s+/\n\n            @record\n            digits = /\\d+/\n        ",
+   "options": {
+    "entry": "parseString",
+    "decorators": [
+     "record"
+    ]
+   },
+   "cases": []
+  },
+  {
+   "id": "1a62e336e4aa1aee",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Decorator With Empty Object Literal",
+   "text": "\n            @method({})\n            spaces = /\\s+/\n        ",
+   "options": {
+    "entry": "parseString",
+    "decorators": [
+     "method"
+    ]
+   },
+   "cases": [
+    {
+     "rule": "spaces",
+     "input": "   ",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Decorator With Empty Object Literal"
+    }
+   ]
+  },
+  {
+   "id": "6e680b904c117105",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Decorator With Object Literal",
+   "text": "\n            @method({\"prop\": 2})\n            spaces = /\\s+/\n        ",
+   "options": {
+    "entry": "parseString",
+    "decorators": [
+     "method"
+    ]
+   },
+   "cases": [
+    {
+     "rule": "spaces",
+     "input": "  ",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Decorator With Object Literal"
+    }
+   ]
+  },
+  {
    "id": "28c5254e0894578c",
    "origin": "src/grammar/Grammar.test.ts :: Grammar Decorators On Multiple Patterns And Comments",
    "text": "\n            #Comment\n            @tokens([\" \"])\n            spaces = /\\s+/\n\n            #Comment\n            @tokens([\"0\", \"1\", \"2\", \"3\", \"4\", \"5\", \"6\", \"7\", \"8\", \"9\"])\n            #Comment\n            digits = /\\d+/\n        ",
@@ -262,6 +310,103 @@
    "origin": "src/grammar/Grammar.test.ts :: Grammar Decorators",
    "text": "\n            @tokens([\" \"])\n            spaces = /\\s+/\n        ",
    "cases": []
+  },
+  {
+   "id": "accd1b6f766c1c89",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Default Params Resolves to Default Value",
+   "text": "\n        use params {\n            value = default-value\n        }\n\n        default-value = \"DefaultValue\"\n        alias = value\n        ",
+   "options": {
+    "entry": "parse",
+    "resolveImport": []
+   },
+   "cases": [
+    {
+     "rule": "alias",
+     "input": "DefaultValue",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Default Params Resolves to Default Value"
+    }
+   ]
+  },
+  {
+   "id": "354819101de5c4c8",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Default Params Resolves to imported default value",
+   "text": "\n        import { my-value as default-value } from \"resource1\"\n        use params {\n            value = default-value\n        }\n\n        default-value = \"DefaultValue\"\n        alias = value\n        ",
+   "options": {
+    "entry": "parse",
+    "resolveImport": [
+     {
+      "resource": "resource1",
+      "origin": null,
+      "file": {
+       "resource": "resource1",
+       "expression": "\n            my-value = \"MyValue\"\n        "
+      }
+     }
+    ]
+   },
+   "cases": [
+    {
+     "rule": "alias",
+     "input": "MyValue",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Default Params Resolves to imported default value"
+    }
+   ]
+  },
+  {
+   "id": "8ef25ebd3d37fffa",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Default Params Resolves to params imported",
+   "text": "\n        use params {\n            value = default-value\n        }\n\n        default-value = \"DefaultValue\"\n        alias = value\n        ",
+   "options": {
+    "entry": "parse",
+    "params": [
+     {
+      "type": "literal",
+      "name": "value",
+      "value": "Value"
+     }
+    ],
+    "resolveImport": []
+   },
+   "cases": [
+    {
+     "rule": "alias",
+     "input": "Value",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Default Params Resolves to params imported"
+    }
+   ]
+  },
+  {
+   "id": "14fd240e262141d1",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Export Name",
+   "text": "\n        import { use-this } from \"resource1\"\n        import {name} from \"resource2\" with params {\n           use-this   \n        }\n\n        name\n        ",
+   "options": {
+    "entry": "parse",
+    "resolveImport": [
+     {
+      "resource": "resource1",
+      "origin": null,
+      "file": {
+       "resource": "resource1",
+       "expression": "\n        use-this = \"Use This\"\n        "
+      }
+     },
+     {
+      "resource": "resource2",
+      "origin": null,
+      "file": {
+       "resource": "resource2",
+       "expression": "\n        use params {\n            use-this\n        }\n        name = use-this\n        "
+      }
+     }
+    ]
+   },
+   "cases": [
+    {
+     "rule": "name",
+     "input": "Use This",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Export Name"
+    }
+   ]
   },
   {
    "id": "f9269c822623942c",
@@ -288,10 +433,209 @@
    ]
   },
   {
+   "id": "2efde33a60c050d7",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Grammar Import",
+   "text": "\n        use params {\n          custom-space\n        }\n        import { first-name } from \"first-name.cpat\"\n        import { space } from \"space.cpat\" with params {\n          custom-space = custom-space\n        }\n        last-name = \"Doe\"\n        full-name = first-name + space + last-name\n        ",
+   "options": {
+    "entry": "parse",
+    "originResource": "root.cpat",
+    "params": [
+     {
+      "type": "literal",
+      "name": "custom-space",
+      "value": "  "
+     }
+    ],
+    "resolveImport": [
+     {
+      "resource": "first-name.cpat",
+      "origin": "root.cpat",
+      "file": {
+       "resource": "first-name.cpat",
+       "expression": "first-name = \"John\""
+      }
+     },
+     {
+      "resource": "space.cpat",
+      "origin": "root.cpat",
+      "file": {
+       "resource": "space.cpat",
+       "expression": "\n        use params { custom-space }\n        space = custom-space\n        "
+      }
+     }
+    ]
+   },
+   "cases": [
+    {
+     "rule": "full-name",
+     "input": "John  Doe",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Grammar Import"
+    }
+   ]
+  },
+  {
    "id": "301a2f2cbd546091",
    "origin": "src/grammar/Grammar.test.ts :: Grammar Grammar With Spaces",
    "text": "\n        john = \"John\"\n            \n        jane = \"Jane\"\n        ",
    "cases": []
+  },
+  {
+   "id": "897208cc426ee0c3",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Import Alias",
+   "text": "\n        import { value as alias } from \"resource1\"\n        import { export-value } from \"resource2\" with params {\n            param = alias\n        }\n        name = export-value\n        ",
+   "options": {
+    "entry": "parse",
+    "resolveImport": [
+     {
+      "resource": "resource1",
+      "origin": null,
+      "file": {
+       "resource": "resource1",
+       "expression": "\n        value = \"Value\"\n        "
+      }
+     },
+     {
+      "resource": "resource2",
+      "origin": null,
+      "file": {
+       "resource": "resource2",
+       "expression": "\n        use params {\n            param\n        }\n        export-value = param\n        "
+      }
+     }
+    ]
+   },
+   "cases": [
+    {
+     "rule": "name",
+     "input": "Value",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Import Alias"
+    }
+   ]
+  },
+  {
+   "id": "8286ce030882c07e",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Import Sync",
+   "text": "\n        import { name } from \"first-name.cpat\"\n        full-name = name\n        ",
+   "options": {
+    "entry": "parseString",
+    "originResource": "/root.cpat",
+    "resolveImportSync": [
+     {
+      "resource": "first-name.cpat",
+      "origin": "/root.cpat",
+      "file": {
+       "resource": "first-name.cpat",
+       "expression": "\n        import { last-name } from \"last-name.cpat\"\n        first-name = \"John\"\n        name = first-name + \" \" +  last-name\n        "
+      }
+     },
+     {
+      "resource": "last-name.cpat",
+      "origin": "first-name.cpat",
+      "file": {
+       "resource": "last-name.cpat",
+       "expression": "\n        last-name = \"Doe\"\n        "
+      }
+     }
+    ]
+   },
+   "cases": [
+    {
+     "rule": "full-name",
+     "input": "John Doe",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Import Sync"
+    }
+   ]
+  },
+  {
+   "id": "52161bb2f34c396a",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Import",
+   "text": "\n        import { first-name } from \"some/path/to/file.cpat\"\n        last-name = \"Doe\"\n        space = \" \"\n        full-name = first-name + space + last-name\n        ",
+   "options": {
+    "entry": "parse",
+    "resolveImport": [
+     {
+      "resource": "some/path/to/file.cpat",
+      "origin": null,
+      "file": {
+       "resource": "some/path/to/file.cpat",
+       "expression": "first-name = \"John\""
+      }
+     }
+    ]
+   },
+   "cases": [
+    {
+     "rule": "full-name",
+     "input": "John Doe",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Import"
+    }
+   ]
+  },
+  {
+   "id": "251f7ae708301944",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Imports with Params",
+   "text": "\n        import { first-name } from \"first-name.cpat\"\n        import { space } from \"space.cpat\" with params {\n          custom-space = \"  \"\n        }\n        last-name = \"Doe\"\n        full-name = first-name + space + last-name\n        ",
+   "options": {
+    "entry": "parse",
+    "resolveImport": [
+     {
+      "resource": "first-name.cpat",
+      "origin": null,
+      "file": {
+       "resource": "first-name.cpat",
+       "expression": "first-name = \"John\""
+      }
+     },
+     {
+      "resource": "space.cpat",
+      "origin": null,
+      "file": {
+       "resource": "space.cpat",
+       "expression": "\n        use params { custom-space }\n        space = custom-space\n        "
+      }
+     }
+    ]
+   },
+   "cases": [
+    {
+     "rule": "full-name",
+     "input": "John  Doe",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Imports with Params"
+    }
+   ]
+  },
+  {
+   "id": "98c98d1db0363bbe",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar Imports",
+   "text": "\n        import { first-name } from \"first-name.cpat\"\n        import { space } from \"space.cpat\"\n        last-name = \"Doe\"\n        full-name = first-name + space + last-name\n        ",
+   "options": {
+    "entry": "parse",
+    "resolveImport": [
+     {
+      "resource": "first-name.cpat",
+      "origin": null,
+      "file": {
+       "resource": "first-name.cpat",
+       "expression": "first-name = \"John\""
+      }
+     },
+     {
+      "resource": "space.cpat",
+      "origin": null,
+      "file": {
+       "resource": "space.cpat",
+       "expression": "space = \" \""
+      }
+     }
+    ]
+   },
+   "cases": [
+    {
+     "rule": "full-name",
+     "input": "John Doe",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar Imports"
+    }
+   ]
   },
   {
    "id": "d9d4408e67f2eb96",
@@ -514,6 +858,28 @@
    "cases": []
   },
   {
+   "id": "8dd17f5316a5faef",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar alias cycles are build errors a rule may pass a same-named param through",
+   "text": "\n            use params { space }\n            space = space\n        ",
+   "options": {
+    "entry": "parseString",
+    "params": [
+     {
+      "type": "literal",
+      "name": "space",
+      "value": " "
+     }
+    ]
+   },
+   "cases": [
+    {
+     "rule": "space",
+     "input": " ",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar alias cycles are build errors a rule may pass a same-named param through"
+    }
+   ]
+  },
+  {
    "id": "bdfc97a228379246",
    "origin": "src/grammar/Grammar.test.ts :: Grammar alias cycles are build errors a rule that aliases itself",
    "text": "a = a",
@@ -574,6 +940,36 @@
    "cases": []
   },
   {
+   "id": "cbda3eb6bb8b67fb",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar anonymous pattern names an imported grammar's anonymous names do not collide with the importer's",
+   "text": "\n            import { pair } from \"lib.cpat\"\n            x = (pair | \"z\") + (\"y\" | \"w\")\n        ",
+   "options": {
+    "entry": "parseString",
+    "resolveImportSync": [
+     {
+      "resource": "lib.cpat",
+      "origin": null,
+      "file": {
+       "resource": "lib.cpat",
+       "expression": "pair = (\"q\" | \"r\") + \"s\""
+      }
+     }
+    ]
+   },
+   "cases": [
+    {
+     "rule": "x",
+     "input": "qsy",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar anonymous pattern names an imported grammar's anonymous names do not collide with the importer's"
+    },
+    {
+     "rule": "x",
+     "input": "zw",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar anonymous pattern names an imported grammar's anonymous names do not collide with the importer's"
+    }
+   ]
+  },
+  {
    "id": "07c5db6660fa45b1",
    "origin": "src/grammar/Grammar.test.ts :: Grammar anonymous pattern names building the same grammar twice yields identical names",
    "text": "\n            x = (\"a\" | \"b\") + (\"c\" + \"d\") + (\"e\" | \"f\")\n        ",
@@ -592,6 +988,120 @@
    "cases": []
   },
   {
+   "id": "fcc7523a448b79d2",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar async import wraps error from bad imported grammar",
+   "text": "\n            import { value } from \"bad.cpat\"\n            name = value\n        ",
+   "options": {
+    "entry": "parse",
+    "resolveImport": [
+     {
+      "resource": "bad.cpat",
+      "origin": null,
+      "file": {
+       "resource": "bad.cpat",
+       "expression": "///bad grammar///"
+      }
+     }
+    ]
+   },
+   "cases": []
+  },
+  {
+   "id": "9bf2ee17ccf074b2",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar decorator receives nested array argument",
+   "text": "@config([1, 2, [3]])\nname = /\\w+/",
+   "options": {
+    "entry": "parseString",
+    "decorators": [
+     "config"
+    ]
+   },
+   "cases": []
+  },
+  {
+   "id": "f2e65494cc436cc3",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar decorator receives null argument",
+   "text": "@config(null)\nname = /\\w+/",
+   "options": {
+    "entry": "parseString",
+    "decorators": [
+     "config"
+    ]
+   },
+   "cases": []
+  },
+  {
+   "id": "6cd620b323a71798",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar decorator receives number argument",
+   "text": "@config(42)\nname = /\\w+/",
+   "options": {
+    "entry": "parseString",
+    "decorators": [
+     "config"
+    ]
+   },
+   "cases": []
+  },
+  {
+   "id": "de96cba5cdbdb151",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar decorator receives string argument",
+   "text": "@config(\"hello\")\nname = /\\w+/",
+   "options": {
+    "entry": "parseString",
+    "decorators": [
+     "config"
+    ]
+   },
+   "cases": []
+  },
+  {
+   "id": "8d0b82b9f2991bb5",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar default param is overridden when param is supplied",
+   "text": "\n            use params { value = default-value }\n            default-value = \"DefaultValue\"\n            alias = value\n        ",
+   "options": {
+    "entry": "parseString",
+    "params": [
+     {
+      "type": "literal",
+      "name": "value",
+      "value": "Supplied"
+     }
+    ]
+   },
+   "cases": [
+    {
+     "rule": "alias",
+     "input": "Supplied",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar default param is overridden when param is supplied"
+    }
+   ]
+  },
+  {
+   "id": "9b599d4fb5a89c40",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar default param resolves to imported pattern",
+   "text": "\n            import { my-value as default-value } from \"r1\"\n            use params { value = default-value }\n            alias = value\n        ",
+   "options": {
+    "entry": "parse",
+    "resolveImport": [
+     {
+      "resource": "r1",
+      "origin": null,
+      "file": {
+       "resource": "r1",
+       "expression": "my-value = \"MyValue\""
+      }
+     }
+    ]
+   },
+   "cases": [
+    {
+     "rule": "alias",
+     "input": "MyValue",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar default param resolves to imported pattern"
+    }
+   ]
+  },
+  {
    "id": "ce1ae5ab62044481",
    "origin": "src/grammar/Grammar.test.ts :: Grammar default param resolves to locally defined pattern when no param supplied",
    "text": "\n            use params { value = default-value }\n            default-value = \"DefaultValue\"\n            alias = value\n        ",
@@ -604,6 +1114,60 @@
    ]
   },
   {
+   "id": "bb4e8e9258b1305d",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar duplicate import alias throws",
+   "text": "\n            import { a as alias } from \"r1\"\n            import { b as alias } from \"r2\"\n        ",
+   "options": {
+    "entry": "parse",
+    "resolveImport": [
+     {
+      "resource": "r1",
+      "origin": null,
+      "file": {
+       "resource": "r1",
+       "expression": "a = \"A\""
+      }
+     },
+     {
+      "resource": "r2",
+      "origin": null,
+      "file": {
+       "resource": "r2",
+       "expression": "b = \"B\""
+      }
+     }
+    ]
+   },
+   "cases": []
+  },
+  {
+   "id": "91e10990289b9093",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar duplicate import name throws",
+   "text": "\n            import { value } from \"r1\"\n            import { value } from \"r2\"\n        ",
+   "options": {
+    "entry": "parse",
+    "resolveImport": [
+     {
+      "resource": "r1",
+      "origin": null,
+      "file": {
+       "resource": "r1",
+       "expression": "value = \"A\""
+      }
+     },
+     {
+      "resource": "r2",
+      "origin": null,
+      "file": {
+       "resource": "r2",
+       "expression": "value = \"A\""
+      }
+     }
+    ]
+   },
+   "cases": []
+  },
+  {
    "id": "da39a3ee5e6b4b0d",
    "origin": "src/grammar/Grammar.test.ts :: Grammar empty grammar throws",
    "text": "",
@@ -614,6 +1178,31 @@
    "origin": "src/grammar/Grammar.test.ts :: Grammar empty string literal throws",
    "text": "empty = \"\"",
    "cases": []
+  },
+  {
+   "id": "3f52192fbc3bbd54",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar export pattern promotes previously defined pattern",
+   "text": "\n            import { value } from \"r1\"\n            value\n        ",
+   "options": {
+    "entry": "parseString",
+    "resolveImportSync": [
+     {
+      "resource": "r1",
+      "origin": null,
+      "file": {
+       "resource": "r1",
+       "expression": "value = \"Hello\""
+      }
+     }
+    ]
+   },
+   "cases": [
+    {
+     "rule": "value",
+     "input": "Hello",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar export pattern promotes previously defined pattern"
+    }
+   ]
   },
   {
    "id": "603f3be4f19c8d53",
@@ -747,9 +1336,106 @@
    "cases": []
   },
   {
+   "id": "0819e5f8bcd89a74",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar import multiple patterns from same resource",
+   "text": "\n            import { first, last } from \"names.cpat\"\n            full = first + \" \" + last\n        ",
+   "options": {
+    "entry": "parse",
+    "resolveImport": [
+     {
+      "resource": "names.cpat",
+      "origin": null,
+      "file": {
+       "resource": "names.cpat",
+       "expression": "first = \"John\"\nlast = \"Doe\""
+      }
+     }
+    ]
+   },
+   "cases": [
+    {
+     "rule": "full",
+     "input": "John Doe",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar import multiple patterns from same resource"
+    }
+   ]
+  },
+  {
+   "id": "0efeb9354f1bbb2f",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar import multiple patterns with alias from same resource",
+   "text": "\n            import { first, last as surname } from \"names.cpat\"\n            full = first + \" \" + surname\n        ",
+   "options": {
+    "entry": "parse",
+    "resolveImport": [
+     {
+      "resource": "names.cpat",
+      "origin": null,
+      "file": {
+       "resource": "names.cpat",
+       "expression": "first = \"John\"\nlast = \"Doe\""
+      }
+     }
+    ]
+   },
+   "cases": [
+    {
+     "rule": "full",
+     "input": "John Doe",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar import multiple patterns with alias from same resource"
+    }
+   ]
+  },
+  {
+   "id": "4e00191804eb13dc",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar import without resolver (async) throws",
+   "text": "\n            import { value } from \"file.cpat\"\n            name = value\n        ",
+   "options": {
+    "entry": "parse"
+   },
+   "cases": []
+  },
+  {
    "id": "0b5f589384a72783",
    "origin": "src/grammar/Grammar.test.ts :: Grammar import without resolver (sync) throws",
    "text": "\n            import { value } from \"file.cpat\"\n            name = value\n        ",
+   "cases": []
+  },
+  {
+   "id": "fa4420f1d191bf18",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar importing nonexistent pattern throws",
+   "text": "\n            import { nonexistent } from \"r1\"\n        ",
+   "options": {
+    "entry": "parse",
+    "resolveImport": [
+     {
+      "resource": "r1",
+      "origin": null,
+      "file": {
+       "resource": "r1",
+       "expression": "value = \"A\""
+      }
+     }
+    ]
+   },
+   "cases": []
+  },
+  {
+   "id": "133b34243debddfc",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar importing nonexistent pattern via alias throws",
+   "text": "\n            import { nonexistent as alias } from \"r1\"\n        ",
+   "options": {
+    "entry": "parse",
+    "resolveImport": [
+     {
+      "resource": "r1",
+      "origin": null,
+      "file": {
+       "resource": "r1",
+       "expression": "value = \"A\""
+      }
+     }
+    ]
+   },
    "cases": []
   },
   {
@@ -874,6 +1560,19 @@
    "id": "60946011e8cfe9e7",
    "origin": "src/grammar/Grammar.test.ts :: Grammar literal escape decoding two escaped backslashes are two backslashes",
    "text": "x = \"\\\\\\\\\"",
+   "cases": []
+  },
+  {
+   "id": "1e04f930ee07a6d1",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar multiple decorators applied to same pattern",
+   "text": "\n            @first\n            @second\n            name = /\\w+/\n        ",
+   "options": {
+    "entry": "parseString",
+    "decorators": [
+     "first",
+     "second"
+    ]
+   },
    "cases": []
   },
   {
@@ -1077,6 +1776,25 @@
    "cases": []
   },
   {
+   "id": "9d81a73fea73416b",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar shadowed literals are build errors looks through imported literals",
+   "text": "\n            import { lt } from \"ops\"\n            op = lt | \"<=\"\n        ",
+   "options": {
+    "entry": "parseString",
+    "resolveImportSync": [
+     {
+      "resource": "ops",
+      "origin": null,
+      "file": {
+       "resource": "ops",
+       "expression": "lt = \"<\""
+      }
+     }
+    ]
+   },
+   "cases": []
+  },
+  {
    "id": "a7678cc2c7b153e0",
    "origin": "src/grammar/Grammar.test.ts :: Grammar shadowed literals are build errors looks through rule names, including ones defined later",
    "text": "\n            lt = \"<\"\n            op = lt | le\n            le = \"<=\"\n        ",
@@ -1104,6 +1822,25 @@
      "origin": "src/grammar/Grammar.test.ts :: Grammar shadowed literals are build errors the longer literal first is fine"
     }
    ]
+  },
+  {
+   "id": "cf97548a8ca45ef0",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar sync import wraps error from bad imported grammar",
+   "text": "\n            import { value } from \"bad.cpat\"\n            name = value\n        ",
+   "options": {
+    "entry": "parseString",
+    "resolveImportSync": [
+     {
+      "resource": "bad.cpat",
+      "origin": null,
+      "file": {
+       "resource": "bad.cpat",
+       "expression": "///bad grammar///"
+      }
+     }
+    ]
+   },
+   "cases": []
   },
   {
    "id": "4a358a65af0518f1",
@@ -1136,6 +1873,28 @@
    "cases": []
   },
   {
+   "id": "66263d64fdc8616e",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar unknown pattern names are build errors a declared param that is neither supplied nor defaulted is an error when used",
+   "text": "\n            use params { value }\n            x = value + \"!\"\n        ",
+   "options": {
+    "entry": "parseString",
+    "params": [
+     {
+      "type": "literal",
+      "name": "value",
+      "value": "v"
+     }
+    ]
+   },
+   "cases": [
+    {
+     "rule": "x",
+     "input": "v!",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar unknown pattern names are build errors a declared param that is neither supplied nor defaulted is an error when used"
+    }
+   ]
+  },
+  {
    "id": "7d00babf595062ff",
    "origin": "src/grammar/Grammar.test.ts :: Grammar unknown pattern names are build errors a forward reference to a pattern defined later is fine",
    "text": "\n            x = later + \"!\"\n            later = \"a\"\n        ",
@@ -1166,10 +1925,64 @@
    "cases": []
   },
   {
+   "id": "8a4b09186df44e9c",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar unknown pattern names are build errors imported and param names count as defined",
+   "text": "\n            import { a } from \"lib\"\n            x = a + b\n        ",
+   "options": {
+    "entry": "parse",
+    "params": [
+     {
+      "type": "literal",
+      "name": "b",
+      "value": "B"
+     }
+    ],
+    "resolveImport": [
+     {
+      "resource": "lib",
+      "origin": null,
+      "file": {
+       "resource": "lib",
+       "expression": "a = \"A\""
+      }
+     }
+    ]
+   },
+   "cases": [
+    {
+     "rule": "x",
+     "input": "AB",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar unknown pattern names are build errors imported and param names count as defined"
+    }
+   ]
+  },
+  {
    "id": "4670d078378ae2e5",
    "origin": "src/grammar/Grammar.test.ts :: Grammar unknown pattern names are build errors nested references are checked too",
    "text": "\n            a = \"a\"\n            x = a + (\"b\" | (nope)+)\n        ",
    "cases": []
+  },
+  {
+   "id": "4a81f96ff26869e6",
+   "origin": "src/grammar/Grammar.test.ts :: Grammar use params without default declares param available from options",
+   "text": "\n            use params { value }\n            alias = value\n        ",
+   "options": {
+    "entry": "parseString",
+    "params": [
+     {
+      "type": "literal",
+      "name": "value",
+      "value": "Provided"
+     }
+    ]
+   },
+   "cases": [
+    {
+     "rule": "alias",
+     "input": "Provided",
+     "origin": "src/grammar/Grammar.test.ts :: Grammar use params without default declares param available from options"
+    }
+   ]
   }
  ]
 }

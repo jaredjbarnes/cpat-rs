@@ -34,10 +34,20 @@ function groupByKind(differences) {
 export function formatReport({ perFile, totals, engines, explained, unexplained, stale, examples }) {
   const lines = [];
   lines.push("# Conformance: TS v12 vs cpat-rs native vs cpat-wasm", "");
-  lines.push("| corpus | suite | grammars | captured | cases | autocomplete |");
-  lines.push("|---|---|---:|---:|---:|---:|");
+  lines.push("| corpus | suite | grammars | captured | cases | autocomplete | with imports | with params | with decorators |");
+  lines.push("|---|---|---:|---:|---:|---:|---:|---:|---:|");
   for (const f of perFile) {
-    lines.push(`| ${f.name} | ${f.suite} | ${f.grammars} | ${f.captured} | ${f.cases} | ${f.suggestions} |`);
+    lines.push(
+      `| ${f.name} | ${f.suite} | ${f.grammars} | ${f.captured} | ${f.cases} | ${f.suggestions} | ${f.imports} | ${f.params} | ${f.decorators} |`
+    );
+  }
+  lines.push("");
+  const sum = key => perFile.reduce((n, f) => n + f[key], 0);
+  lines.push(
+    `Cases from grammars that use imports: ${sum("imports")}, params: ${sum("params")}, decorators: ${sum("decorators")}.`
+  );
+  for (const f of perFile.filter(f => f.suite === "generated")) {
+    lines.push(`Generated corpus \`${f.name}\`: ${f.cases} cases (${f.captured} generated inputs, the rest their mutations).`);
   }
   lines.push("");
   lines.push(`Engines compared with TS v12: ${engines.join(", ")}.`, "");
@@ -74,9 +84,12 @@ export function formatReport({ perFile, totals, engines, explained, unexplained,
   return lines.join("\n");
 }
 
-export function summaryLine({ totals, explained, unexplained, stale }) {
+export function summaryLine({ perFile, totals, explained, unexplained, stale }) {
+  const sum = key => perFile.reduce((n, f) => n + f[key], 0);
+  const generated = perFile.filter(f => f.suite === "generated").map(f => `${f.name} ${f.cases}`);
   return (
-    `cases ${totals.cases}, matches compared ${totals.matches}, ASTs compared ${totals.asts}, ` +
+    `cases ${totals.cases} (with imports ${sum("imports")}, params ${sum("params")}, decorators ${sum("decorators")}` +
+    `${generated.length > 0 ? `; generated: ${generated.join(", ")}` : ""}), matches compared ${totals.matches}, ASTs compared ${totals.asts}, ` +
     `errors compared ${totals.errors}, messages compared ${totals.messages}, suggestions compared ${totals.suggestions}; ` +
     `differences ${explained.length + unexplained.length} (explained ${explained.length}, unexplained ${unexplained.length})` +
     (stale.length > 0 ? `; stale allowlist entries ${stale.length}` : "")

@@ -18,6 +18,7 @@ import { applyAllowlist, loadAllowlist } from "./lib/allowlist.mjs";
 import { compare, indexResults } from "./lib/compare.mjs";
 import { expandCorpus, loadCorpusFiles } from "./lib/corpus.mjs";
 import { conformanceDir, nativeBin, repoDir, v12Dir, wasmDir, workDir } from "./lib/paths.mjs";
+import { grammarUses } from "./lib/features.mjs";
 import { formatReport, summaryLine } from "./lib/report.mjs";
 
 const args = process.argv.slice(2);
@@ -95,6 +96,7 @@ function buildEngines() {
 function perFile(corpus) {
   return corpus.files.map(file => {
     const cases = file.grammars.flatMap(g => g.cases);
+    const casesUsing = feature => file.grammars.filter(g => grammarUses(g)[feature]).reduce((n, g) => n + g.cases.length, 0);
     return {
       name: file.name,
       suite: file.suite,
@@ -102,6 +104,9 @@ function perFile(corpus) {
       captured: cases.filter(c => c.kind === "captured" || c.kind === "autocomplete").length,
       cases: cases.length,
       suggestions: cases.filter(c => c.autocomplete != null).length,
+      imports: casesUsing("imports"),
+      params: casesUsing("params"),
+      decorators: casesUsing("decorators"),
     };
   });
 }

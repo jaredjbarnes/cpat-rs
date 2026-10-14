@@ -71,6 +71,7 @@ mod regex_translate;
 mod scope;
 mod tokenizable;
 mod tree;
+mod whole_text;
 
 pub use ancestors::Frame;
 pub use ast::{CycleFreeNode, EditableTree, NodeRef, Visitors};

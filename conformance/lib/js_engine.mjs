@@ -8,14 +8,15 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { v12Api, wasmApi } from "./paths.mjs";
-import { astRows, errorTriple, threw } from "./normalize.mjs";
+import { autoCompleteResult, buildResult, execResult, threw } from "./normalize.mjs";
+import { replayBuild } from "./replay.mjs";
 
 const [engine, casesPath, outPath, shardArg = "0/1"] = process.argv.slice(2);
 const [shard, shards] = shardArg.split("/").map(Number);
 const apiPath = { ts: v12Api, wasm: wasmApi }[engine];
 if (apiPath == null) throw new Error(`unknown engine ${engine}`);
 const api = await import(pathToFileURL(apiPath).href);
-const { Grammar, AutoComplete, generateErrorMessage } = api;
+const { AutoComplete, generateErrorMessage } = api;
 
 const corpus = JSON.parse(readFileSync(casesPath, "utf8"));
 const lines = [];
@@ -25,16 +26,11 @@ for (const file of corpus.files) {
     const cases = grammar.cases.filter(c => c.id % shards === shard);
     // Shard 0 reports every build; the others build only what they parse.
     if (cases.length === 0 && shard !== 0) continue;
-    let patterns = null;
-    let buildError = null;
-    try {
-      patterns = Grammar.parseString(grammar.text);
-    } catch (error) {
-      buildError = threw(error);
-    }
+    const built = await replayBuild(api, grammar, threw);
     if (shard === 0) {
-      lines.push(JSON.stringify({ build: grammar.key, error: buildError, rules: patterns == null ? null : Object.keys(patterns) }));
+      lines.push(JSON.stringify(buildResult(grammar.key, built, grammar.options?.decorators != null)));
     }
+    const patterns = built.patterns;
     // One AutoComplete per rule and options, reused as an editor would.
     const autoCompletes = new Map();
     for (const c of cases) lines.push(JSON.stringify({ id: c.id, ...runCase(patterns, c, autoCompletes) }));
@@ -60,22 +56,14 @@ function runCase(patterns, c, autoCompletes) {
 
 function execCase(pattern, input) {
   try {
-    const { ast, cursor } = pattern.exec(input);
+    const result = pattern.exec(input);
     let message;
     try {
-      message = generateErrorMessage(pattern, cursor);
+      message = generateErrorMessage(pattern, result.cursor);
     } catch (error) {
       message = { threw: threw(error) };
     }
-    return {
-      matched: ast != null,
-      ast: astRows(ast, input),
-      error: errorTriple(cursor.error),
-      furthest: errorTriple(cursor.furthestError),
-      message,
-      // cpat's depth limit (README, DESIGN §11); v12 has none.
-      ...(cursor.tooDeep ? { tooDeep: true } : {}),
-    };
+    return execResult(result, message, input);
   } catch (error) {
     return { threw: threw(error) };
   }
@@ -83,13 +71,7 @@ function execCase(pattern, input) {
 
 function autoCompleteCase(made, input) {
   try {
-    const suggestion = made().suggestFor(input);
-    return {
-      complete: suggestion.isComplete,
-      at: suggestion.errorAtIndex,
-      options: suggestion.options.map(o => [o.text, o.startIndex]),
-      ...(suggestion.cursor?.tooDeep ? { tooDeep: true } : {}),
-    };
+    return autoCompleteResult(made().suggestFor(input));
   } catch (error) {
     return { threw: threw(error) };
   }

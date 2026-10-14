@@ -255,15 +255,15 @@ fn optional_content_that_does_not_match_leaves_the_block_without_content() {
 }
 
 #[test]
-fn deviation_a_block_whose_absent_content_skipped_text_still_matches_all_of_it() {
+fn a_block_whose_absent_content_skipped_text_does_not_match_all_of_it() {
     // v12's exec compares the joined children's values ("{}") with the
-    // text ("{1}") and reports a summary error at 2. A node's value here is
-    // the slice it spans (DESIGN §10), which is all of the text.
+    // text ("{1}") and reports a summary error at the value's length, 2.
+    // The skipped `1` belongs to no node, so here too it is no match.
     let mut pattern = braces(Some(opt("maybe", re("content", "[a-z]+"))));
 
     assert_eq!(
-        exec_shape(&mut pattern, "{1}"),
-        "braces:block@0..3[open:literal@0..1 close:literal@2..3]"
+        exec_outline(&mut pattern, "{1}"),
+        outlined("-", "braces@2..3", "content@1..1")
     );
 }
 
@@ -595,15 +595,22 @@ fn delimiters_longer_than_one_character() {
 #[test]
 fn deviation_an_open_token_ending_inside_a_grapheme_starts_the_content_after_it() {
     // "e" matches the base of "e" + combining accent. v12 moves its cursor
-    // back to the grapheme's start, so its content overlaps the open and
-    // its exec fails ("eéx}" is not the text). Here the content starts at
-    // the next boundary, where the open literal left the cursor; a position
-    // inside a grapheme doesn't exist (DESIGN §5c).
+    // back to the grapheme's start, so its content overlaps the open. Here
+    // the content starts at the next boundary, where the open literal left
+    // the cursor; a position inside a grapheme doesn't exist (DESIGN §5c).
     let mut pattern = block("b", "e", Some(re("c", "[^}]+")), "}");
 
     assert_eq!(
-        exec_shape(&mut pattern, "e\u{301}x}"),
+        parse_shape(&mut pattern, "e\u{301}x}").0,
         "b:block@0..5[open:literal@0..1 c:regex@3..4 close:literal@4..5]"
+    );
+
+    // Neither is a match: the accent is in no node. v12 starts the error at
+    // its overlapping value's length (5, past the text); here at the
+    // value's length, "ex}", 3 UTF-16 units: byte 4.
+    assert_eq!(
+        exec_outline(&mut pattern, "e\u{301}x}"),
+        outlined("-", "b@4..5", "b@4..5")
     );
 }
 
