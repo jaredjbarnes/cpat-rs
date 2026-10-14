@@ -94,6 +94,8 @@
 > Gap 1-3 (AutoComplete's option order exact for every letter in U+00C0–U+017F) is
 > implemented, with its fix round (`ĳ` as `ij` by case only; marks in canonical order); see
 > §17's sorting entry for exactly which characters sort as ICU sorts them.
+> Gap 1-4 (decorator JSON arguments) is implemented; see §9. An object argument keeps its keys
+> in source order and every number is the double v12's `JSON.parse` gives, in Rust and in JS.
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -349,6 +351,25 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
 - A decorator is `Fn(Pattern, Option<&Json>) -> Result<Pattern, String>`. It can wrap or replace
   a pattern, for example to inject a `Custom` one. *(Implemented: `Decorator`, `Decorators`,
   `cpat_core::Json` is `serde_json::Value`; §19.)*
+- The argument is v12's `JSON.parse` of the source text. *(Gap 1-4.)* `serde_json` is built
+  with `preserve_order`, so an object's keys iterate as written (a repeated key keeps its first
+  place and its last value, as `JSON.parse` does), and with `float_roundtrip`, so a long
+  decimal rounds to the nearest double as JS's does (the default fast path is one unit off for
+  `402.00277659416020846170`). `-0` and `-0.0` keep their sign; an integer past 64 bits is the
+  nearest double. The cpat grammar's `jsonNumber` is `-?\d+(\.\d+)?` in v12 as here, so `1e2`
+  is a grammar error in both. A JS decorator gets `JSON.parse` of the Rust value's text, which
+  equals v12's value exactly: shortest round-trip floats and exact integers parse to the same
+  doubles. *Why not hand JS the source slice:* the Rust `Decorator` signature takes a `Json`, and
+  re-serializing keeps one path for both sides; the tests compare with v12 on each form.
+  *Deviations, both in Rust only:* an integer within `u64`/`i64` stays exact (v12 can only hold
+  a double, `9007199254740993` arriving as `9007199254740992`), and integer-like keys keep their
+  source place where a JS object lists them first, ascending; that is a rule of JS objects, not
+  of `JSON.parse`, and JS decorators see JS's order. A third, on both sides: a number past the
+  largest double (a 400-digit integer) is `GrammarError::DecoratorArgument` ("number out of
+  range"), where v12 hands `Infinity`, which a `Json` can't hold. Pinned in `tests/grammar_decorators.rs` and
+  `js/js_api.test.mjs`. Side effect: every `serde_json` object the wasm layer writes (the
+  cursor's report, AutoComplete's) now keeps insertion order instead of sorting its keys; JS
+  reads them by name, so nothing observes it.
 - Mistakes are build errors. *(Implemented: every decorator error is `[Invalid Grammar] …`.)*
 - JS decorators are fully supported. *(Implemented in milestone 14, §22.)* A JS custom pattern
   uses a minimal contract, `(text, pos) => end | null`, so each attempt is one boundary call.

@@ -200,6 +200,43 @@ test("a JS decorator gets the rule's pattern and JSON argument, and its changes 
   assert.equal(word.exec("maybe").ast.value, "maybe");
 });
 
+// What v12's `JSON.parse` of the argument's text gives, checked against v12.
+const argumentOf = text => {
+  let got = "none";
+  Grammar.parseString(`@config(${text})\nname = /\\w+/`, {
+    decorators: { config: (_p, arg) => { got = arg; } },
+  });
+  return got;
+};
+
+test("a decorator's object argument has v12's keys in v12's order", () => {
+  assert.equal(
+    JSON.stringify(argumentOf(`{"b":1,"a":2.50,"z":{"y":null,"x":true}}`)),
+    `{"b":1,"a":2.5,"z":{"y":null,"x":true}}`,
+  );
+  // JS lists integer-like keys first, as v12's object does.
+  assert.deepEqual(Object.keys(argumentOf(`{"b":1,"1":1,"a":2}`)), ["1", "b", "a"]);
+  assert.equal(JSON.stringify(argumentOf(`{"a":1,"b":2,"a":3}`)), `{"a":3,"b":2}`);
+});
+
+test("a decorator's number argument is v12's double", () => {
+  const cases = [
+    ["2.50", 2.5],
+    ["1.0", 1],
+    ["-0.0", -0],
+    ["-0", -0],
+    ["123456789012345678901234567890", 1.2345678901234568e29],
+    ["18446744073709551615", 18446744073709552000],
+    ["9007199254740993", 9007199254740992],
+    ["-9223372036854775809", -9223372036854776000],
+    ["402.00277659416020846170", 402.0027765941602],
+  ];
+  for (const [text, expected] of cases) {
+    assert.ok(Object.is(argumentOf(text), expected), `${text} gave ${argumentOf(text)}`);
+  }
+  assert.equal(JSON.stringify(argumentOf(`[1.0, -0, {"q":0.10}]`)), `[1,0,{"q":0.1}]`);
+});
+
 test("a decorator may keep the pattern it was handed; it stays usable", () => {
   const kept = [];
   createPatternsTemplate({ decorators: { keep: p => kept.push(p) } })`

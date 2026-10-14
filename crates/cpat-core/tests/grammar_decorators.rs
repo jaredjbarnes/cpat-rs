@@ -331,6 +331,130 @@ fn decorator_receives_string_argument() {
     );
 }
 
+/// The argument the one `@config` in `text` was handed.
+fn argument_of(text: &str) -> Json {
+    let seen = Rc::new(RefCell::new(None));
+    let noted = Rc::clone(&seen);
+    let decorators = Decorators::new().with("config", move |pattern, argument| {
+        *noted.borrow_mut() = argument.cloned();
+        Ok(pattern)
+    });
+    patterns_with(decorated(decorators))(text).unwrap();
+    seen.take().expect("the decorator got an argument")
+}
+
+fn keys(object: &Json) -> Vec<&str> {
+    object
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect()
+}
+
+#[test]
+fn an_object_argument_keeps_its_source_key_order() {
+    // v12's `JSON.parse` keeps an object's keys in the order written; a
+    // sorted map would hand `a` before `b`.
+    let argument =
+        argument_of("@config({\"b\":1,\"a\":2.50,\"z\":{\"y\":null,\"x\":true}})\nname = /\\w+/");
+    assert_eq!(keys(&argument), ["b", "a", "z"]);
+    assert_eq!(keys(&argument["z"]), ["y", "x"]);
+    assert_eq!(
+        argument.to_string(),
+        r#"{"b":1,"a":2.5,"z":{"y":null,"x":true}}"#
+    );
+}
+
+#[test]
+fn a_repeated_key_keeps_its_first_place_and_its_last_value() {
+    // As `JSON.parse` does: `{"a":1,"b":2,"a":3}` is `{"a":3,"b":2}`.
+    let argument = argument_of("@config({\"a\":1,\"b\":2,\"a\":3})\nname = /\\w+/");
+    assert_eq!(argument.to_string(), r#"{"a":3,"b":2}"#);
+}
+
+#[test]
+fn deviation_integer_like_keys_keep_their_source_place() {
+    // A JS object lists integer-like keys first, ascending, whatever order
+    // they were written in (`Object.keys` gives `["1","b","a"]` for both
+    // texts). That is a rule of JS objects, not of `JSON.parse`, so the Rust
+    // value keeps the source order; JS decorators re-parse the argument's
+    // text and get JS's order (`js_api.test.mjs`).
+    let argument = argument_of("@config({\"b\":1,\"1\":1,\"a\":2})\nname = /\\w+/");
+    assert_eq!(keys(&argument), ["b", "1", "a"]);
+}
+
+#[test]
+fn a_number_argument_is_the_double_v12_would_get() {
+    // Each checked against v12's `JSON.parse` of the same text.
+    let number = |text: &str| argument_of(&format!("@config({text})\nname = /\\w+/"));
+    assert_eq!(number("2.50").as_f64(), Some(2.5));
+    assert_eq!(number("1.0").as_f64(), Some(1.0));
+    // Negative zero keeps its sign, with or without a fraction.
+    for zero in ["-0.0", "-0"] {
+        let value = number(zero).as_f64().unwrap();
+        assert!(
+            value == 0.0 && value.is_sign_negative(),
+            "{zero} gave {value}"
+        );
+    }
+    // Past `u64`, an integer is the nearest double.
+    assert_eq!(
+        number("123456789012345678901234567890").as_f64(),
+        Some(1.2345678901234568e29)
+    );
+    // Long fractions round correctly (serde_json's fast path would give
+    // 402.00277659416025 here, one unit too high).
+    assert_eq!(
+        number("402.00277659416020846170").as_f64(),
+        Some(402.0027765941602)
+    );
+    assert_eq!(
+        number("353.03496675282075545009").as_f64(),
+        Some(353.03496675282076)
+    );
+}
+
+#[test]
+fn deviation_an_integer_within_64_bits_stays_exact() {
+    // JS has only doubles, so v12 hands `9007199254740992` and
+    // `18446744073709552000`; a Rust decorator gets the integer written.
+    // The JS side parses the argument's text and gets v12's doubles.
+    let number = |text: &str| argument_of(&format!("@config({text})\nname = /\\w+/"));
+    assert_eq!(number("9007199254740993").as_u64(), Some(9007199254740993));
+    assert_eq!(
+        number("18446744073709551615").as_u64(),
+        Some(18446744073709551615)
+    );
+    assert_eq!(
+        number("-9223372036854775808").as_i64(),
+        Some(-9223372036854775808)
+    );
+}
+
+#[test]
+fn deviation_a_number_past_the_largest_double_is_a_build_error() {
+    // v12's `JSON.parse` gives `Infinity`, which a `Json` can't hold.
+    let text = format!("@config(1{})\nname = /\\w+/", "0".repeat(400));
+    let (decorators, log) = recording(&["config"]);
+    let error = Grammar::parse_string(&text, decorated(decorators)).unwrap_err();
+    assert!(logged(&log).is_empty());
+    let GrammarError::DecoratorArgument { decorator, message } = &error else {
+        panic!("expected a decorator argument error, got {error:?}");
+    };
+    assert_eq!(decorator, "config");
+    assert!(message.starts_with("number out of range"), "{message}");
+}
+
+#[test]
+fn an_exponent_is_no_cpat_number() {
+    // The cpat grammar's `jsonNumber` is `-?\d+(\.\d+)?`, in v12 as here.
+    assert_eq!(
+        message("@config(1e2)\nname = /\\w+/"),
+        "[Invalid Grammar] Error at line 1, column 10. Hint: )"
+    );
+}
+
 #[test]
 fn a_boolean_argument_arrives_as_none_as_in_v12() {
     // The cpat grammar's `jsonBoolean` is a choice of two literals, whose

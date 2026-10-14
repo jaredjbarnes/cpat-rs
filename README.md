@@ -24,7 +24,7 @@ let result = full_name.exec("John Doe");
 assert_eq!(result.tree().unwrap().root().value(), "John Doe");
 ```
 
-## What's in the box (milestone 16, gaps 1-1 and 1-2)
+## What's in the box (milestone 16, gaps 1-1 to 1-4)
 
 `Literal`, `Regex`, `Sequence`, `Choice`, `Repeat` (unbounded or bounded, with an optional
 divider and `trim_divider`), `Optional`, `Not`, `Cut`, `Reference` and `Context` for recursive
@@ -144,7 +144,9 @@ resolver too). `use params { x, y = default }` declares what a grammar takes; `p
 options supply it. `Grammar::import(resource, options)` builds a grammar the resolver finds.
 Decorators above a rule hand its pattern to a function: `@tokens(["a", "b"])` is built in, and
 `GrammarOptions::decorators` registers your own (`Fn(Pattern, Option<&Json>) -> Result<Pattern,
-String>`), which may replace the pattern, with a `Custom` one for instance. Errors are v12's,
+String>`), which may replace the pattern, with a `Custom` one for instance. The argument is
+what v12's `JSON.parse` gives: an object's keys in the order written, each number the nearest
+double (integers that fit 64 bits stay exact in Rust; JS gets v12's doubles). Errors are v12's,
 word for word (`Failed loading expression from: "lib.cpat". Error details: "…"`).
 
 `patterns(text)` (or `patterns!`, which formats like `format!` when given arguments) returns the
