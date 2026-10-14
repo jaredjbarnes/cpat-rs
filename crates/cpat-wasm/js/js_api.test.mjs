@@ -237,6 +237,16 @@ test("a decorator's number argument is v12's double", () => {
   assert.equal(JSON.stringify(argumentOf(`[1.0, -0, {"q":0.10}]`)), `[1,0,{"q":0.1}]`);
 });
 
+test("a decorator's lone surrogate escape arrives as U+FFFD (deviation: v12 keeps the lone unit)", () => {
+  // The Rust value can't hold a lone surrogate; cpat literals read one as
+  // U+FFFD (DESIGN §19), and so does a decorator argument (§9).
+  assert.equal(argumentOf(`"\\ud800"`), "\ufffd");
+  assert.deepEqual(Object.keys(argumentOf(`{"\\ud800":1}`)), ["\ufffd"]);
+  assert.deepEqual(argumentOf(`["\\udfff"]`), ["\ufffd"]);
+  assert.equal(argumentOf(`"\\uDE00\\uD83D"`), "\ufffd\ufffd");
+  assert.equal(argumentOf(`"\\ud83d\\ude00"`), "\u{1F600}");
+});
+
 test("a decorator may keep the pattern it was handed; it stays usable", () => {
   const kept = [];
   createPatternsTemplate({ decorators: { keep: p => kept.push(p) } })`

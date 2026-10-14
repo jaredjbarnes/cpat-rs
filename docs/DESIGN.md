@@ -95,7 +95,9 @@
 > implemented, with its fix round (`ĳ` as `ij` by case only; marks in canonical order); see
 > §17's sorting entry for exactly which characters sort as ICU sorts them.
 > Gap 1-4 (decorator JSON arguments) is implemented; see §9. An object argument keeps its keys
-> in source order and every number is the double v12's `JSON.parse` gives, in Rust and in JS.
+> in source order and every number is the double v12's `JSON.parse` gives, in Rust and in JS. Its fix round
+> reads a lone surrogate escape in an argument as U+FFFD (a documented deviation, §9) instead of
+> failing the build.
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -358,7 +360,7 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   `402.00277659416020846170`). `-0` and `-0.0` keep their sign; an integer past 64 bits is the
   nearest double. The cpat grammar's `jsonNumber` is `-?\d+(\.\d+)?` in v12 as here, so `1e2`
   is a grammar error in both. A JS decorator gets `JSON.parse` of the Rust value's text, which
-  equals v12's value exactly: shortest round-trip floats and exact integers parse to the same
+  equals v12's value exactly (but for the two deviations on both sides below): shortest round-trip floats and exact integers parse to the same
   doubles. *Why not hand JS the source slice:* the Rust `Decorator` signature takes a `Json`, and
   re-serializing keeps one path for both sides; the tests compare with v12 on each form.
   *Deviations, both in Rust only:* an integer within `u64`/`i64` stays exact (v12 can only hold
@@ -366,7 +368,15 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   source place where a JS object lists them first, ascending; that is a rule of JS objects, not
   of `JSON.parse`, and JS decorators see JS's order. A third, on both sides: a number past the
   largest double (a 400-digit integer) is `GrammarError::DecoratorArgument` ("number out of
-  range"), where v12 hands `Infinity`, which a `Json` can't hold. Pinned in `tests/grammar_decorators.rs` and
+  range"), where v12 hands `Infinity`, which a `Json` can't hold. A fourth, on both sides
+  *(gap 1-4 fix round 1)*: a `\u` escape that is half of a surrogate pair with no partner
+  (`"\ud800"`, a key `{"\udfff":1}`, a reversed pair `"\uDE00\uD83D"`) reads as U+FFFD, the
+  rule cpat literals follow (§19). v12's `JSON.parse` keeps the lone UTF-16 unit; a Rust string
+  can't hold one and `serde_json` refused the text, so the build failed. The escapes are
+  rewritten to `\uFFFD` before `serde_json` reads the text (`grammar/lone_surrogates.rs`); a
+  pair stays the one character it spells. *Why not make JS exact by handing it the source
+  slice:* the `Decorator` signature takes a `Json` (settled above), and one value for both sides
+  keeps Rust and JS decorators agreeing. Pinned in `tests/grammar_decorators.rs` and
   `js/js_api.test.mjs`. Side effect: every `serde_json` object the wasm layer writes (the
   cursor's report, AutoComplete's) now keeps insertion order instead of sorting its keys; JS
   reads them by name, so nothing observes it.

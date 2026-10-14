@@ -146,7 +146,8 @@ Decorators above a rule hand its pattern to a function: `@tokens(["a", "b"])` is
 `GrammarOptions::decorators` registers your own (`Fn(Pattern, Option<&Json>) -> Result<Pattern,
 String>`), which may replace the pattern, with a `Custom` one for instance. The argument is
 what v12's `JSON.parse` gives: an object's keys in the order written, each number the nearest
-double (integers that fit 64 bits stay exact in Rust; JS gets v12's doubles). Errors are v12's,
+double (integers that fit 64 bits stay exact in Rust; JS gets v12's doubles); a lone
+surrogate escape such as `"\ud800"` reads as U+FFFD, as it does in a cpat literal. Errors are v12's,
 word for word (`Failed loading expression from: "lib.cpat". Error details: "…"`).
 
 `patterns(text)` (or `patterns!`, which formats like `format!` when given arguments) returns the

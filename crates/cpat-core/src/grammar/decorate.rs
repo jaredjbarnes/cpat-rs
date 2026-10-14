@@ -7,6 +7,7 @@ use crate::tree::Node;
 
 use super::builder::Builder;
 use super::error::GrammarError;
+use super::lone_surrogates::replace_lone_surrogates;
 
 impl Builder<'_, '_> {
     /// `pattern` after the decorators above the statement at `index`, nearest
@@ -70,7 +71,8 @@ fn decoration<'a, 't>(statement: &Node<'a, 't>) -> Option<Node<'a, 't>> {
     }
 }
 
-/// The statement's JSON argument: none for `@name` and `@name()`.
+/// The statement's JSON argument: none for `@name` and `@name()`. A lone
+/// surrogate escape reads as U+FFFD (see `lone_surrogates.rs`).
 fn argument(name: &str, statement: Node<'_, '_>) -> Result<Option<Value>, GrammarError> {
     let Some(json) = statement.children().find(|child| {
         matches!(
@@ -80,7 +82,7 @@ fn argument(name: &str, statement: Node<'_, '_>) -> Result<Option<Value>, Gramma
     }) else {
         return Ok(None);
     };
-    serde_json::from_str(json.value())
+    serde_json::from_str(&replace_lone_surrogates(json.value()))
         .map(Some)
         .map_err(|error| GrammarError::DecoratorArgument {
             decorator: name.to_string(),

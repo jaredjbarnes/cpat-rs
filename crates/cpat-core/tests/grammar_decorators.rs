@@ -447,6 +447,23 @@ fn deviation_a_number_past_the_largest_double_is_a_build_error() {
 }
 
 #[test]
+fn deviation_a_lone_surrogate_escape_is_the_replacement_character() {
+    // v12's `JSON.parse` keeps a lone UTF-16 unit, which a Rust string can't
+    // hold; as in a cpat literal (DESIGN §19) it reads as U+FFFD instead of
+    // failing the build. In a value, a key, an array item, and a reversed
+    // pair (two lone halves).
+    let argument = |text: &str| argument_of(&format!("@config({text})\nname = /\\w+/"));
+    assert_eq!(argument(r#""\ud800""#), "\u{FFFD}");
+    assert_eq!(keys(&argument(r#"{"\ud800":1}"#)), ["\u{FFFD}"]);
+    assert_eq!(argument(r#"["\udfff"]"#)[0], "\u{FFFD}");
+    assert_eq!(argument(r#""\uDE00\uD83D""#), "\u{FFFD}\u{FFFD}");
+    // A pair is still the one character it spells, and an escaped backslash
+    // before `ud800` is no escape.
+    assert_eq!(argument(r#""\ud83d\ude00""#), "\u{1F600}");
+    assert_eq!(argument(r#""\\ud800""#), "\\ud800");
+}
+
+#[test]
 fn an_exponent_is_no_cpat_number() {
     // The cpat grammar's `jsonNumber` is `-?\d+(\.\d+)?`, in v12 as here.
     assert_eq!(

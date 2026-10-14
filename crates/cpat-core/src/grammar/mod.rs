@@ -18,6 +18,7 @@ mod escapes;
 mod import;
 mod imports;
 mod json;
+mod lone_surrogates;
 mod options;
 mod patterns;
 mod repeat;
