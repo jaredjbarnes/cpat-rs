@@ -9,7 +9,41 @@
 //! it.
 
 use crate::cursor::Cursor;
-use crate::tree::NodeId;
+use crate::tree::{NodeId, Tree};
+
+/// What `root_value` reads of a tree: a parse still running (`exec` asks
+/// its cursor) or a finished one (AutoComplete asks the tree it kept). One
+/// rule for both, so `exec` and `suggest_for` agree on what is complete.
+pub(crate) trait LeafSpans {
+    fn text(&self) -> &str;
+    fn span(&self, node: NodeId) -> (usize, usize);
+    fn children(&self, node: NodeId) -> &[NodeId];
+}
+
+impl LeafSpans for Cursor<'_> {
+    fn text(&self) -> &str {
+        Cursor::text(self)
+    }
+    fn span(&self, node: NodeId) -> (usize, usize) {
+        (self.node_start(node), self.node_end(node))
+    }
+    fn children(&self, node: NodeId) -> &[NodeId] {
+        self.node_children(node)
+    }
+}
+
+impl LeafSpans for Tree<'_> {
+    fn text(&self) -> &str {
+        Tree::text(self)
+    }
+    fn span(&self, node: NodeId) -> (usize, usize) {
+        let node = self.node(node);
+        (node.start(), node.end())
+    }
+    fn children(&self, node: NodeId) -> &[NodeId] {
+        self.child_ids(node)
+    }
+}
 
 /// The root's value measured against the text: whether it is the text, and
 /// its length in UTF-16 units (v12's `ast.value.length`).
@@ -21,16 +55,16 @@ pub(crate) struct RootValue {
 /// Walks the leaves in order (iteratively: an operator chain makes a tree as
 /// deep as the input is long). They are the text exactly when each starts
 /// where the one before ended and the last ends at the end of the text.
-pub(crate) fn root_value(cursor: &Cursor<'_>, root: NodeId) -> RootValue {
-    let text = cursor.text();
+pub(crate) fn root_value(tree: &impl LeafSpans, root: NodeId) -> RootValue {
+    let text = tree.text();
     let mut at = 0;
     let mut tiles = true;
     let mut utf16_len = 0;
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
-        let children = cursor.node_children(node);
+        let children = tree.children(node);
         if children.is_empty() {
-            let (start, end) = (cursor.node_start(node), cursor.node_end(node));
+            let (start, end) = tree.span(node);
             tiles &= start == at;
             at = end;
             utf16_len += text[start..end].encode_utf16().count();

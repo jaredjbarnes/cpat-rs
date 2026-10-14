@@ -54,6 +54,47 @@ spaced-words = (non-spaces, spaces)+
 text = (quoted | token | spaces)+
 `;
 
+/** Characters that join the one before them into a single grapheme: a
+ * combining mark, a skin-tone modifier, a ZWJ and a variation selector. */
+export const JOINERS = ["\u0301", "\u{1F3FD}", "\u200D", "\uFE0F"];
+
+/** Literals and a Pratt expression, for a joiner after a character a literal
+ * matches alone: the literal ends inside the grapheme, the next leaf starts
+ * after it, and the joiner belongs to no node. Both exec and AutoComplete
+ * must then call the text incomplete (v12 compares the leaves' joined
+ * values with the text), wherever the skip falls: first, between two
+ * leaves, inside a repeat, after an operator. */
+export const SPLIT_GRAMMAR = `
+a = "a"
+b = "b"
+pair = a + b
+as = (a)+
+listed = (a, ",")+
+num = /\\d+/
+add = expr + "+" + expr
+neg = "-" + expr
+inc = expr + "++"
+expr = add | neg | inc | num
+`;
+
+/** Each rule's inputs, before a joiner goes after each character. */
+export const SPLIT_SEEDS = {
+  pair: ["ab"],
+  as: ["aaa"],
+  listed: ["a,a"],
+  expr: ["1+2", "-1++", "1+-2"],
+};
+
+/** Every seed, then the seed with each joiner after each of its characters. */
+export function splitProbes(seed) {
+  const chars = [...seed];
+  const out = [seed];
+  for (let at = 1; at <= chars.length; at++) {
+    for (const joiner of JOINERS) out.push(chars.slice(0, at).join("") + joiner + chars.slice(at).join(""));
+  }
+  return out;
+}
+
 /** Inputs for REGEX_GRAMMAR's rules: each space alone and between words,
  * the words, the endings after a word, and a few mixed lines. */
 export function regexProbes() {
@@ -94,8 +135,15 @@ function seeds(grammar) {
   return spread(sorted, SEEDS_PER_GRAMMAR);
 }
 
-/** The corpus file: REGEX_GRAMMAR with its probes, and each agent-harness
- * grammar with the variants of its seeds. */
+/** AutoComplete with v12's defaults. Every generated case runs it on the
+ * whole input as well as exec: truncations alone never put a skipped mark
+ * between two leaves, and that is where `isComplete` and exec once
+ * disagreed in cpat-rs. */
+export const DEFAULT_AUTOCOMPLETE = { greedyPatternNames: [], customTokens: {}, disableDedupe: false };
+
+/** The corpus file: REGEX_GRAMMAR with its probes, SPLIT_GRAMMAR with
+ * joiners after each character, and each agent-harness grammar with the
+ * variants of its seeds. Every case also runs AutoComplete. */
 export function unicodeCorpus(files) {
   const rules = [...REGEX_GRAMMAR.matchAll(/^([a-z-]+) =/gm)].map(m => m[1]);
   const probes = regexProbes();
@@ -105,6 +153,14 @@ export function unicodeCorpus(files) {
       origin: "generated: unicode_corpus.mjs REGEX_GRAMMAR",
       text: REGEX_GRAMMAR,
       cases: rules.flatMap(rule => probes.map(input => ({ rule, input, origin: "generated: regex probe" }))),
+    },
+    {
+      id: "split-graphemes",
+      origin: "generated: unicode_corpus.mjs SPLIT_GRAMMAR",
+      text: SPLIT_GRAMMAR,
+      cases: Object.entries(SPLIT_SEEDS).flatMap(([rule, seeds]) =>
+        seeds.flatMap(seed => splitProbes(seed).map(input => ({ rule, input, origin: "generated: joiner after a character" }))),
+      ),
     },
   ];
   for (const file of files.filter(f => f.suite === "agent-harness")) {
@@ -121,6 +177,9 @@ export function unicodeCorpus(files) {
       }
       grammars.push({ id: `${file.name}-unicode`, origin: `generated from corpus/${file.name}.json`, text: grammar.text, cases });
     }
+  }
+  for (const grammar of grammars) {
+    grammar.cases = grammar.cases.map(c => ({ ...c, autocomplete: DEFAULT_AUTOCOMPLETE }));
   }
   return { name: "unicode", suite: "generated", grammars };
 }

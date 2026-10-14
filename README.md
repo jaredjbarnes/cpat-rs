@@ -416,7 +416,9 @@ unexplained differences.
   with every space swapped for `\r`, `\r\n`, U+0085, U+2028/2029, U+FEFF and other unusual
   whitespace, non-ASCII words inserted (combining marks, skin tones, CJK, letters outside the
   BMP) and surrogate pairs at the end, plus a grammar of regex-heavy rules run on the same
-  characters.
+  characters and a grammar of literals and a Pratt expression with a joiner (combining mark,
+  skin tone, ZWJ, U+FE0F) after each character. Every generated case runs both `exec` and
+  AutoComplete on the whole input.
 - `node --test conformance/test/*.test.mjs` tests the harness itself, including that dropping
   any compared field from the normalization or the comparison fails a test.
 

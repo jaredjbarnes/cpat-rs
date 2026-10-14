@@ -13,7 +13,8 @@ use std::collections::HashMap;
 
 use common::*;
 use cpat_core::{
-    AutoComplete, AutoCompleteOptions, Pattern, RepeatOptions, Suggestion, locale_compare,
+    AutoComplete, AutoCompleteOptions, Grammar, GrammarOptions, Pattern, RepeatOptions, Suggestion,
+    locale_compare,
 };
 
 fn auto_complete(pattern: Pattern, options: AutoCompleteOptions) -> AutoComplete {
@@ -1528,4 +1529,61 @@ fn a_partial_operator_offers_only_its_completion_and_errors_there() {
     let or = suggest(flag_expression(), "FlagA O");
     assert_eq!(summary(&or), r#"incomplete error=7..7 at=7 ast="FlagA""#);
     assert_eq!(options(&or), ["R@7[OR:options-literal]"]);
+}
+
+// A literal can match only the base of a grapheme (`a` of `a` + U+0301), and
+// the next leaf then starts after the whole grapheme, so the mark belongs to
+// no leaf. The root spans the text, but v12's `ast.value` (the leaves joined)
+// leaves the mark out and is not the text: not complete. `exec` agrees
+// (tests/exec.rs); these pin that `suggest_for` does too. (The tree's
+// value is the slice the root spans, mark included: DESIGN §7a.) Expected values are
+// v12's, in bytes (U+0301 is 2 bytes, 1 UTF-16 unit).
+
+#[test]
+fn a_mark_skipped_between_two_leaves_is_not_complete() {
+    // v12: isComplete false, error [3, 3], errorAtIndex 3, no options.
+    let pattern = seq("seq", vec![lit("a", "a"), lit("b", "b")]);
+    let suggestion = suggest(pattern, "a\u{301}b");
+
+    assert_eq!(
+        summary(&suggestion),
+        r#"incomplete error=4..4 at=4 ast="a\u{301}b""#
+    );
+    assert_eq!(options(&suggestion), Vec::<String>::new());
+}
+
+#[test]
+fn a_mark_skipped_inside_a_repeat_is_not_complete() {
+    // v12: isComplete false, error [4, 4], errorAtIndex 4, options [a@4].
+    let pattern = rep("rep", lit("a", "a"), RepeatOptions::default());
+    let suggestion = suggest(pattern, "aa\u{301}a");
+
+    assert_eq!(
+        summary(&suggestion),
+        r#"incomplete error=5..5 at=5 ast="aa\u{301}a""#
+    );
+    assert_eq!(options(&suggestion), ["a@5[a:a]"]);
+}
+
+#[test]
+fn a_mark_skipped_inside_an_expression_is_not_complete() {
+    // v12: isComplete false, errorAtIndex 3, options "+" and "++" at 3. Its
+    // Expression normalizes its ranges over the skipped mark, moving "2"
+    // back one unit, so it places them at 3; here they are where the text
+    // ends (DESIGN §12, allowlisted `expression-normalize-over-a-split-grapheme`).
+    let patterns = Grammar::parse_string(
+        "num = /\\d+/\n\
+         add = expr + \"+\" + expr\n\
+         neg = \"-\" + expr\n\
+         inc = expr + \"++\"\n\
+         expr = add | neg | inc | num",
+        GrammarOptions::default(),
+    )
+    .expect("the grammar builds");
+    let expr = patterns["expr"].clone();
+    let suggestion = auto_complete(expr, AutoCompleteOptions::default()).suggest_for("1+\u{301}2");
+
+    assert!(!suggestion.is_complete);
+    assert_eq!(suggestion.error_at_index, Some(5));
+    assert_eq!(options(&suggestion), ["+@5[+:+]", "++@5[++:++]"]);
 }

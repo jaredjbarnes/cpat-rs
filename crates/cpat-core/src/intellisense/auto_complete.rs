@@ -7,6 +7,7 @@ use crate::parse_error::{Match, ParseError};
 use crate::pattern::Pattern;
 use crate::pattern_error::PatternError;
 use crate::pattern_path::PatternPath;
+use crate::whole_text::root_value;
 
 use super::composite::Composer;
 use super::options::{Dedupe, first_per_text, furthest, place};
@@ -99,9 +100,14 @@ impl AutoComplete {
             .tree
             .as_ref()
             .map(|tree| (tree.root().start(), tree.root().end()));
-        // v12 compares the ast's value with the text; a node's value is
-        // the slice it spans (DESIGN §7a).
-        let is_complete = root_end == Some((0, text.len()));
+        // v12 compares the ast's value (its leaves' values joined) with the
+        // text. A root can span the text while its leaves skip a combining
+        // mark (a literal matching only a grapheme's base), so ask the
+        // leaves, as `exec` does (whole_text.rs).
+        let is_complete = result
+            .tree
+            .as_ref()
+            .is_some_and(|tree| root_value(tree, tree.root().id()).is_text);
         let (error, error_at_index) = if is_complete {
             (None, None)
         } else {

@@ -62,12 +62,23 @@
     "id": "partial-match-length-inside-a-surrogate-pair",
     "kinds": [
       "exec.error",
-      "exec.message"
+      "exec.furthest"
     ],
     "file": "unicode",
-    "rule": "calc",
-    "input": "~🏽5",
-    "reason": "v12 starts the error after a partial match at the matched value's length, a count of UTF-16 units used as a position. When the value skipped part of a grapheme (`~` matched the base of `~` + skin-tone modifier), that count can land between the two halves of a surrogate pair, which no byte offset names; cpat-rs reports the pair's start, one unit earlier, and the message's column with it.",
+    "check": "startInsideASurrogatePair",
+    "reason": "v12 starts the error after a partial match at the matched value's length, a count of UTF-16 units used as a position. When the value skipped part of a grapheme (a literal matched the base of the base + skin-tone modifier, `~` of `~🏽` or `a` of `a🏽`), that count can land between the two halves of a surrogate pair, which no byte offset names; cpat-rs reports the pair's start, one unit earlier. The furthest error is that same error.",
     "cites": "DESIGN.md §5, \"exec matches as v12 does\" (the summary error's start); §23"
+  },
+  {
+    "id": "expression-normalize-moves-recorded-leaves",
+    "kinds": [
+      "exec.message",
+      "autocomplete.at",
+      "autocomplete.options"
+    ],
+    "file": "unicode",
+    "inputPattern": "[-+~](\\u0301|\\u{1F3FD}|\\u200D|\\uFE0F)",
+    "reason": "A Pratt operator literal (`-`, `+`, `~`) matches the base of a grapheme it starts and a joiner (combining mark, skin-tone modifier, ZWJ, variation selector) is skipped. v12's Expression normalizes its node's ranges from the joined values, and the leaf nodes it moves are the same objects the cursor recorded as matches, so the furthest leaf's end moves back over the skipped units after the fact. AutoComplete places its options (and its errorAtIndex) at that moved end and trims by the moved slice, and generateErrorMessage counts its column to it. cpat-rs keeps the ranges the text gives: the options sit where the text ends.",
+    "cites": "DESIGN.md §12, deviations: \"an expression's ranges are not normalized over a skipped part of a grapheme\"; §23"
   }
 ]

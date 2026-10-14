@@ -18,7 +18,7 @@ import { deletions, tokenBoundaries, truncations } from "../lib/mutate.mjs";
 import { autoCompleteResult, buildResult, execResult } from "../lib/normalize.mjs";
 import { corpusDir } from "../lib/paths.mjs";
 import { replayBuild, replayOptions } from "../lib/replay.mjs";
-import { SPACES, unicodeCorpus, variants } from "../lib/unicode_corpus.mjs";
+import { DEFAULT_AUTOCOMPLETE, JOINERS, SPACES, splitProbes, unicodeCorpus, variants } from "../lib/unicode_corpus.mjs";
 
 const corpus = {
   files: [{ name: "calc", grammars: [{ key: "calc#0", cases: [{ id: 0, rule: "expr", input: "1+2", kind: "captured" }] }] }],
@@ -218,6 +218,18 @@ test("an entry can name several kinds, an input pattern and a check", () => {
   assert.equal(applyAllowlist([{ ...entry, inputPattern: undefined }], [{ ...narrow, actual: [0, 3, "s"] }]).unexplained.length, 1);
 });
 
+test("a start between the halves of a surrogate pair is excused only one unit past the pair's start", () => {
+  // "a🏽b": the pair is units 1-2; v12 starts the error at 2, cpat-rs at 1.
+  const split = { kind: "exec.error", engine: "native", input: "a🏽b", expected: [2, 4, "pair"], actual: [1, 4, "pair"] };
+  const entry = { id: "pair", kinds: ["exec.error"], check: "startInsideASurrogatePair", reason: "r", cites: "DESIGN.md §5" };
+  assert.equal(applyAllowlist([entry], [split]).unexplained.length, 0);
+  // Not inside a pair (a one-unit mark), another last, another pattern, two units back.
+  assert.equal(applyAllowlist([entry], [{ ...split, input: "a\u0301bc" }]).unexplained.length, 1);
+  assert.equal(applyAllowlist([entry], [{ ...split, actual: [1, 3, "pair"] }]).unexplained.length, 1);
+  assert.equal(applyAllowlist([entry], [{ ...split, actual: [1, 4, "a"] }]).unexplained.length, 1);
+  assert.equal(applyAllowlist([entry], [{ ...split, actual: [0, 4, "pair"] }]).unexplained.length, 1);
+});
+
 test("an entry with an unknown check or no kind is refused on load", () => {
   const dir = mkdtempSync(join(tmpdir(), "allowlist-"));
   const write = entries => {
@@ -301,4 +313,27 @@ test("variants swap every space, insert non-ASCII words and end on wide characte
   assert.ok(out.includes("﻿a b"));
   // Without a space, words go in the middle, never inside a surrogate pair.
   assert.ok(variants("😀😀").includes("😀é😀"));
+});
+
+test("every generated case also runs AutoComplete on the whole input", () => {
+  // Truncations never put a skipped mark between two leaves; whole inputs
+  // do, and that is where isComplete once disagreed with exec.
+  const generated = unicodeCorpus(loadCorpusFiles());
+  for (const grammar of generated.grammars) {
+    for (const c of grammar.cases) assert.deepEqual(c.autocomplete, DEFAULT_AUTOCOMPLETE, `${grammar.id} ${c.input}`);
+  }
+});
+
+test("split-grapheme probes put each joiner after each character, on literals and an expression", () => {
+  const out = splitProbes("ab");
+  assert.equal(out[0], "ab");
+  for (const joiner of JOINERS) {
+    assert.ok(out.includes(`a${joiner}b`), JSON.stringify(joiner));
+    assert.ok(out.includes(`ab${joiner}`), JSON.stringify(joiner));
+  }
+  assert.equal(out.length, 1 + 2 * JOINERS.length);
+  const split = unicodeCorpus(loadCorpusFiles()).grammars.find(g => g.id === "split-graphemes");
+  const rules = new Set(split.cases.map(c => c.rule));
+  assert.deepEqual([...rules].sort(), ["as", "expr", "listed", "pair"]);
+  assert.ok(split.cases.some(c => c.rule === "pair" && c.input === "a\u0301b"));
 });

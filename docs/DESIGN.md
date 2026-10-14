@@ -106,12 +106,16 @@
 > decorator replaced by a recording one whose calls are compared), including v12's
 > `patterns.test.ts`; runs a generated corpus of non-ASCII and unusual-whitespace inputs
 > (`corpus/unicode.json`); and its own tests fail when a compared field is dropped. Last run:
-> 156 364 cases (82 from grammars with imports, 56 with params, 9 with decorators; 15 863 from
-> the generated corpus), 0 unexplained differences. The new corpus found two things, both fixed:
+> 156 685 cases (82 from grammars with imports, 56 with params, 9 with decorators; 16 184 from
+> the generated corpus, 2 072 generated inputs), 0 unexplained differences (700 explained). The new corpus found two things, both fixed:
 > `exec` matched text whose combining mark no node covered (it now matches as v12 does, §5e),
 > and what follows an expression could start inside a grapheme (§12). Two new allowlist entries
 > name the deviations left (§12, §5e), and the one for a position past the end inside a wide
 > last grapheme now covers every such grapheme by a named check (§11, §23).
+> Fix round 1: AutoComplete's `isComplete` now asks the same leaf walk as `exec`, so a mark
+> skipped between two leaves is incomplete in both (§5e); every generated case also runs
+> AutoComplete on the whole input, and a `split-graphemes` grammar puts each joiner after each
+> character (§23).
 
 The behavior target is clarity-pattern-parser **v12** (branch `release/v12`). Where v11 had a
 bug, cpat-rs does the correct thing and v12 gets the same fix. `MIGRATION-v12.md` in that repo
@@ -206,6 +210,15 @@ work commits nothing. A cut reached at the end of input still fires.
   error starts at the pair, one unit before v12's (pinned in `tests/exec.rs`; allowlisted as
   `partial-match-length-inside-a-surrogate-pair`, §23). The conformance harness's non-ASCII
   corpus found this.
+  *Fix round 1:* AutoComplete's `isComplete` is the same question (v12:
+  `ast?.value === this._text`), and it still compared the root's end with the text's, so `a`
+  then `b` on `a` + U+0301 + `b` was complete with no error in cpat-rs while `exec` said no
+  match. It now asks the same leaf walk (`whole_text::root_value`, over the finished tree
+  through `LeafSpans`, the one rule for a running parse and a finished one), so `exec` and
+  `suggest_for` agree as they do in v12 (`tests/autocomplete.rs`, `js/autocomplete.test.mjs`).
+  The corpus missed it because its AutoComplete cases were truncations, which never put a
+  skipped mark between two leaves; every generated case now runs AutoComplete on the whole
+  input, and a `split-graphemes` grammar puts each joiner after each character (§23).
 
 ## 6. Regex
 
@@ -1845,7 +1858,12 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   the BMP, `İ`, `ß`, `ﬁ`, Arabic-Indic digits); a surrogate pair, a modifier, a lone mark, a BOM
   or a CR at the end; a leading BOM. A grammar of regex-heavy rules (`.`, `\s`, `\S`, `\w`,
   `\b`, `[^\n]`, `\p{L}`, `\p{M}`, `\p{Extended_Pictographic}`, `[\s\S]`, line ends) runs every
-  rule on probes built from the same characters. The variants are mutated like captured inputs.
+  rule on probes built from the same characters. A `split-graphemes` grammar (literals in a
+  sequence, a repeat, a divided repeat, and a Pratt expression) runs seeds with each joiner
+  (U+0301, a skin-tone modifier, ZWJ, U+FE0F) after each character, so a literal matches only a
+  grapheme's base and the joiner falls between two leaves *(fix round 1)*. Every generated case
+  also runs AutoComplete, with v12's defaults, on the whole input: truncations alone never put a
+  skipped mark between two leaves. The variants are mutated like captured inputs.
   The file is committed and generated from the captured corpus alone; a harness test fails while
   it differs from what the generator writes. *Why generated, not captured:* the inputs that
   separate JS's idea of a character, a space and a line end from Rust's are the ones tests don't
@@ -1855,7 +1873,7 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   and a space, and around every punctuation character, never inside a surrogate pair), and up
   to 8 single-character deletions spread over its boundaries. Truncations also run AutoComplete
   (with the options the test used, or the defaults). The same corpus always expands to the same
-  156 364 cases (140 349 before gap 1-6). *Why capped deletions:* a deletion mostly repeats the error of its neighbour;
+  156 685 cases (140 349 before gap 1-6). *Why capped deletions:* a deletion mostly repeats the error of its neighbour;
   8 per input break every kind of token in a typical input without the few long inputs
   dominating the run.
 - **What is compared**, in UTF-16 offsets, as v12 reports them: the build (success or the
@@ -1872,7 +1890,8 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   corpus file, rule, input (exact, or `inputPattern`), the two values (exact or by regex), fields
   the cpat result must have (`got`) and a named `check` (`allowlist_checks.mjs`) for a rule
   that follows from the input but no single value or regex states (gap 1-6: v12's position
-  past the end inside a wide last grapheme).
+  past the end inside a wide last grapheme; fix round 1: a start between the halves of a
+  surrogate pair, `startInsideASurrogatePair`).
   Each entry needs a reason and a citation of DESIGN.md or MIGRATION-v12.md, checked on load. An
   entry that explains nothing fails the run, so the list can only describe differences that
   occur. The run exits 0 only with no unexplained difference and no stale entry.
@@ -1889,8 +1908,8 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   `normalize.mjs` or `compare.mjs` fails one of them (checked by dropping `furthest`,
   `decorated` and `isComplete`). `native/src/engine.rs` pins the same keys for the native
   engine.
-- **The explained differences** (556, final run of gap 1-6):
-  - `ran-out-inside-a-wide-last-grapheme` (306: 258 furthest errors, 48 AutoComplete
+- **The explained differences** (700, gap 1-6 fix round 1):
+  - `ran-out-inside-a-wide-last-grapheme` (330: 274 furthest errors, 56 AutoComplete
     `errorAtIndex`): a sequence that runs out of text records its error's last index past the
     end. v12 writes that as its cursor's index + 1, and its cursor sits on the start of the last
     grapheme, so when that grapheme is wider than one UTF-16 unit (an emoji, CRLF, a letter and a
@@ -1910,8 +1929,17 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
     divider whose first item fails takes "no items" for "ended on a divider" (`0 % 2 === 0`),
     pops a node that isn't there and throws a `TypeError`. cpat-rs fails the repeat and the
     choice tries its next alternative.
-  - `partial-match-length-inside-a-surrogate-pair` (4: errors and messages): the summary error's
-    start after a partial match, a count of UTF-16 units, falls inside a surrogate pair (§5e).
+  - `partial-match-length-inside-a-surrogate-pair` (38: errors and furthest errors): the summary
+    error's start after a partial match, a count of UTF-16 units, falls inside a surrogate pair
+    (§5e). Matched by the named check `startInsideASurrogatePair` (last and pattern agree, v12's
+    start is the pair's second half, cpat's the pair's start) since fix round 1, when the
+    `split-graphemes` grammar showed it on every literal, not only calc's `~`.
+  - `expression-normalize-moves-recorded-leaves` (86: AutoComplete options and `errorAtIndex`,
+    messages; fix round 1): v12's Expression normalizes the ranges of nodes the cursor already
+    recorded as matches (the same objects), so after a joiner skipped inside an expression the
+    furthest leaf's end moves back over it; AutoComplete places and trims its options there and
+    the message counts its column to it. cpat-rs's ranges stay the text's (§12's deviation).
+    Matched by a joiner after a Pratt operator literal (`-`, `+`, `~`) in the generated corpus.
   - `depth-limit` (2): jq's 3000-deep paren bomb overflows v12's stack (`RangeError`) and halts
     with `tooDeep` here (§11).
   - `empty-literal-message` (2): an empty literal is reported in cpat's words (§18).

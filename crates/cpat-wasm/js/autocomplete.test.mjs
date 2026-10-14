@@ -1787,3 +1787,32 @@ describe("AutoComplete's option order: compatibility and canonical equivalence",
     assert.deepEqual(order(["ã", "Â̧"]), ["ã", "Â̧"]);
   });
 });
+
+describe("AutoComplete over a mark no leaf covers", () => {
+  // A literal matches the base of a letter + combining mark; the next leaf
+  // starts after the whole grapheme. v12's ast.value leaves the mark out, so
+  // the text is not complete, as exec says. Expected values recorded from v12.
+  const suggest = (grammar, rule, text) => {
+    const pattern = api.Grammar.parseString(grammar)[rule];
+    const s = new AutoComplete(pattern).suggestFor(text);
+    return {
+      exec: pattern.exec(text).ast,
+      complete: s.isComplete,
+      at: s.errorAtIndex,
+      error: s.error && [s.error.startIndex, s.error.lastIndex],
+      options: s.options.map(o => [o.text, o.startIndex]),
+    };
+  };
+
+  test("between two leaves of a sequence", () => {
+    assert.deepEqual(suggest('a = "a"\nseq = a + "b"', "seq", "áb"), {
+      exec: null, complete: false, at: 3, error: [3, 3], options: [],
+    });
+  });
+
+  test("inside a repeat", () => {
+    assert.deepEqual(suggest('a = "a"\nrep = (a)+', "rep", "aáa"), {
+      exec: null, complete: false, at: 4, error: [4, 4], options: [["a", 4]],
+    });
+  });
+});

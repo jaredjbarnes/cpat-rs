@@ -21,6 +21,13 @@ function pastTheEnd(input, v12, cpat) {
   return input.length - start > 1 && v12 === start + 1 && cpat === input.length;
 }
 
+/** Whether UTF-16 unit `at` of `input` is the second half of a surrogate
+ * pair. */
+function insideASurrogatePair(input, at) {
+  const unit = input.charCodeAt(at);
+  return at > 0 && unit >= 0xdc00 && unit <= 0xdfff;
+}
+
 export const CHECKS = {
   /** An error triple whose `last` is that position (the start and the
    * pattern agree), or AutoComplete's `errorAtIndex`, which is read off it. */
@@ -30,5 +37,21 @@ export const CHECKS = {
       return v12[0] === cpat[0] && v12[2] === cpat[2] && pastTheEnd(input, v12[1], cpat[1]);
     }
     return typeof v12 === "number" && pastTheEnd(input, v12, cpat);
+  },
+
+  /** An error triple whose start v12 puts between the halves of a surrogate
+   * pair and cpat-rs at the pair's start, one unit earlier (the last index
+   * and the pattern agree). DESIGN §5, the summary error's start after a
+   * partial match is the matched value's length, a count of units. */
+  startInsideASurrogatePair(d) {
+    const { expected: v12, actual: cpat, input } = d;
+    return (
+      Array.isArray(v12) &&
+      Array.isArray(cpat) &&
+      v12[1] === cpat[1] &&
+      v12[2] === cpat[2] &&
+      cpat[0] === v12[0] - 1 &&
+      insideASurrogatePair(input, v12[0])
+    );
   },
 };
