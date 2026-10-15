@@ -7,7 +7,7 @@
 > Milestone 3 (`Reference`, `Context`, the ancestor stack, recursion guards, the implicit scope)
 > is implemented; see §11, including its fix rounds (a depth limit, a check that can't blow
 > up, parse-time halts, and implicit-scope targets resolving their names at home, including
-> references wrapped inside a choice target, a documented deviation).
+> references wrapped inside a choice target, which v12 matches since its commit 6801394).
 > Milestone 4 (the choice's Pratt mode: classification, the precedence tree, `RightAssociated`,
 > the atom recursion guard in both modes, the end-of-text operator cut) is implemented; see §8
 > for when a choice classifies and how `RightAssociated` is represented, and §12 for the rest.
@@ -611,16 +611,16 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   `Pattern::check` reuses the scope `exec` readied so the homes it recorded still apply.
   *Why not v12's exact rule?* There isn't one: v12's answer depends on parse history (whether
   the definition had parsed before the reference, in this or any earlier `exec`, since the
-  resolution persists on the instance), and on the target's shape: v12's `Expression.clone`
-  rebuilds a choice from its original, never-parsed alternatives, so a reference wrapped in a
-  sequence, optional or repeat beneath a choice resolves where the target is used even when the
-  definition parsed first (a reference that is itself an alternative keeps its home). Home
-  binding is the one lexical rule behind what v12 does when the definition parses first and the
-  choice clone doesn't drop it, and it gives one answer for every input and every shape. Matching
-  v12 would mean reproducing an artifact of how its choice clones, where wrapping `u` in a
-  sequence changes which `u` it means. Checked against v12 on sequence, choice (direct and
-  wrapped alternatives, with and without a cut), optional, repeat, recursive and top-level
-  targets: same results except the two deviations listed below.
+  resolution persists on the instance). Home binding is the one lexical rule behind what v12
+  does when the definition parses first, and it gives one answer for every input. Until v12
+  commit 6801394 the answer also depended on the target's shape: `Expression.clone` rebuilt a
+  choice from its original, never-parsed alternatives (and `Repeat.clone` from its original
+  child), so a reference wrapped in a sequence, optional, repeat or operator beneath a choice
+  resolved where the target is used even when the definition parsed first. That was a v12 bug,
+  fixed there: its clones now keep what such a reference resolved to, as cpat-rs always did.
+  Checked against v12 on sequence, choice (direct and wrapped alternatives, with and without a
+  cut), optional, repeat, recursive and top-level targets: same results except the deviation
+  for a reference parsed before the definition, listed below.
 - **The implicit scope is built once per root.** `exec` needs it only when the root's tree
   holds a reference. It is v12's `findPattern(root, …)` as a table: depth first, children before
   parent, never into a reference, first valid match per name. Building it and checking every
@@ -703,15 +703,13 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
     instead: `rt` before `k`'s `t` matches the outer context's `u` in v12 (or throws
     "Couldn't find 'u'" when only `k` defines it), and `k`'s `u` here. Pinned in
     `tests/reference.rs` (`deviation_a_reference_parsed_before_the_definition_…`).
-  - A reference wrapped (in a sequence, optional or repeat) beneath a choice inside an
-    implicit-scope target also resolves at home. v12 rebuilds the choice from its never-parsed
-    alternatives on every clone, so it resolves such a reference from the place the target is
-    used even after the definition has parsed: `t = ("a" u) | "ab"` in `k`, reached by `rt`
-    from outside, throws "Couldn't find 'u'" in v12 on every input, or matches an outer
-    context's `u` when one surrounds `rt`; here it means `k`'s `u`. (Found in fix round 3; the
-    second fix round's home binding introduced the difference, the version before it threw like
-    v12.) Pinned in `tests/reference.rs`
-    (`deviation_a_reference_wrapped_inside_a_choice_target_…`).
+  - *No longer a deviation:* a reference wrapped (in a sequence, optional or repeat) beneath a
+    choice inside an implicit-scope target resolves at home. v12 used to rebuild the choice from
+    its never-parsed alternatives on every clone, so `t = ("a" u) | "ab"` in `k`, reached by
+    `rt` from outside, threw "Couldn't find 'u'" or matched an outer context's `u`. v12 matches
+    cpat-rs as of commit 6801394 on `release/v12` (`fix(clone): a reference beneath a choice
+    keeps its home binding`). The test pinning it keeps its old name,
+    `tests/reference.rs` `deviation_a_reference_wrapped_inside_a_choice_target_…`.
   - `exec` on a pattern taken out of its tree (v12's 'Exec' test execs a reference found inside
     `value`): Rust patterns have no parents, so the reference names nothing and says so; in v12
     it resolves through its old parents.
@@ -813,10 +811,11 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
     when `toString` walks the result). Same trees where v12 finishes: compared on 500-operator
     chains of each kind and on mixed chains. Pinned in `tests/limits.rs` and
     `js/tree.test.mjs` with 100 000 operators.
-  - Operator parts resolve their references at home like any implicit-scope target (§11). v12
-    builds them from never-parsed alternatives, so where it throws "Couldn't find" for a
-    reference inside an operator of a target reached from elsewhere, the name resolves here.
-    This is the §11 deviation for references beneath a choice, met through an operator.
+  - *No longer a deviation:* operator parts resolve their references at home like any
+    implicit-scope target (§11). v12 used to build them from never-parsed alternatives and threw
+    "Couldn't find" for a reference inside an operator of a target reached from elsewhere; it
+    matches as of commit 6801394 on `release/v12`, the same fix as the §11 item for references
+    beneath a choice.
 - **Deferred:** introspection (`getTokens`, `getPatterns`, `…After`, `find`) to the
   intellisense milestone, which will also skip an atom already being expanded higher up (done
   in milestone 8, §16); the
