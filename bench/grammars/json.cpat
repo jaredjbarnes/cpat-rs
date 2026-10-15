@@ -1,0 +1,15 @@
+# JSON (RFC 8259), for the bench's json workloads.
+ws = /[ \t\n\r]+/
+string = /"(?:[^"\\\u0000-\u001F]|\\["\\bfnrt]|\\u[0-9a-fA-F]{4})*"/
+number = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/
+true-literal = "true"
+false-literal = "false"
+null-literal = "null"
+divider = ws? + "," + ws?
+member = string + ws? + ":" + ws? + value
+members = (member, divider)+
+object = "{" + ws? + members? + ws? + "}"
+elements = (value, divider)+
+array = "[" + ws? + elements? + ws? + "]"
+value = object | array | string | number | true-literal | false-literal | null-literal
+json = ws? + value + ws?

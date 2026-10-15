@@ -8,6 +8,7 @@ WebAssembly build for JavaScript.
 | `crates/cpat-core` | The parser: patterns, cursor, read-only tree. No platform code. |
 | `crates/cpat-wasm` | wasm-bindgen layer plus clarity-pattern-parser's JS API over it: `js/index.mjs` for Node, `js/web.mjs` for browsers and bundlers. |
 | `conformance` | The differential conformance harness (TS v12 vs native vs wasm), its corpus, and the speed report. |
+| `bench` | The benchmark: TS v12 vs native vs wasm on verified-identical workloads (grammar builds, 1 MB documents, micro cases, AutoComplete), with the wasm cost split and memory. `node bench/run.mjs`; see [bench/README.md](bench/README.md) and the last [results](bench/RESULTS.md). |
 
 ## Quick start
 

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/cpat-core", "crates/cpat-wasm", "conformance/native"]
+members = ["crates/cpat-core", "crates/cpat-wasm", "conformance/native", "bench/native"]
 
 [profile.release]
 # Smaller wasm; the parser's hot loops don't benefit from unwinding.

@@ -1,0 +1,8 @@
+# Arithmetic through the Pratt choice: two infix levels and a group.
+num = /\d+/
+mul-op = "*" | "/"
+add-op = "+" | "-"
+group = "(" + expr + ")"
+mul = expr + mul-op + expr
+add = expr + add-op + expr
+expr = mul | add | group | num

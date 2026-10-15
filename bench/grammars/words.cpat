@@ -1,0 +1,6 @@
+# Words and separators in any script: the grapheme path on non-ASCII text.
+greeting = "café" | "naïve" | "こんにちは" | "привет"
+word = /[\p{L}\p{M}\p{N}]+/
+separator = /[^\p{L}\p{M}\p{N}]+/
+token = greeting | word | separator
+text = (token)+

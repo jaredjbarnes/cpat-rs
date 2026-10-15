@@ -1,0 +1,9 @@
+# A regex-only tokenizer: an ordered choice of regexes, repeated.
+ws = /\s+/
+ident = /[A-Za-z_$][A-Za-z0-9_$]*/
+number = /\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/
+string = /"(?:[^"\\\n]|\\.)*"/
+comment = /\/\/[^\n]*/
+punct = /[{}()\[\];,.:?=+\-*%<>!&|^~]+/
+token = ws | comment | ident | number | string | punct
+tokens = (token)+
