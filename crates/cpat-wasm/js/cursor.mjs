@@ -162,7 +162,7 @@ export class Cursor {
   /** The character at the cursor: a whole grapheme ("🔴", not half of it). */
   get currentChar() {
     const index = this.getCharStartIndex(this._index);
-    return this._text.slice(index, index + this._characters().size[index]);
+    return this._text.slice(index, this.getCharEndIndex(index));
   }
 
   hasNext() {
@@ -206,7 +206,8 @@ export class Cursor {
   }
 
   moveToLastChar() {
-    this._index = this.getLastIndex();
+    // Empty text has no last character; the cursor stays at 0.
+    this._index = Math.max(this.getLastIndex(), 0);
   }
 
   getLastIndex() {
@@ -217,15 +218,16 @@ export class Cursor {
     return this._text.slice(first, last + 1);
   }
 
-  // v12's three, as written: outside the text they answer what v12's do
-  // (`undefined`, `NaN`).
+  // v12's three. The position just past the last character (the only one
+  // empty text has) holds no character: it starts and ends there, and its
+  // last index is one before it.
   getCharStartIndex(index) {
-    return this._characters().map[index];
+    return this._characters().map[index] ?? index;
   }
 
   getCharEndIndex(index) {
     const startIndex = this.getCharStartIndex(index);
-    return startIndex + this._characters().size[startIndex];
+    return startIndex + (this._characters().size[startIndex] ?? 0);
   }
 
   getCharLastIndex(index) {

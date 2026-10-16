@@ -60,8 +60,9 @@
 > ports of `Query`/`Selector` over it) is implemented; see §22. v12's `Grammar.test.ts`,
 > `patterns.test.ts`, `Node.test.ts`, `query.test.ts`, `selector.test.ts` and `Context.test.ts`
 > run in JS (`js/*.test.mjs`) with two adjusted assertions, each a documented deviation.
-> Its fix round makes `test` v12's `!cursor.hasError` (so `test("")` is true, as in v12) and
-> makes JS `test` throw what `exec` throws for a pattern that can't run (§22).
+> Its fix round makes `test` v12's `!cursor.hasError` (so `test("")` was true, as in v12 then;
+> v12 has since fixed that, and so has cpat-rs: §22) and makes JS `test` throw what `exec`
+> throws for a pattern that can't run (§22).
 > Milestone 15 (the JS API, part 2: `CustomPattern` written in JS, decorators that return a
 > replacement, AutoComplete's `cursor`, `suggestForWithCursor` and statics) is implemented; see
 > §9 and §22. v12's `AutoComplete.test.ts` runs in JS as written (`js/autocomplete.test.mjs`),
@@ -494,8 +495,8 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   strategy (v12 `InfiniteRepeat`), `Some(max)` the `Bounded` one (v12 `FiniteRepeat`). The
   strategy is an exhaustive private enum; parsing never branches on `max`. Node kinds stay
   `InfiniteRepeat` and `FiniteRepeat`, as in v12.
-- **Both strategies copy v12 line for line,** quirks included: min is clamped to 1, a bounded
-  `max` of 0 means `min`, a zero-width child with no divider ends the loop with "no node, no
+- **Both strategies copy v12 line for line,** quirks included: a bounded
+  `max` of 0 means `min` (so `{0}` and `{0,0}` match only nothing), a zero-width child with no divider ends the loop with "no node, no
   error", the bounded repeat counts zero-width child slots toward `min` and decides "ended on a
   divider" by node-count parity, only the unbounded repeat records a match, and its node starts
   where the repeat started while the bounded node starts at its first kept node. Only the
@@ -532,18 +533,22 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   parse. (Milestone 1 parsed `x` on the real cursor, so its failure became the furthest error:
   `("ab", !",")` on `"ab"` reported `,@2..2` where v12 reports none.)
 - **Deviations from v12**, each pinned by a test in `tests/repeat.rs`:
-  - A bounded repeat with `trim_divider` whose first child fails throws a `TypeError` in v12 (it
-    pops a node that isn't there). Here there is nothing to trim, and it fails on `min` like the
-    untrimmed repeat.
-  - A bounded repeat whose only matches were zero-width and whose next slot failed throws a
-    `TypeError` in v12. Here the failed slot is dropped like any trailing failure: a zero-width
-    success.
-  - `Repeat::min()` reports the clamped minimum. v12's `Repeat` facade reports the unclamped
-    option while its implementation uses the clamped one. *(Gap 1-2:)* the options as given are
-    kept too, `requested_min()`/`requested_max()`, because JS `Repeat.min`/`max` are v12's
-    facade's: `{ min: 0, max: 0 }` reads 0 and 0 and parses as exactly one. The grammar's `*`
-    now asks its inner repeat for min 0, as v12's does (it parses the same; only
-    `requested_min` sees it).
+  - *(No longer a deviation.)* A bounded repeat with `trim_divider` whose first child fails
+    threw a `TypeError` in v12 (it popped a node that wasn't there). v12 fixed it in `a0ccba3`
+    (`fix(repeat): a trimmed bounded repeat with no items no longer throws`); both have nothing
+    to trim and fail on `min` like the untrimmed repeat.
+  - *(No longer a deviation.)* A bounded repeat whose only matches were zero-width and whose
+    next slot failed threw a `TypeError` in v12. Both drop the failed slot like any trailing
+    failure, a zero-width success (v12 since `5801ae2`, which settles the failure whenever it
+    keeps nothing).
+  - **A minimum of 0 is kept** (v12 commit `5801ae2`, `fix(repeat)!: a minimum of 0 is kept`).
+    v12 used to raise it to 1 in both implementations, so `{,n}`, `{0,n}` and `min: 0` needed
+    one occurrence while its facade reported 0; cpat-rs copied that. Now zero occurrences match
+    with no node and no error (the unbounded repeat settles its child's failure, the bounded one
+    already did). *(Gap 1-2:)* the options as given are kept too,
+    `requested_min()`/`requested_max()`, because JS `Repeat.min`/`max` are v12's facade's: only
+    a bounded `max` of 0 differs from what the parse uses (it means "exactly `min`"). The
+    grammar's `*` asks its inner repeat for min 0 inside an optional, as v12's does.
   - No `startedOnIndex`: patterns keep no position for others to read (§2).
   - A `Custom` pattern that returns a zero-width node gets a zero-width success instead (no
     node, cursor back where it began), which is what its contract asks for. Kept as a node, it
@@ -552,11 +557,10 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
     custom code can reach this; checked once, in `Custom::parse`, so no composite has to.
 - **Differences from milestone 1 that show through a repeat** (found by running both on the same
   inputs; they belong to Literal and the tree, not to Repeat, and are kept):
-  - On empty text v12's Literal records its error with `lastIndex` −1. Positions here are
-    unsigned and half-open (§5), so it records `last` 0. A repeat's own `min` error at 0..0 then
-    ties with the literal's instead of beating it, and the furthest error stays the literal's
-    (`(a?, ",")+` on `""`: v12 says `r`, cpat-rs says `a`). The same holds for `!a` children and a
-    `Sequence` of `!a`. The current error is the same in both.
+  - On empty text v12's Literal recorded its error with `lastIndex` −1, so a repeat's own error
+    at 0..0 beat it as the furthest error. v12's `fix(test)!` commit (`bfe8a4b`) makes a Literal
+    that ran out of text report at least its start, 0..0, as cpat-rs always did (positions here
+    are unsigned and half-open, §5), so the two agree.
   - A composite node's value is a slice of the text it spans (§7a); in v12 it is the join of its
     children's values. They differ when the span holds text no child covers: a literal `e`
     matching the base of `e` + combining accent skips the accent, and an unbounded repeat whose
@@ -977,8 +981,8 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   error (`errors()`), every match (`matches()`, v12's `allMatchedNodes`/`allMatchedPatterns` as
   one list of copies), both in order (`records()`, `HistoryRecord::Match | Error`), and the root
   match (`root_match()`, the last match recorded). `stop_recording` stops appending and keeps
-  what is there. As in v12, empty text is never recorded (`is_recording()` is false: v12
-  returns before it starts recording), and exec's summary error is recorded last, naming the
+  what is there. Empty text is parsed and recorded like any other (v12's `fix(test)!`, §22;
+  before it, v12 returned before it started recording), and exec's summary error is recorded last, naming the
   context's child with path `[0]` through each context (v12's `Context.exec` runs its child).
 - **Every record carries its path; an ordinary error doesn't.** A recorded `ParseError` has
   `path: Some(…)`; outside a recording `path` is `None`, because almost every failed attempt
@@ -1051,8 +1055,8 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
     same. Pinned in `tests/history.rs`.
   - v12 sets `rootMatch` in every parse; here it is part of the recording only (the last
     recorded match), since keeping it otherwise would copy a path per match.
-  - A bounded repeat with `trim_divider` whose first child fails throws a `TypeError` in v12
-    (§10), recording or not.
+  - *(Fixed in v12 `a0ccba3`.)* A bounded repeat with `trim_divider` whose first child fails
+    threw a `TypeError` in v12 (§10), recording or not.
 - **Not ported here:** `generateErrorMessage` (milestone 8, §16) and autocomplete (milestone 9, §17), which read the leaf match's
   pattern's tokens (`getNextTokens`), come with intellisense (milestone 8); the leaf match's
   path is what they will start from. v12's cursor-movement tests (`Move Cursor`, `Text
@@ -1227,7 +1231,8 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   may follow it. The three error cases (options and no cursor error: from the earliest option
   to the end; no options but a tree: from the tree's end; a cursor error: the further of the
   last match's end and the furthest error's `last`, compared as v12 compares an exclusive end
-  with an inclusive last), and empty text (the root's suggestions, error `0..0`, no parse), are
+  with an inclusive last), and empty text (the root's suggestions and no parse; complete, with no error, exactly when
+  the pattern accepts the empty input, as `test("")` says, otherwise error `0..0`), are
   v12's. Its own errors name the root, with no path.
 - **The parse is `parse`, not `exec`** (`exec::parse_recording`): v12 calls
   `pattern.parse(cursor)`, so no summary error is recorded, the cursor's error is what the parse
@@ -1344,7 +1349,8 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
   the furthest when it comes after it, which adds `ohn` to `Ja` and moves the flag grammar's
   error back to the space. Both are now pinned by v12-checked tests in `tests/autocomplete.rs`.
 - **The parse is kept** *(milestone 15)*. `Suggestion::parse` is the recording parse's
-  `ParseResult` (`None` for empty text, which v12 doesn't parse); `tree()`, `pattern_error()`
+  `ParseResult` (`None` for empty text, which v12 answers with `test("")` on a cursor of its
+  own, leaving the suggestion's cursor unparsed); `tree()`, `pattern_error()`
   and `too_deep()` read it. It is v12's `cursor` field, which the JS API reports (§22). Keeping
   it costs nothing: the result was built anyway and used to be taken apart. *Rejected:* a second
   recording parse in wasm when the cursor is read (twice the work for the same answer).
@@ -1698,16 +1704,23 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
 - **Composites take copies.** v12's constructors clone their children, so JS passes a wasm clone
   (`owned`), and the original stays usable and separate. `params` and decorators' patterns are
   copied the same way. A copy keeps its id, as v12's clone does.
-- **`test` is v12's `!cursor.hasError`, not "there is a tree"** (fix round 1).
-  `ParseResult::passed` is no error, no pattern error, no halt; `Pattern::test` and JS `test`
-  answer it. The two differ only where v12's exec returns early: on empty text there is no tree
-  and no error, so `test("")` is true for every pattern, as v12's is, and agrees with
-  `exec("")`'s own `hasError`. The first version answered `is_match` and said false there.
+- **`test` is "`exec` matched the whole text", empty text included.** `ParseResult::passed`
+  is no error, no pattern error, no halt; `Pattern::test` and JS `test` answer it. `exec`
+  parses "" like any other text and records an error for every outcome but a whole-text match,
+  so "no error" is that match. "" matches exactly when the pattern accepts the empty input (an
+  optional, a repeat with a minimum of 0, a `Not` whose child fails, a sequence of only optional
+  parts), decided by parsing, so it agrees with what the pattern does with an empty rest
+  mid-text: an ordered choice skips an alternative that matched nothing, so `"a" | "b"?` does not
+  accept "". Such a match has no tree (v12's `ast` is null) and no error, the nodeless success
+  an optional that matched nothing already is; `is_match` stays "there is a tree" (v12's
+  `ast != null`). A failure has the summary error at `0..0` and the deepest failure as the
+  furthest error, as on other text. *History:* v12's exec used to return before parsing "" with
+  no error, so its `test("")` was true for every pattern, and fix round 1 copied that on purpose
+  (commit `edcf5bb`). v12 fixed it in `bfe8a4b` (`fix(test)!: test("") and exec("") parse the
+  empty input`, MIGRATION-v12.md 11g), and cpat-rs follows.
   A pattern that can't run makes JS `test` throw `exec`'s error (v12's message for a reference
-  that names nothing) instead of answering false; v12's `test` throws there too. The one
-  difference left is §11's: cpat reports a dangling reference even on empty text, where v12
-  returns before it could notice, so `new Reference("x").test("")` throws here and is true in
-  v12. The core `test` answers false there (it has no exceptions).
+  that names nothing) instead of answering false; v12's `test` throws there too, now on "" as
+  well, since it parses it. The core `test` answers false there (it has no exceptions).
 - **Running a place below the root runs a copy** of the pattern there, as the core runs a
   pattern taken out of its tree (§11): `exec`, `test`, `parse` and `generateErrorMessage` on a
   child. The root itself runs in place, so what its parse resolves stays resolved.
@@ -2076,10 +2089,11 @@ out in Rust syntax instead of borrowing a Rust escape that looks the same. Files
     AutoComplete throws `customTokens is not iterable`. cpat-rs keeps a map and suggests.
   - `expression-normalize-over-a-split-grapheme` (8: errors and messages): v12's Expression
     normalizes its ranges over a skipped mark and parses what follows from inside itself (§12).
-  - `v12-trimmed-bounded-repeat-crash` (4): **a v12 bug.** A bounded repeat with a trimmed
-    divider whose first item fails takes "no items" for "ended on a divider" (`0 % 2 === 0`),
-    pops a node that isn't there and throws a `TypeError`. cpat-rs fails the repeat and the
-    choice tries its next alternative.
+  - *(Removed.)* `v12-trimmed-bounded-repeat-crash` was **a v12 bug**: a bounded repeat with a
+    trimmed divider whose first item fails took "no items" for "ended on a divider"
+    (`0 % 2 === 0`), popped a node that wasn't there and threw a `TypeError`. Once v12 parsed
+    "" (`bfe8a4b`), `AutoComplete.suggestFor("")` reached it too; v12 fixed it (`a0ccba3`), and
+    v12 now fails the repeat as cpat-rs does.
   - `partial-match-length-inside-a-surrogate-pair` (38: errors and furthest errors): the summary
     error's start after a partial match, a count of UTF-16 units, falls inside a surrogate pair
     (§5e). Matched by the named check `startInsideASurrogatePair` (last and pattern agree, v12's

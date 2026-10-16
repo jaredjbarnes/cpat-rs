@@ -28,15 +28,6 @@
     "cites": "DESIGN.md §11, deviations: \"Input nested past `Limits::max_depth` halts with `too_deep`; v12 recurses until the JS engine throws `RangeError`\""
   },
   {
-    "id": "v12-trimmed-bounded-repeat-crash",
-    "kind": "exec.threw",
-    "file": "v12-cut-test",
-    "expected": "TypeError: Cannot read properties of undefined (reading 'firstIndex')",
-    "actual": null,
-    "reason": "v12's FiniteRepeat with a trimmed divider takes \"no items\" for \"ended on a divider\" (0 % 2 === 0) when its first item fails, pops a node that isn't there and throws. cpat-rs reports the failed repeat and the choice tries its next alternative.",
-    "cites": "DESIGN.md §23, \"v12 bugs the harness found\": a trimmed bounded repeat whose first item fails"
-  },
-  {
     "id": "ran-out-inside-a-wide-last-grapheme",
     "kinds": [
       "exec.furthest",

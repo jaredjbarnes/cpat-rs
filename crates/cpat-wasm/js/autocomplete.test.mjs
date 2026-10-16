@@ -100,6 +100,22 @@ describe("AutoComplete", () => {
     expect(result.options[0].startIndex).toBe(0);
     expect(result.errorAtIndex).toBe(0);
     expect(result.isComplete).toBeFalsy();
+    expect(result.error?.startIndex).toBe(0);
+    expect(result.ast).toBeNull();
+  });
+
+  test("No Text on a pattern that accepts empty input is complete", () => {
+    const name = new Optional("optional-name", new Literal("name", "Name"));
+    const autoComplete = new AutoComplete(name);
+    const result = autoComplete.suggestFor("");
+
+    // Complete as `test("")` is, and still offering what can come first.
+    expect(name.test("")).toBe(true);
+    expect(result.isComplete).toBe(true);
+    expect(result.error).toBeNull();
+    expect(result.errorAtIndex).toBeNull();
+    expect(result.ast).toBeNull();
+    expect(result.options.map(o => [o.text, o.startIndex])).toEqual([["Name", 0]]);
   });
 
   test("Full Pattern Match Simple", () => {

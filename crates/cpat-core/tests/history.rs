@@ -448,13 +448,15 @@ fn an_ordinary_exec_keeps_no_error_list_and_a_recording_one_keeps_v12s() {
 }
 
 #[test]
-fn empty_text_is_never_recorded() {
-    // v12 returns before it starts recording.
+fn empty_text_is_recorded() {
+    // v12 parses "" like any other text (its `fix(test)!` commit), so a
+    // recording parse records the failure.
     let mut name = name_grammar();
     let result = name.exec_recording("");
 
-    assert!(!result.is_recording());
-    assert!(result.records().is_empty());
+    assert!(result.is_recording());
+    assert!(!result.records().is_empty());
+    assert!(result.errors().iter().all(|error| error.start == 0));
 }
 
 #[test]

@@ -324,33 +324,88 @@ test("every pattern class builds with v12's constructor signature", () => {
   assert.equal(new Repeat("words", word).type, "infinite-repeat");
 });
 
-// v12's `test` is `!cursor.hasError`, and its exec returns before parsing
-// empty text, so `test("")` is true for every pattern while `exec("")` has
-// no ast and no error. Values checked against v12 on the same patterns.
-test("test on empty text passes for every pattern, as exec reports no error", () => {
+// v12's `test(text)` is true exactly when `exec(text)` matches the whole
+// text, "" included (v12's `fix(test)!` commit; before it, exec returned
+// early on "" and test("") was true for every pattern). A match of "" has
+// no ast and no error; a failure has the summary error at 0..0 and the
+// deepest failure as furthestError. Values checked against v12 (tsx on its
+// src) on the same patterns.
+test("test and exec on empty text: a match exactly when the pattern accepts it", () => {
   const a = () => new Literal("a", "a");
-  const g = greeting();
-  const all = [
-    a(),
-    new Regex("digits", "\\d+"),
-    new Repeat("as", a(), { min: 1 }),
-    new Sequence("s", [a()]),
-    new Optional("maybe", a()),
-    new Not("not-a", a()),
-    g,
-    g.children[2],
-    Grammar.parseString('a = "a"\nb = a').b,
+  const b = () => new Literal("b", "b");
+  const g = Grammar.parseString(
+    `a = "a"\nb = "b"\nname = a\nmaybe = a?\nstar = (a)*\nupTo = (a){,2}\nlist = (a, ",")*\nchoice = a | b\nnum = /\\d+/\nadd = ops + "+" + ops\nops = add | num\n`
+  );
+  const patterns = {
+    literal: a(),
+    regex: new Regex("digits", "\\d+"),
+    sequence: new Sequence("ab", [a(), b()]),
+    "optional then required": new Sequence("a?b", [new Optional("a?", a()), b()]),
+    "only optional parts": new Sequence("a?b?", [new Optional("a?", a()), new Optional("b?", b())]),
+    optional: new Optional("a?", a()),
+    repeat: new Repeat("as", a()),
+    "repeat min 0": new Repeat("as", a(), { min: 0 }),
+    "bounded repeat min 0": new Repeat("as", a(), { min: 0, max: 2 }),
+    "divided repeat min 0": new Repeat("as", a(), { min: 0, divider: new Literal(",", ",") }),
+    not: new Not("not-a", a()),
+    "not of an optional": new Not("not-a?", new Optional("a?", a())),
+    "lookahead and optional": new Sequence("!a b?", [new Not("not-a", a()), new Optional("b?", b())]),
+    choice: new Expression("a|b", [a(), b()]),
+    "choice with an optional alternative": new Expression("a|b?", [a(), new Optional("b?", b())]),
+    "context to a literal": new Context("ctx", new Reference("x"), [new Literal("x", "x")]),
+    "context to an optional": new Context("ctx", new Reference("x"), [
+      new Optional("x", new Literal("y", "y")),
+    ]),
+    "grammar name": g.name,
+    "grammar maybe": g.maybe,
+    "grammar star": g.star,
+    "grammar upTo": g.upTo,
+    "grammar list": g.list,
+    "grammar choice": g.choice,
+    "grammar ops": g.ops,
+  };
+  // [case, test(""), furthestError] as v12 answers.
+  const v12 = [
+    ["literal", false, [0, 0, "a"]],
+    ["regex", false, [0, 0, "digits"]],
+    ["sequence", false, [0, 0, "a"]],
+    ["optional then required", false, [0, 0, "a"]],
+    ["only optional parts", true, [0, 0, "a"]],
+    ["optional", true, [0, 0, "a"]],
+    ["repeat", false, [0, 0, "a"]],
+    ["repeat min 0", true, [0, 0, "a"]],
+    ["bounded repeat min 0", true, [0, 0, "a"]],
+    ["divided repeat min 0", true, [0, 0, "a"]],
+    ["not", true, [0, 0, "a"]],
+    ["not of an optional", false, [0, 0, "a"]],
+    ["lookahead and optional", false, [0, 0, "a"]],
+    ["choice", false, [0, 0, "a"]],
+    ["choice with an optional alternative", false, [0, 0, "a"]],
+    ["context to a literal", false, [0, 0, "x"]],
+    ["context to an optional", true, [0, 0, "y"]],
+    ["grammar name", false, [0, 0, "name"]],
+    ["grammar maybe", true, [0, 0, "a"]],
+    ["grammar star", true, [0, 0, "a"]],
+    ["grammar upTo", true, [0, 0, "a"]],
+    ["grammar list", true, [0, 0, "a"]],
+    ["grammar choice", false, [0, 0, "a"]],
+    ["grammar ops", false, [0, 0, "num"]]
   ];
 
-  for (const pattern of all) {
-    assert.equal(pattern.test(""), true, pattern.name);
-    assert.equal(pattern.test("", true), true, pattern.name);
+  const seen = Object.entries(patterns).map(([name, pattern]) => {
     const { ast, cursor } = pattern.exec("");
-    assert.equal(ast, null, pattern.name);
-    assert.equal(cursor.hasError, false, pattern.name);
-  }
-  assert.equal(a().test("b"), false);
-  assert.equal(a().test("a"), true);
+    const furthest = cursor.furthestError;
+    assert.equal(pattern.test("", true), pattern.test(""), name);
+    assert.equal(ast, null, name);
+    // An error exactly when there is no match, and then at 0..0.
+    assert.deepEqual(
+      cursor.error == null ? null : [cursor.error.startIndex, cursor.error.lastIndex],
+      pattern.test("") ? null : [0, 0],
+      name
+    );
+    return [name, pattern.test(""), furthest && [furthest.startIndex, furthest.lastIndex, furthest.pattern.name]];
+  });
+  assert.deepEqual(seen, v12);
 });
 
 test("test throws what exec throws when a reference names nothing, as v12's does", () => {

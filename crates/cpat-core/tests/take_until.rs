@@ -407,3 +407,16 @@ fn crlf_in_ascii_text_behaves_as_in_non_ascii_text() {
         );
     }
 }
+
+#[test]
+fn empty_text_probes_the_terminator_once() {
+    // v12 (its cursor sits at 0 on "" and probes there): the terminator's
+    // failure is recorded first, so it is the furthest error, and the
+    // take-until's own failure at 0..0 ties with it.
+    let mut scan = take_until("scan", lit("x", "x"));
+    let (tree, error, furthest) = exec_outline(&mut scan, "");
+
+    assert_eq!(tree, "-");
+    assert_eq!(error, "scan@0..0");
+    assert_eq!(furthest, "x@0..0");
+}

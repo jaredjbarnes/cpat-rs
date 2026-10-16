@@ -44,8 +44,8 @@ export class AutoComplete {
     cursor.startRecording();
     const report = result.cursor;
     if (report != null) {
-      // Empty text isn't parsed (v12 returns before it parses), so its
-      // cursor has nothing to report.
+      // Empty text isn't parsed on this cursor (v12 answers it with
+      // `test("")` on a cursor of its own), so it has nothing to report.
       cursor._take({ cursor: report, tooDeep: suggestion.tooDeep }, this._root, []);
     }
     const tree = new Tree(text, result);

@@ -44,9 +44,9 @@ impl Bounded {
         let slots = match (&divider, trim_divider) {
             (None, _) => max,
             (Some(_), false) => max.saturating_mul(2),
-            // No divider slot after the last child: `max >= 1`, so this
-            // never underflows.
-            (Some(_), true) => max.saturating_mul(2) - 1,
+            // No divider slot after the last child. `max` is 0 only for
+            // `{0}` / `{0,0}`, which has no slots at all.
+            (Some(_), true) => max.saturating_mul(2).saturating_sub(1),
         };
 
         Bounded {
@@ -72,9 +72,9 @@ impl Bounded {
         // node count means the last node came from a divider slot.
         let ended_on_divider = self.divider.is_some() && self.nodes.len().is_multiple_of(2);
         if self.trim_divider && ended_on_divider {
-            // Empty when nothing matched at all. v12 throws a TypeError
-            // there; with nothing to trim, this falls through to the
-            // minimum check like the untrimmed repeat does.
+            // Empty when nothing matched at all: with nothing to trim, this
+            // falls through to the minimum check like the untrimmed repeat
+            // does (v12 threw a TypeError here until its `a0ccba3`).
             if let Some(node) = self.nodes.pop() {
                 kept_cut = self.cuts_before.pop().unwrap_or(kept_cut);
                 cursor.set_pos(cursor.node_start(node));
@@ -94,9 +94,10 @@ impl Bounded {
         cursor.set_cut(kept_cut);
 
         let (Some(&first_node), Some(&last_node)) = (self.nodes.first(), self.nodes.last()) else {
-            // Only zero-width matches. v12 returns "no node, no error" here,
-            // and throws a TypeError when a later slot failed; both become a
-            // zero-width success, the failed slot dropped like any other.
+            // Only zero-width matches, or none with a minimum of 0: a
+            // zero-width success, a failed slot dropped like any other, as
+            // in v12 (which threw a TypeError when a later slot failed until
+            // its `5801ae2`).
             cursor.resolve_error();
             cursor.set_pos(first);
             return None;

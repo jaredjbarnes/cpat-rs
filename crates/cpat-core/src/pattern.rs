@@ -106,8 +106,9 @@ impl Pattern {
         crate::exec::exec(self, text, limits, Record::Yes)
     }
 
-    /// v12 `test(text)`: whether `exec` ends without an error
-    /// (`ParseResult::passed`), so empty text passes.
+    /// v12 `test(text)`: whether `exec` matched the whole text
+    /// (`ParseResult::passed`). "" passes exactly when the pattern accepts
+    /// the empty input.
     pub fn test(&mut self, text: &str) -> bool {
         self.exec(text).passed()
     }

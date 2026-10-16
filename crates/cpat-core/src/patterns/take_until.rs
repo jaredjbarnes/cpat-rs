@@ -41,8 +41,11 @@ impl TakeUntil {
         let cut = cursor.cut();
 
         // v12 never probes past its last grapheme (`hasNext`), and neither
-        // does this: the loop ends at the end of the text.
-        while !cursor.at_end() {
+        // does this: the loop ends at the end of the text. Empty text is the
+        // exception: v12's cursor sits at 0 there and probes once, so the
+        // terminator's failure is recorded (it can be the furthest error).
+        let probe_empty_text = cursor.is_empty();
+        while !cursor.at_end() || probe_empty_text {
             let on = cursor.pos();
             let terminator = &mut self.terminator;
             let terminated = cursor.detached(|c| terminator.parse(c)).is_some();
@@ -55,7 +58,7 @@ impl TakeUntil {
             if cursor.halted() {
                 return None;
             }
-            if terminated {
+            if terminated || cursor.at_end() {
                 break;
             }
 

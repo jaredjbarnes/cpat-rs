@@ -192,6 +192,17 @@ fn no_text() {
 }
 
 #[test]
+fn no_text_on_a_pattern_that_accepts_empty_input_is_complete() {
+    // v12 (its `fix(test)!` commit): "" is complete exactly when `test("")`
+    // is, and the options are what can come first, as before.
+    let suggestion = suggest(opt("optional-name", lit("name", "Name")), "");
+
+    assert_eq!(summary(&suggestion), "complete error=- at=- ast=-");
+    assert_eq!(options(&suggestion), ["Name@0[Name:name]"]);
+    assert!(suggestion.parse.is_none());
+}
+
+#[test]
 fn full_pattern_match_simple() {
     let suggestion = suggest(john_space_last_name(), "John Doe");
 

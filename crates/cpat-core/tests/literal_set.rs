@@ -145,8 +145,9 @@ fn a_winner_reached_through_a_reference_is_named_after_it() {
 
 /// v12's results for `keywordChoice().exec(text)`: `(text, tree, error,
 /// furthest error)`. v12's fast path and plain loop agree on all of them.
+/// "" is parsed like any other text (v12's `fix(test)!` commit).
 const KEYWORD_RESULTS: &[(&str, &str, &str, &str)] = &[
-    ("", "-", "-", "-"),
+    ("", "-", "keyword@0..0", "kw-if@0..0"),
     ("i", "-", "keyword@0..1", "kw-if@0..0"),
     ("if", "kw-if@0..2", "-", "-"),
     ("in", "kw-in@0..2", "-", "kw-if@0..1"),

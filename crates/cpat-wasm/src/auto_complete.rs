@@ -124,7 +124,7 @@ impl SuggestionResult {
     }
 
     /// The recording parse's report, as `ExecResult.cursor` has it, or
-    /// `undefined` for empty text (v12 doesn't parse it).
+    /// `undefined` for empty text (v12 doesn't parse it on this cursor).
     #[wasm_bindgen(getter)]
     pub fn cursor(&self) -> Option<String> {
         self.cursor.clone()

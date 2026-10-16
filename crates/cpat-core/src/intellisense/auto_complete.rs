@@ -123,20 +123,29 @@ impl AutoComplete {
         }
     }
 
-    /// v12 doesn't parse empty text: it offers what can start the pattern,
-    /// with an error at 0.
-    fn suggest_for_empty_text(&self) -> Suggestion<'static> {
+    /// Empty text: v12 offers what can start the pattern. It is complete
+    /// exactly when the pattern accepts the empty input (v12 asks
+    /// `test("")`, on a cursor of its own); otherwise the error is at 0.
+    /// The suggestion's cursor is not parsed (`parse` is `None`).
+    fn suggest_for_empty_text(&mut self) -> Suggestion<'static> {
+        let is_complete =
+            crate::exec::exec(&mut self.pattern, "", self.limits, crate::exec::Record::No).passed();
         let intro = Introspection::with_limits(&self.pattern, self.limits);
         let composer = self.composer(&intro);
         let options = match intro.at(&PatternPath::root()) {
             Some(root) => place("", "", composer.for_pattern(&root)),
             None => Vec::new(),
         };
+        let (error, error_at_index) = if is_complete {
+            (None, None)
+        } else {
+            (Some(self.error_at(0, 0)), Some(0))
+        };
         Suggestion {
-            is_complete: false,
+            is_complete,
             options,
-            error: Some(self.error_at(0, 0)),
-            error_at_index: Some(0),
+            error,
+            error_at_index,
             parse: None,
         }
     }

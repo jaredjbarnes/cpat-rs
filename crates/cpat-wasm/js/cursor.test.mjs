@@ -224,12 +224,20 @@ describe("Cursor characters, as v12 steps them", () => {
     });
   }
 
-  test("outside the text the char indices are v12's undefined and NaN", () => {
+  test("the position past the last character is zero-width, as in v12", () => {
     const cursor = new Cursor("ab");
-    expect(cursor.getCharStartIndex(2)).toBeUndefined();
-    expect(Number.isNaN(cursor.getCharEndIndex(-1))).toBe(true);
-    expect(Number.isNaN(cursor.getCharLastIndex(2))).toBe(true);
-    expect(new Cursor("").currentChar).toBe("");
+    expect(cursor.getCharStartIndex(2)).toBe(2);
+    expect(cursor.getCharEndIndex(2)).toBe(2);
+    expect(cursor.getCharLastIndex(2)).toBe(1);
+    expect(cursor.getCharEndIndex(-1)).toBe(-1);
+
+    const empty = new Cursor("");
+    expect(empty.currentChar).toBe("");
+    expect([empty.getCharStartIndex(0), empty.getCharEndIndex(0), empty.getCharLastIndex(0)]).toEqual([
+      0, 0, -1,
+    ]);
+    empty.moveToLastChar();
+    expect(empty.index).toBe(0);
   });
 
   test("a direct parse leaves the cursor at the start of its last character", () => {

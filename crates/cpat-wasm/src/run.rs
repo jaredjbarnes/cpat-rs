@@ -102,7 +102,7 @@ impl JsPattern {
     }
 }
 
-/// v12 `test`: the parse ended without an error (`ParseResult::passed`).
+/// v12 `test`: `exec` matched the whole text (`ParseResult::passed`).
 /// A pattern that can't run throws, as v12's does and as `exec` does here,
 /// instead of answering false.
 pub(crate) fn test(

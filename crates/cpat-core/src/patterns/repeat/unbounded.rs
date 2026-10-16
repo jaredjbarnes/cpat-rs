@@ -59,7 +59,14 @@ impl Unbounded {
 
         // On failure the cut flag is left as the failed work set it, as in
         // v12: the failure propagates, so the enclosing choice decides.
+        // With a minimum of 0 nothing failed: zero occurrences match, with
+        // no node, and the dropped work's error and cut go with it.
         if !self.parse_items(meta, cursor, first) {
+            if self.min == 0 {
+                cursor.resolve_error();
+                cursor.set_cut(self.kept_cut);
+                cursor.set_pos(first);
+            }
             return None;
         }
 

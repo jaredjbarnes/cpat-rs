@@ -337,12 +337,12 @@ describe("Repeat accessors, compared with v12", () => {
   });
 
   test("min and max are the bounds as given, as v12's facade reports them", () => {
-    // The parse clamps (min at least 1, max at least min); the accessors
-    // don't. A grammar's `*` asks its inner repeat for zero or more.
+    // A minimum of 0 is kept, so `{0,0}` matches exactly nothing. A
+    // grammar's `*` asks its inner repeat for zero or more.
     const repeat = new Repeat("r", new Literal("a", "a"), { min: 0, max: 0 });
     expect([repeat.min, repeat.max, repeat.type]).toEqual([0, 0, "finite-repeat"]);
     expect(repeat.test("")).toBe(true);
-    expect(repeat.exec("a").ast.value).toBe("a");
+    expect(repeat.exec("a").ast).toBe(null);
 
     const { star, upTo, exact, range, atLeast } = patterns`
       a = "a"

@@ -60,8 +60,7 @@ impl<'a, 't> Builder<'a, 't> {
         match count(quantifier) {
             Count::OneOrMore => Ok(Repeat::new(name, item, options).into()),
             Count::ZeroOrMore => {
-                // v12 asks its inner repeat for zero or more; the repeat
-                // clamps to one, so only `requested_min` sees the 0.
+                // v12 wraps an inner repeat of zero or more in an optional.
                 options.min = 0;
                 let repeat = Repeat::new(&format!("inner-optional-{name}"), item, options);
                 Ok(Optional::new(name, repeat.into()).into())

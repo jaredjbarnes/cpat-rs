@@ -731,15 +731,80 @@ fn finite_trim_trailing_complex_delimiter_pattern() {
 // Each expectation below was checked against v12 on the same input.
 
 #[test]
-fn min_is_clamped_to_one() {
+fn a_min_of_zero_is_kept() {
+    // v12 raised a minimum of 0 to 1 until its `fix(repeat)!` commit; now
+    // zero occurrences match with no node and no error.
     let unbounded = Repeat::new("r", digits(), at_least(0));
     let bounded_zero = Repeat::new("r", digits(), bounded(0, 3));
-    assert_eq!(unbounded.min(), 1);
-    assert_eq!(bounded_zero.min(), 1);
+    assert_eq!(unbounded.min(), 0);
+    assert_eq!(bounded_zero.min(), 0);
 
-    // Clamped, a repeat with min 0 still fails on no match at all.
-    assert!(parse(&mut unbounded.into(), "x").error.is_some());
-    assert!(parse(&mut bounded_zero.into(), "x").error.is_some());
+    for mut repeat in [Pattern::from(unbounded), Pattern::from(bounded_zero)] {
+        let outcome = parse(&mut repeat, "x");
+        assert!(outcome.error.is_none(), "{}", repeat.name());
+        assert!(outcome.nodes.is_none(), "{}", repeat.name());
+        assert_eq!(outcome.pos, 0, "{}", repeat.name());
+    }
+}
+
+#[test]
+fn a_min_of_zero_matches_zero_occurrences_between_two_literals() {
+    // v12 Repeat.test.ts "a minimum of 0".
+    let between =
+        |repeat: Pattern| seq("between", vec![lit("open", "<"), repeat, lit("close", ">")]);
+    let options = [
+        at_least(0),
+        RepeatOptions {
+            min: 0,
+            ..divided(lit("comma", ","))
+        },
+        bounded(0, 2),
+        RepeatOptions {
+            min: 0,
+            max: Some(2),
+            ..divided(lit("comma", ","))
+        },
+    ];
+    for options in options {
+        let mut sequence = between(rep("digits", digits(), options.clone()));
+        assert!(sequence.test("<>"), "{options:?}");
+        assert!(sequence.test("<1>"), "{options:?}");
+        assert!(!sequence.test("<x>"), "{options:?}");
+    }
+    assert!(!between(rep("digits", digits(), bounded(0, 2))).test("<123>"));
+
+    let patterns = cpat_core::patterns!(
+        r#"
+        digit = /\d/
+        upTo = "<" + (digit){,2} + ">"
+        zeroTo = "<" + (digit){0,2} + ">"
+        "#
+    )
+    .unwrap();
+    for name in ["upTo", "zeroTo"] {
+        let mut pattern = patterns[name].clone();
+        assert!(pattern.test("<>"), "{name}");
+        assert!(pattern.test("<12>"), "{name}");
+        assert!(!pattern.test("<123>"), "{name}");
+    }
+}
+
+#[test]
+fn zero_to_zero_matches_only_nothing() {
+    // `{0,0}` has no slots, divider or not (v12: no children).
+    for options in [
+        bounded(0, 0),
+        RepeatOptions {
+            min: 0,
+            max: Some(0),
+            trim_divider: true,
+            ..divided(lit("comma", ","))
+        },
+    ] {
+        let mut repeat = rep("r", digits(), options);
+        assert!(repeat.test(""));
+        assert!(!repeat.test("1"));
+    }
 }
 
 #[test]
@@ -1013,8 +1078,9 @@ fn a_bounded_repeat_without_trim_keeps_its_last_divider() {
 
 #[test]
 fn a_trimmed_bounded_repeat_that_matches_nothing_fails_on_min() {
-    // v12 throws a TypeError here (it pops a node that isn't there); with
-    // nothing to trim this behaves like the untrimmed repeat.
+    // v12 threw a TypeError here (it popped a node that wasn't there) until
+    // its `a0ccba3`; now, as here, with nothing to trim this behaves like
+    // the untrimmed repeat.
     let mut repeat = rep("r", digits(), bounded_comma(1, 3));
 
     let outcome = parse(&mut repeat, "x");
@@ -1024,9 +1090,10 @@ fn a_trimmed_bounded_repeat_that_matches_nothing_fails_on_min() {
 
 #[test]
 fn a_bounded_repeat_of_zero_width_matches_with_a_failed_divider_is_zero_width() {
-    // v12 throws a TypeError here (no nodes, but an error left on the
-    // cursor). The min was met by the zero-width match, so the failed
-    // trailing divider is dropped like any trailing failure.
+    // v12 threw a TypeError here (no nodes, but an error left on the
+    // cursor) until its `5801ae2`; now, as here, the min was met by the
+    // zero-width match, so the failed trailing divider is dropped like any
+    // trailing failure.
     let mut repeat = rep(
         "r",
         opt("od", digits()),
@@ -1539,22 +1606,22 @@ fn a_custom_zero_width_node_is_a_zero_width_success_so_a_repeat_ends() {
 // ─── The bounds as given (v12's `Repeat` facade `min`/`max`) ───
 
 #[test]
-fn requested_bounds_are_the_options_as_given_while_the_parse_clamps() {
+fn requested_bounds_are_the_options_as_given() {
     // v12's facade reports `{ min: 0, max: 0 }` as given; its finite repeat
-    // parses with min 1, max 1.
+    // parses with min 0, max 0 (a zero max is "exactly min").
     let repeat = Repeat::new("r", digits(), bounded(0, 0));
     assert_eq!(
         (repeat.requested_min(), repeat.requested_max()),
         (0, Some(0))
     );
-    assert_eq!((repeat.min(), repeat.max()), (1, Some(1)));
+    assert_eq!((repeat.min(), repeat.max()), (0, Some(0)));
 
     let unbounded = Repeat::new("r", digits(), at_least(0)).clone();
     assert_eq!(
         (unbounded.requested_min(), unbounded.requested_max()),
         (0, None)
     );
-    assert_eq!(unbounded.min(), 1);
+    assert_eq!(unbounded.min(), 0);
 }
 
 #[test]

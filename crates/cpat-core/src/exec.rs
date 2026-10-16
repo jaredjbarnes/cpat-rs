@@ -39,9 +39,12 @@ impl<'t> ParseResult<'t> {
         self.text
     }
 
-    /// v12's `test` answer, `!cursor.hasError`: no error, and the parse
-    /// ran to its end. Not `is_match`: empty text has no tree and no
-    /// error, and v12's `test("")` is true for every pattern.
+    /// v12's `test` answer: the whole text matched. `exec` records an
+    /// error for every other outcome, so this is "no error" (and no pattern
+    /// error, no halt). Not quite `is_match`: a pattern that accepts the
+    /// empty input matches "" without a node, so there is no tree and no
+    /// error (v12's `ast` is null and `test("")` is true). Non-empty text
+    /// never matches without a tree.
     pub fn passed(&self) -> bool {
         self.error.is_none() && self.pattern_error.is_none() && self.too_deep.is_none()
     }
@@ -67,9 +70,7 @@ impl<'t> ParseResult<'t> {
         }
     }
 
-    /// Whether this parse kept a history (v12 `cursor.isRecording`). False
-    /// for empty text even when asked: v12 returns before it starts
-    /// recording there.
+    /// Whether this parse kept a history (v12 `cursor.isRecording`).
     pub fn is_recording(&self) -> bool {
         self.history.as_ref().is_some_and(|history| history.on)
     }
@@ -128,10 +129,6 @@ pub(crate) fn exec<'t>(
         Err(error) => return ParseResult::refused(text, limits, error),
     };
 
-    if text.is_empty() {
-        return cursor.finish(None);
-    }
-
     if record == Record::Yes {
         cursor.start_recording();
     }
@@ -155,10 +152,14 @@ pub(crate) fn exec<'t>(
                 None
             }
         }
-        None => {
+        // No node. On empty text with no error that is a match: the
+        // pattern accepts the empty input (an optional, a repeat with a
+        // minimum of 0, ...). Non-empty text is never matched without a node.
+        None if cursor.has_error() || !text.is_empty() => {
             cursor.record_summary_error(0, text.len(), summary, &steps);
             None
         }
+        None => None,
     };
 
     cursor.finish(root)
@@ -184,9 +185,9 @@ pub(crate) fn parse_recording<'t>(
 }
 
 /// A cursor over `text` with `pattern`'s references readied, or the reason
-/// the pattern can't run. Checked before any shortcut for empty text: a
-/// broken pattern is reported whatever the input. (v12 returns before it
-/// looks.)
+/// the pattern can't run. Checked before parsing: a broken pattern is
+/// reported whatever the input, even empty text. (v12 throws only when the
+/// parse reaches the name: DESIGN §11.)
 fn readied_cursor<'t>(
     pattern: &mut Pattern,
     text: &'t str,

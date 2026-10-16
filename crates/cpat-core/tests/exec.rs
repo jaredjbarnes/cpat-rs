@@ -3,34 +3,126 @@ mod common;
 use common::*;
 use cpat_core::{Pattern, RepeatOptions};
 
+// v12's `test(text)` is true exactly when `exec(text)` matches the whole
+// text, "" included (v12's `fix(test)!` commit; before it exec returned
+// early on "" and `test("")` was true for every pattern). Checked against
+// v12 on the same patterns.
 #[test]
-fn empty_text_is_no_match_and_no_error() {
-    let mut a = lit("a", "a");
-
-    let result = a.exec("");
-
-    assert!(result.tree.is_none());
-    assert!(result.error.is_none());
-}
-
-// v12's `test` is `!cursor.hasError`, and its exec returns before parsing
-// empty text, so `test("")` is true for every pattern (checked against v12):
-// a pass with no tree.
-#[test]
-fn empty_text_passes_test_for_every_pattern() {
+fn empty_text_fails_a_pattern_that_needs_text_with_an_error_at_0() {
     let mut patterns = vec![
         lit("a", "a"),
         re("digits", r"\d+"),
         rep("as", lit("a", "a"), RepeatOptions::default()),
-        seq("s", vec![lit("a", "a")]),
-        not("n", lit("a", "a")),
+        seq("ab", vec![lit("a", "a"), lit("b", "b")]),
+        seq("a?b", vec![opt("a?", lit("a", "a")), lit("b", "b")]),
+        not("not-a?", opt("a?", lit("a", "a"))),
+        // A sequence with no node fails unless every part is optional,
+        // mid-text too.
+        seq(
+            "!a b?",
+            vec![not("not-a", lit("a", "a")), opt("b?", lit("b", "b"))],
+        ),
+        choice("a|b", vec![lit("a", "a"), lit("b", "b")]),
+        // An ordered choice skips an alternative that matched nothing.
+        choice("a|b?", vec![lit("a", "a"), opt("b?", lit("b", "b"))]),
+        context("ctx", reference("x"), vec![lit("x", "x")]),
     ];
 
     for pattern in &mut patterns {
-        assert!(pattern.test(""), "{}", pattern.name());
-        assert!(pattern.test_recording(""), "{}", pattern.name());
-        assert!(!pattern.exec("").is_match(), "{}", pattern.name());
+        let name = pattern.name().to_string();
+        assert!(!pattern.test(""), "{name}");
+        assert!(!pattern.test_recording(""), "{name}");
+        let result = pattern.exec("");
+        assert!(result.tree.is_none(), "{name}");
+        assert!(!result.passed(), "{name}");
+        let error = result.error.expect("an error");
+        assert_eq!((error.start, error.last), (0, 0), "{name}");
+        assert_eq!(
+            result.furthest_error.expect("a furthest error").start,
+            0,
+            "{name}"
+        );
     }
+}
+
+#[test]
+fn empty_text_matches_a_pattern_that_accepts_it_with_no_tree_and_no_error() {
+    let mut patterns = vec![
+        opt("a?", lit("a", "a")),
+        seq(
+            "a?b?",
+            vec![opt("a?", lit("a", "a")), opt("b?", lit("b", "b"))],
+        ),
+        rep(
+            "as",
+            lit("a", "a"),
+            RepeatOptions {
+                min: 0,
+                ..RepeatOptions::default()
+            },
+        ),
+        rep(
+            "as",
+            lit("a", "a"),
+            RepeatOptions {
+                min: 0,
+                max: Some(2),
+                ..RepeatOptions::default()
+            },
+        ),
+        not("not-a", lit("a", "a")),
+        context("ctx", reference("x"), vec![opt("x", lit("y", "y"))]),
+    ];
+
+    for pattern in &mut patterns {
+        let name = pattern.name().to_string();
+        assert!(pattern.test(""), "{name}");
+        assert!(pattern.test_recording(""), "{name}");
+        let result = pattern.exec("");
+        assert!(result.tree.is_none(), "{name}");
+        assert!(result.passed(), "{name}");
+        assert!(result.error.is_none(), "{name}");
+    }
+}
+
+#[test]
+fn empty_text_agrees_with_an_empty_rest_mid_text() {
+    let between = |pattern: Pattern| seq("between", vec![lit("<", "<"), pattern, lit(">", ">")]);
+    let patterns = vec![
+        lit("a", "a"),
+        opt("a?", lit("a", "a")),
+        not("not-a", lit("a", "a")),
+        not("not-a?", opt("a?", lit("a", "a"))),
+        choice("a|b?", vec![lit("a", "a"), opt("b?", lit("b", "b"))]),
+        seq(
+            "!a b?",
+            vec![not("not-a", lit("a", "a")), opt("b?", lit("b", "b"))],
+        ),
+        rep(
+            "as",
+            lit("a", "a"),
+            RepeatOptions {
+                min: 0,
+                ..RepeatOptions::default()
+            },
+        ),
+    ];
+
+    for pattern in patterns {
+        let name = pattern.name().to_string();
+        let alone = pattern.clone().test("");
+        assert_eq!(alone, between(pattern).test("<>"), "{name}");
+    }
+}
+
+#[test]
+fn empty_text_is_recorded() {
+    let mut pattern = seq("ab", vec![lit("a", "a"), lit("b", "b")]);
+    let result = pattern.exec_recording("");
+
+    assert!(result.is_recording());
+    assert!(!result.errors().is_empty());
+    assert!(result.errors().iter().all(|error| error.start == 0));
 }
 
 #[test]

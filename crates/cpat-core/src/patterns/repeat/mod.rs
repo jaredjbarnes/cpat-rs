@@ -24,7 +24,8 @@ pub struct Repeat {
     strategy: Strategy,
     // The bounds as given, before clamping: v12's `Repeat` facade reports
     // these (`min`, `max`) while its implementation parses with the
-    // clamped ones, so a host showing v12's API needs both.
+    // clamped ones (`max` 0 means "exactly min"), so a host showing v12's
+    // API needs both.
     requested: (usize, Option<usize>),
 }
 
@@ -36,10 +37,10 @@ enum Strategy {
 
 impl Repeat {
     pub fn new(name: &str, child: Pattern, options: RepeatOptions) -> Repeat {
-        // v12 clamps in both implementations: zero-or-more is an optional
-        // around one-or-more, never a repeat with min 0.
+        // A minimum of 0 is kept: zero occurrences match with no node and
+        // no error (v12 raised it to 1 until its `fix(repeat)!` commit).
         let requested = (options.min, options.max);
-        let min = options.min.max(1);
+        let min = options.min;
         let divider = options.divider.map(|d| Box::new(d.adopted()));
         let child = Box::new(child.adopted());
 
@@ -62,7 +63,7 @@ impl Repeat {
         }
     }
 
-    /// The fewest matches that count, after clamping to at least 1.
+    /// The fewest matches that count.
     pub fn min(&self) -> usize {
         match &self.strategy {
             Strategy::Unbounded(s) => s.min,
@@ -78,8 +79,9 @@ impl Repeat {
         }
     }
 
-    /// `min` as the options gave it, before clamping (v12's `Repeat.min`):
-    /// 0 for the repeat inside a grammar's `*` or `{,n}`.
+    /// `min` as the options gave it (v12's `Repeat.min`), the same as `min`
+    /// now that a minimum of 0 is kept: 0 for the repeat inside a grammar's
+    /// `*` or `{,n}`.
     pub fn requested_min(&self) -> usize {
         self.requested.0
     }

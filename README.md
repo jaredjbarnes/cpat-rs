@@ -53,7 +53,8 @@ letter and a combining mark leaves the mark unmatched, and that is no match.
 `Introspection::choice_roles` says what each of a choice's classified children is
 (`ChoiceRole::Atom`, `Prefix`, `Postfix`, `Infix`), classifying a choice that waits for its first
 parse as that parse would. `Repeat::requested_min`/`requested_max` keep the bounds as given
-(v12's `Repeat.min`/`max`) while `min`/`max` are the clamped ones the parse uses, and
+(v12's `Repeat.min`/`max`) while `min`/`max` are what the parse uses (a bounded `max` of 0
+means `min`), and
 `grapheme_starts(text)` lists where each character starts, as the parser positions on them.
 
 `Choice` is ordered (the first alternative that matches wins) unless some alternatives are
